@@ -1,0 +1,21 @@
+[package]
+name = "knyst"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+slotmap = "1.0"
+# For ergonomic error handling
+thiserror = "1.0"
+# For real time safe communication between threads
+rtrb = "0.2"
+fastrand = "1.4.1"
+# Downcast used to have any user data in the Resources struct
+downcast-rs = "1.2.0"
+# Loading audio buffers
+symphonia = "0.5.1"
+
+[dev-dependencies]
+rand = "0.8"
