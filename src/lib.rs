@@ -4,8 +4,10 @@ use downcast_rs::{impl_downcast, Downcast};
 use std::collections::HashMap;
 use wavetable::{Wavetable, WavetableArena, SINE_WAVETABLE};
 
+pub mod audio_backend;
 pub mod buffer;
 pub mod graph;
+pub mod prelude;
 pub mod wavetable;
 pub mod xorrng;
 
