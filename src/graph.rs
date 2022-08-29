@@ -2748,6 +2748,31 @@ struct FeedbackEdge {
     feedback_destination: NodeIndex,
 }
 
+pub struct Mult;
+impl Gen for Mult {
+    fn process(
+        &mut self,
+        inputs: &[Box<[Sample]>],
+        outputs: &mut [Box<[Sample]>],
+        _resources: &mut Resources,
+    ) -> GenState {
+        let i0 = &inputs[0];
+        let i1 = &inputs[1];
+        for (o, (in0, in1)) in outputs[0].iter_mut().zip(i0.iter().zip(i1.iter())) {
+            *o = in0 * in1;
+        }
+        GenState::Continue
+    }
+
+    fn num_inputs(&self) -> usize {
+        2
+    }
+
+    fn num_outputs(&self) -> usize {
+        1
+    }
+}
+
 /// Trait implementations for other types
 use crate::wavetable::WavetableOscillatorOwned;
 
