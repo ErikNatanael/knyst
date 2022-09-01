@@ -21,3 +21,10 @@ jack = "0.10"
 
 [dev-dependencies]
 rand = "0.8"
+criterion = "0.3"
+
+
+
+[[bench]]
+name = "micro_benchmarks"
+harness = false

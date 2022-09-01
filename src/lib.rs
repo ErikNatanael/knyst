@@ -12,8 +12,13 @@ pub mod wavetable;
 pub mod xorrng;
 
 pub type Sample = f32;
-pub const TABLE_POWER: u32 = 13;
+/// The number of samples per wavetable, and also the number of high bits used
+/// for the phase indexing into the wavetable. With the current u32 phase, this can be maximum 16.
+pub const TABLE_POWER: u32 = 16;
 pub const TABLE_SIZE: usize = 2_usize.pow(TABLE_POWER);
+/// The high mask is used to 0 everything above the table size so that adding
+/// further would have the same effect as wrapping.
+pub const TABLE_HIGH_MASK: u32 = TABLE_SIZE as u32 - 1;
 pub const FRACTIONAL_PART: u32 = 65536;
 pub trait AnyData: Downcast + Send + Debug {}
 impl_downcast!(AnyData);

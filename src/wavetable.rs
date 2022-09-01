@@ -1,4 +1,4 @@
-use crate::{Resources, Sample};
+use crate::{Resources, Sample, TABLE_HIGH_MASK, TABLE_SIZE};
 
 use crate::graph::{Gen, GenState};
 // use std::f64::consts::PI;
@@ -290,6 +290,51 @@ impl WavetableOscillatorOwned {
     }
 }
 
+pub struct Phase(pub u32);
+
+impl Phase {
+    #[inline]
+    pub fn integer_component(&self) -> usize {
+        // This will fill with zeroes unless going above 31 bits of shift, in
+        // which case it will overflow. The mask will remove anything above the
+        // bits we use for our table size, so we don't need 2^16 size tables.
+        ((self.0 >> 16) & TABLE_HIGH_MASK) as usize
+    }
+    #[inline]
+    pub fn fractional_component(&self) -> u32 {
+        const FRACTIONAL_PART: u32 = u16::MAX as u32;
+        self.0 & FRACTIONAL_PART
+    }
+    #[inline]
+    pub fn fractional_component_f32(&self) -> f32 {
+        const HIGH_BITS: u32 = u16::MAX as u32;
+        (self.0 & HIGH_BITS) as f32 / HIGH_BITS as f32
+    }
+    #[inline]
+    pub fn increase(&mut self, add: u32) {
+        self.0 = self.0.wrapping_add(add);
+    }
+}
+
+pub struct PhaseF32(pub f32);
+
+impl PhaseF32 {
+    #[inline]
+    pub fn index_mix(&self) -> (usize, f32) {
+        const TABLE_SIZE_F32: f32 = TABLE_SIZE as f32;
+        let value = self.0 * TABLE_SIZE_F32;
+        (value as usize, value.fract())
+    }
+    #[inline]
+    pub fn increase(&mut self, add: f32) {
+        // This is the fastest version I have found, faster than % 1.0 and .fract()
+        self.0 += add;
+        while self.0 >= 1.0 {
+            self.0 -= 1.0;
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct Oscillator {
     step: Sample,
@@ -374,3 +419,5 @@ impl Gen for Oscillator {
         1
     }
 }
+
+mod tests {}
