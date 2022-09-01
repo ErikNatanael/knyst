@@ -19,10 +19,7 @@ fn main() {
         ..Default::default()
     });
     backend.start_processing(&mut graph, resources).unwrap();
-    let node0 = graph.push_gen(WavetableOscillatorOwned::new(
-        Wavetable::sine(),
-        sample_rate,
-    ));
+    let node0 = graph.push_gen(WavetableOscillatorOwned::new(Wavetable::sine()));
     graph.connect(Connection::out(node0)).unwrap();
     graph.connect(Connection::out(node0).to_index(1)).unwrap();
     graph.connect(constl(440., "freq").to_node(node0)).unwrap();

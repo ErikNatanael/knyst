@@ -255,7 +255,7 @@ mod jack_backend {
 #[cfg(feature = "cpal")]
 pub mod cpal_backend {
     use crate::audio_backend::{AudioBackend, AudioBackendError};
-    use crate::{graph::Graph, graph::Node, Resources, Sample};
+    use crate::{graph::Graph, graph::Node, Resources};
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
     pub struct CpalBackendOptions {
@@ -294,7 +294,6 @@ pub mod cpal_backend {
             }
 
             let config = device.default_output_config().unwrap();
-            let sample_rate = config.sample_rate().0 as f32;
             if options.verbose {
                 println!("Default output config: {:?}", config);
             }
