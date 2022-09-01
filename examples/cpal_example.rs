@@ -9,7 +9,7 @@ fn main() {
     let mut backend = CpalBackend::new(CpalBackendOptions::default()).unwrap();
 
     let sample_rate = backend.sample_rate() as f32;
-    let block_size = backend.block_size();
+    let block_size = backend.block_size().unwrap_or(64);
     let resources = Resources::new(sample_rate);
     let mut graph: Graph = Graph::new(GraphSettings {
         block_size,

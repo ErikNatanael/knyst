@@ -13,7 +13,7 @@ pub trait AudioBackend {
     ) -> Result<(), AudioBackendError>;
     fn stop(&mut self) -> Result<(), AudioBackendError>;
     fn sample_rate(&self) -> usize;
-    fn block_size(&self) -> usize;
+    fn block_size(&self) -> Option<usize>;
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -131,8 +131,8 @@ mod jack_backend {
             self.sample_rate
         }
 
-        fn block_size(&self) -> usize {
-            self.block_size
+        fn block_size(&self) -> Option<usize> {
+            Some(self.block_size)
         }
     }
 
@@ -352,8 +352,8 @@ pub mod cpal_backend {
             self.sample_rate
         }
 
-        fn block_size(&self) -> usize {
-            todo!()
+        fn block_size(&self) -> Option<usize> {
+            None
         }
     }
 
@@ -371,17 +371,25 @@ pub mod cpal_backend {
         let err_fn = |err| eprintln!("an error occurred on stream: {}", err);
 
         let input_buffers = vec![vec![0.0; 0].into_boxed_slice(); 0].into_boxed_slice();
+        let mut sample_counter = 0;
+        let graph_block_size = node.output_buffers()[0].len();
+        node.process(&input_buffers, &mut resources);
         let stream = device.build_output_stream(
             config,
             move |output: &mut [T], _: &cpal::OutputCallbackInfo| {
                 // TODO: When CPAL support duplex streams, copy inputs to graph inputs here.
-                node.process(&input_buffers, &mut resources);
-                let buffer = node.output_buffers();
                 for (frame_i, frame) in output.chunks_mut(channels).enumerate() {
+                    if sample_counter >= graph_block_size {
+                        node.process(&input_buffers, &mut resources);
+                        sample_counter = 0;
+                    }
+                    let buffer = node.output_buffers();
                     for (channel_i, out) in frame.iter_mut().enumerate() {
-                        let value: T = cpal::Sample::from::<f32>(&buffer[channel_i][frame_i]);
+                        let value: T =
+                            cpal::Sample::from::<f32>(&buffer[channel_i][sample_counter]);
                         *out = value;
                     }
+                    sample_counter += 1;
                 }
             },
             err_fn,
