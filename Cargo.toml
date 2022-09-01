@@ -17,7 +17,10 @@ downcast-rs = "1.2.0"
 # Loading audio buffers
 symphonia = "0.5.1"
 # JACK audio backend
-jack = "0.10"
+jack = { version =  "0.10", optional = true }
+# CPAL audio backend
+cpal = {version = "0.14.0", optional = true }
+
 
 [dev-dependencies]
 rand = "0.8"
@@ -28,3 +31,13 @@ criterion = "0.3"
 [[bench]]
 name = "micro_benchmarks"
 harness = false
+
+
+[[example]]
+name = "jack_example"
+path = "examples/jack_example.rs"
+required-features = ["jack"]
+[[example]]
+name = "cpal_example"
+path = "examples/cpal_example.rs"
+required-features = ["cpal"]
