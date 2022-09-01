@@ -2773,38 +2773,6 @@ impl Gen for Mult {
     }
 }
 
-/// Trait implementations for other types
-use crate::wavetable::WavetableOscillatorOwned;
-
-impl Gen for WavetableOscillatorOwned {
-    fn process(
-        &mut self,
-        inputs: &[Box<[Sample]>],
-        outputs: &mut [Box<[Sample]>],
-        _resources: &mut Resources,
-    ) -> GenState {
-        let output = &mut outputs[0];
-        let freq_buf = &inputs[0];
-        for (&freq, o) in freq_buf.iter().zip(output.iter_mut()) {
-            self.set_freq(freq);
-            *o = self.next();
-        }
-        GenState::Continue
-    }
-    fn input_desc(&self, input: usize) -> &'static str {
-        match input {
-            0 => "freq",
-            _ => "",
-        }
-    }
-    fn num_outputs(&self) -> usize {
-        1
-    }
-    fn num_inputs(&self) -> usize {
-        1
-    }
-}
-
 struct NaiveSine {
     phase: Sample,
     phase_step: Sample,

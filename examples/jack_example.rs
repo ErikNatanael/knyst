@@ -20,15 +20,9 @@ fn main() {
         ..Default::default()
     });
     backend.start_processing(&mut graph, resources).unwrap();
-    let node0 = graph.push_gen(WavetableOscillatorOwned::new(
-        Wavetable::sine(8192),
-        sample_rate,
-    ));
+    let node0 = graph.push_gen(WavetableOscillatorOwned::new(Wavetable::sine()));
     graph.connect(constl(440., "freq").to_node(node0)).unwrap();
-    let modulator = graph.push_gen(WavetableOscillatorOwned::new(
-        Wavetable::sine(8192),
-        sample_rate,
-    ));
+    let modulator = graph.push_gen(WavetableOscillatorOwned::new(Wavetable::sine()));
     graph
         .connect(constl(5., "freq").to_node(modulator))
         .unwrap();
@@ -47,7 +41,7 @@ fn main() {
     let mut input = String::new();
     loop {
         match std::io::stdin().read_line(&mut input) {
-            Ok(n) => {
+            Ok(_n) => {
                 let input = input.trim();
                 if let Ok(freq) = input.parse::<usize>() {
                     graph

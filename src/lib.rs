@@ -89,7 +89,7 @@ impl Resources {
         for i in 0..1 {
             match i {
                 SINE_WAVETABLE => {
-                    wavetable_arena.add(Wavetable::sine(4096));
+                    wavetable_arena.add(Wavetable::sine());
                 }
                 _ => (),
             }

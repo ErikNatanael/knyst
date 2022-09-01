@@ -12,13 +12,15 @@ pub type WavetableIndex = usize;
 
 #[derive(Debug, Clone)]
 pub struct Wavetable {
-    buffer: Vec<Sample>, // Box<[Sample; 131072]>,
+    buffer: Vec<Sample>,      // Box<[Sample; 131072]>,
+    diff_buffer: Vec<Sample>, // Box<[Sample; 131072]>,
     // Store the size as an f64 to find fractional indexes without typecasting
     size: Sample,
 }
 
 impl Wavetable {
-    pub fn new(wavetable_size: usize) -> Self {
+    pub fn new() -> Self {
+        let wavetable_size = TABLE_SIZE;
         let w_size = if !is_power_of_2(wavetable_size) {
             // Make a power of two by taking the log2 and discarding the fractional part of the answer and then squaring again
             ((wavetable_size as f64).log2() as usize).pow(2)
@@ -26,32 +28,45 @@ impl Wavetable {
             wavetable_size
         };
         let buffer = vec![0.0; w_size];
+        let diff_buffer = vec![0.0; w_size];
         Wavetable {
             buffer,
+            diff_buffer,
             size: w_size as Sample,
         }
     }
     pub fn from_buffer(buffer: Vec<Sample>) -> Self {
         let size = buffer.len() as Sample;
-        Self { buffer, size }
+        let diff_buffer: Vec<f32> = buffer
+            .iter()
+            .zip(buffer.iter().skip(1).cycle())
+            .map(|(&a, &b)| b - a)
+            .collect();
+        Self {
+            buffer,
+            diff_buffer,
+            size,
+        }
     }
-    pub fn sine(wavetable_size: usize) -> Self {
-        let mut wt = Wavetable::new(wavetable_size);
+    pub fn sine() -> Self {
+        let wavetable_size = TABLE_SIZE;
+        let mut wt = Wavetable::new();
         // Fill buffer with a sine
         for i in 0..wavetable_size {
             wt.buffer[i] = ((i as Sample / wt.size) * PI * 2.0).sin();
         }
         wt
     }
-    pub fn multi_sine(wavetable_size: usize, num_harmonics: usize) -> Self {
-        let mut wt = Wavetable::new(wavetable_size);
+    pub fn multi_sine(num_harmonics: usize) -> Self {
+        let mut wt = Wavetable::new();
         wt.fill_sine(num_harmonics, 1.0);
         wt.add_noise(0.95, (num_harmonics as f64 * 3723.83626).floor() as u32);
         wt.normalize();
         wt
     }
-    pub fn crazy(wavetable_size: usize, seed: u32) -> Self {
-        let mut wt = Wavetable::new(wavetable_size);
+    pub fn crazy(seed: u32) -> Self {
+        let wavetable_size = TABLE_SIZE;
+        let mut wt = Wavetable::new();
         let mut xorrng = XOrShift32Rng::new(seed);
         wt.fill_sine(16, 1.0);
         for _ in 0..(xorrng.gen_u32() % 3 + 1) {
@@ -62,24 +77,24 @@ impl Wavetable {
         wt
     }
     /// Produces a Hann window
-    pub fn hann_window(wavetable_size: usize) -> Self {
-        let mut wt = Wavetable::new(wavetable_size);
+    pub fn hann_window() -> Self {
+        let mut wt = Wavetable::new();
         // This approach was heavily influenced by the SuperCollider Signal implementation
         wt.fill(0.5);
         wt.add_sine(1.0, 0.5, -0.5 * PI);
         wt
     }
     /// Produces a Hamming window
-    pub fn hamming_window(wavetable_size: usize) -> Self {
-        let mut wt = Wavetable::new(wavetable_size);
+    pub fn hamming_window() -> Self {
+        let mut wt = Wavetable::new();
         // This approach was heavily influenced by the SuperCollider Signal implementation
         wt.fill(0.53836);
         wt.add_sine(1.0, 0.46164, -0.5 * PI);
         wt
     }
     /// Produces a Sine window
-    pub fn sine_window(wavetable_size: usize) -> Self {
-        let mut wt = Wavetable::new(wavetable_size);
+    pub fn sine_window() -> Self {
+        let mut wt = Wavetable::new();
         // This approach was heavily influenced by the SuperCollider Signal implementation
         wt.add_sine(0.5, 1.0, 0.0);
         wt
@@ -183,27 +198,16 @@ impl Wavetable {
     /// Linearly interpolate between the value in between which the phase points.
     /// The phase is assumed to be 0 <= phase < 1
     #[inline]
-    pub fn get_linear_interp(&self, phase: Sample) -> Sample {
-        let index = self.size * phase;
-        let mix = index.fract();
-        let v0 = self.buffer[index.floor() as usize];
-        let v1 = self.buffer[index.ceil() as usize % self.buffer.len()];
-        // let (v0, v1) = unsafe {
-        //     (
-        //         self.buffer.get_unchecked(index.floor() as usize),
-        //         self.buffer
-        //             .get_unchecked(index.ceil() as usize % self.buffer.len()),
-        //     )
-        // };
-        v0 + (v1 - v0) * mix
+    pub fn get_linear_interp(&self, phase: Phase) -> Sample {
+        let index = phase.integer_component();
+        let mix = phase.fractional_component_f32();
+        self.buffer[index] + self.diff_buffer[index] * mix
     }
 
     /// Get the closest sample with no interpolation
     #[inline]
-    pub fn get(&self, phase: Sample) -> Sample {
-        let index = (self.size * phase) as usize;
-        // self.buffer[index]
-        unsafe { *self.buffer.get_unchecked(index) }
+    pub fn get(&self, phase: Phase) -> Sample {
+        unsafe { *self.buffer.get_unchecked(phase.integer_component()) }
     }
 }
 
@@ -246,50 +250,78 @@ impl WavetableArena {
 /// Osciallator with an owned Wavetable
 #[derive(Debug, Clone)]
 pub struct WavetableOscillatorOwned {
-    step: Sample,
-    phase: Sample,
+    step: u32,
+    phase: Phase,
     wavetable: Wavetable,
     amp: Sample,
-    sample_rate: Sample,
 }
 
 impl WavetableOscillatorOwned {
-    pub fn new(wavetable: Wavetable, sample_rate: Sample) -> Self {
+    pub fn new(wavetable: Wavetable) -> Self {
         WavetableOscillatorOwned {
-            step: 0.0,
-            phase: 0.0,
+            step: 0,
+            phase: Phase(0),
             wavetable,
             amp: 1.0,
-            sample_rate,
         }
     }
     pub fn from_freq(wavetable: Wavetable, sample_rate: Sample, freq: Sample, amp: Sample) -> Self {
-        let mut osc = Self::new(wavetable, sample_rate);
+        let mut osc = Self::new(wavetable);
         osc.amp = amp;
-        osc.set_freq(freq);
+        osc.step = ((freq / sample_rate) * TABLE_SIZE as f32) as u32;
         osc
     }
-    pub fn set_freq(&mut self, freq: Sample) {
-        self.step = freq / self.sample_rate;
+    pub fn set_freq(&mut self, freq: Sample, resources: &mut Resources) {
+        self.step = (freq * resources.freq_to_phase_inc) as u32;
     }
     pub fn set_amp(&mut self, amp: Sample) {
         self.amp = amp;
     }
     pub fn reset_phase(&mut self) {
-        self.phase = 0.0;
+        self.phase.0 = 0;
     }
 
     #[inline(always)]
     pub fn next(&mut self) -> Sample {
-        let temp_phase = self.phase;
-        self.phase += self.step;
-        self.phase -= self.phase.floor();
         // Use the phase to index into the wavetable
         // self.wavetable.get_linear_interp(temp_phase) * self.amp
-        self.wavetable.get(temp_phase) * self.amp
+        let sample = self.wavetable.get(self.phase) * self.amp;
+        self.phase.increase(self.step);
+        sample
     }
 }
 
+impl Gen for WavetableOscillatorOwned {
+    fn process(
+        &mut self,
+        inputs: &[Box<[Sample]>],
+        outputs: &mut [Box<[Sample]>],
+        resources: &mut Resources,
+    ) -> GenState {
+        let output = &mut outputs[0];
+        let freq_buf = &inputs[0];
+        for (&freq, o) in freq_buf.iter().zip(output.iter_mut()) {
+            self.set_freq(freq, resources);
+            *o = self.next();
+        }
+        GenState::Continue
+    }
+    fn input_desc(&self, input: usize) -> &'static str {
+        match input {
+            0 => "freq",
+            _ => "",
+        }
+    }
+    fn num_outputs(&self) -> usize {
+        1
+    }
+    fn num_inputs(&self) -> usize {
+        1
+    }
+}
+
+/// Fixed point phase, making use of the TABLE_* constants; compatible with Wavetable
+#[derive(Debug, Clone, Copy)]
 pub struct Phase(pub u32);
 
 impl Phase {
@@ -335,23 +367,21 @@ impl PhaseF32 {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Oscillator {
-    step: Sample,
-    phase: Sample,
+    step: u32,
+    phase: Phase,
     wavetable: WavetableIndex,
     amp: Sample,
-    sample_rate: Sample,
 }
 
 impl Oscillator {
-    pub fn new(wavetable: WavetableIndex, sample_rate: Sample) -> Self {
+    pub fn new(wavetable: WavetableIndex) -> Self {
         Oscillator {
-            step: 0.0,
-            phase: 0.0,
+            step: 0,
+            phase: Phase(0),
             wavetable,
             amp: 1.0,
-            sample_rate,
         }
     }
     pub fn from_freq(
@@ -360,35 +390,35 @@ impl Oscillator {
         freq: Sample,
         amp: Sample,
     ) -> Self {
-        let mut osc = Oscillator::new(wavetable, sample_rate);
+        let mut osc = Oscillator::new(wavetable);
         osc.amp = amp;
-        osc.set_freq(freq);
+        osc.step = ((freq / sample_rate) * TABLE_SIZE as f32) as u32;
         osc
     }
-    pub fn set_freq(&mut self, freq: Sample) {
-        self.step = freq / self.sample_rate;
+    #[inline]
+    pub fn set_freq(&mut self, freq: Sample, resources: &mut Resources) {
+        self.step = (freq / resources.freq_to_phase_inc) as u32;
     }
+    #[inline]
     pub fn set_amp(&mut self, amp: Sample) {
         self.amp = amp;
     }
+    #[inline]
     pub fn reset_phase(&mut self) {
-        self.phase = 0.0;
+        self.phase.0 = 0;
     }
     #[inline]
     fn next(&mut self, resources: &mut Resources) -> Sample {
-        let temp_phase = self.phase;
-        self.phase += self.step;
-        while self.phase >= 1.0 {
-            self.phase -= 1.0;
-        }
         // Use the phase to index into the wavetable
-        match resources.wavetable_arena.get(self.wavetable) {
-            Some(wt) => wt.get(temp_phase) * self.amp,
+        let sample = match resources.wavetable_arena.get(self.wavetable) {
+            Some(wt) => wt.get(self.phase) * self.amp,
             None => {
                 eprintln!("Wavetable doesn't exist: {}", self.wavetable);
                 0.0
             }
-        }
+        };
+        self.phase.increase(self.step);
+        sample
     }
 }
 impl Gen for Oscillator {
@@ -401,7 +431,7 @@ impl Gen for Oscillator {
         let output = &mut outputs[0];
         let freq_buf = &inputs[0];
         for (&freq, o) in freq_buf.iter().zip(output.iter_mut()) {
-            self.set_freq(freq);
+            self.set_freq(freq, resources);
             *o = self.next(resources);
         }
         GenState::Continue
