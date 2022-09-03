@@ -12,6 +12,8 @@ thiserror = "1.0"
 # For real time safe communication between threads
 rtrb = "0.2"
 fastrand = "1.4.1"
+# Fast approximation of common float math. Probably under BSD-3.
+fastapprox = "0.3"
 # Downcast used to have any user data in the Resources struct
 downcast-rs = "1.2.0"
 # Loading audio buffers

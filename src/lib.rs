@@ -6,6 +6,7 @@ use wavetable::{Wavetable, WavetableArena, SINE_WAVETABLE};
 
 pub mod audio_backend;
 pub mod buffer;
+pub mod envelope;
 pub mod graph;
 pub mod prelude;
 pub mod wavetable;

@@ -1,4 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use knyst::envelope::{Curve, Envelope, EnvelopeGen};
 use knyst::wavetable::{Phase, PhaseF32};
 use knyst::{prelude::*, FRACTIONAL_PART};
 
@@ -43,5 +44,47 @@ pub fn phase_float_or_uint(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, phase_float_or_uint);
+pub fn envelope_segments(c: &mut Criterion) {
+    let sample_rate = 44100.0;
+    c.bench_function("envelope linear", |b| {
+        b.iter(|| {
+            let envelope = Envelope {
+                start_value: 0.0,
+                points: vec![(1.0, 0.1), (0.5, 0.5), (0.1, 1.2)],
+                sample_rate,
+                ..Default::default()
+            };
+            let mut envelope = envelope.to_gen();
+            let mut all_values = Vec::with_capacity(44100);
+            envelope.start();
+            for _ in 0..sample_rate as usize {
+                let value = envelope.next();
+                all_values.push(value);
+                black_box(value);
+            }
+        })
+    });
+    c.bench_function("envelope exponential", |b| {
+        b.iter(|| {
+            let mut envelope =
+                EnvelopeGen::new(0.0, vec![(1.0, 0.1), (0.5, 0.1), (0.0, 0.5)], sample_rate)
+                    .curves(vec![
+                        Curve::Exponential(2.0),
+                        Curve::Exponential(4.0),
+                        Curve::Exponential(0.125),
+                    ]);
+            envelope.start();
+            let mut all_values = Vec::with_capacity(44100);
+            for _ in 0..sample_rate as usize {
+                let value = envelope.next();
+                all_values.push(value);
+                black_box(value);
+            }
+        })
+    });
+}
+
+// criterion_group!(benches, phase_float_or_uint);
+criterion_group!(benches, envelope_segments);
+
 criterion_main!(benches);

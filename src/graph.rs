@@ -630,7 +630,7 @@ pub trait Gen {
 ///
 /// The FreeGraph and FreeGraphMendConnections values also return the absolute sample after which the graph
 /// should return 0 or connect its non constant inputs to its outputs.
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub enum GenState {
     Continue,
     FreeSelf,
