@@ -24,6 +24,15 @@ pub const FRACTIONAL_PART: u32 = 65536;
 pub trait AnyData: Downcast + Send + Debug {}
 impl_downcast!(AnyData);
 
+#[derive(Debug, Clone, Copy)]
+pub enum StopAction {
+    Continue,
+    FreeSelf,
+    FreeSelfMendConnections,
+    FreeGraph,
+    FreeGraphMendConnections,
+}
+
 /// Resources contains common resources for all Nodes in some structure.
 pub struct Resources {
     // TODO: Replace with a HopSlotMap

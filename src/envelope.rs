@@ -8,7 +8,10 @@ type Point = (f32, f32);
 // - can introduce new interpolation methods
 // - because of relative time, complex behaviour of jumping around inside the envelope can be implemented (e.g. looping envelope or random/markov chain envelop movement)
 
-use crate::graph::{Gen, GenState, Sample};
+use crate::{
+    graph::{Gen, GenState, Sample},
+    StopAction,
+};
 
 // TODO:
 // [ ] Different curve types:
@@ -28,7 +31,7 @@ pub struct Envelope {
     pub points: Vec<Point>,
     pub curves: Vec<Curve>,
     pub sustain: SustainMode,
-    pub stop_action: GenState,
+    pub stop_action: StopAction,
 }
 impl Envelope {
     pub fn to_gen(&self) -> EnvelopeGen {
@@ -46,7 +49,7 @@ impl Default for Envelope {
             points: vec![(1.0, 0.5), (0., 0.5)],
             curves: vec![Curve::Linear],
             sustain: SustainMode::NoSustain,
-            stop_action: GenState::Continue,
+            stop_action: StopAction::Continue,
         }
     }
 }
@@ -96,7 +99,7 @@ pub struct EnvelopeGen {
     pub playing: bool,
     sample_rate: f32,
     sustain: SustainMode,
-    stop_action: GenState,
+    stop_action: StopAction,
     // pub sustaining: bool, // if the envelope should stop at a certain point before release
     // pub sustaining_point: usize, // which point the envelope should sustain at, if any
     // pub release_point: Option<usize>,
@@ -128,7 +131,7 @@ impl EnvelopeGen {
             fade_out_duration: 0.5,
             segment_duration,
             duration_passed: 0.,
-            stop_action: GenState::Continue,
+            stop_action: StopAction::Continue,
             next_index: 1,
             playing: false,
             sample_rate,
@@ -148,7 +151,7 @@ impl EnvelopeGen {
         self.sustain = sustain;
         self
     }
-    pub fn stop_action(mut self, stop_action: GenState) -> Self {
+    pub fn stop_action(mut self, stop_action: StopAction) -> Self {
         self.stop_action = stop_action;
         self
     }
@@ -168,11 +171,18 @@ impl EnvelopeGen {
             self.curves.resize(self.points.len(), Curve::Linear);
         }
     }
+    /// If the curves are differently many from the points, fill with Curve::Linear for the later segments.
     pub fn curves(mut self, curves: Vec<Curve>) -> Self {
-        if curves.len() != self.points.len() {
-            println!("Envelope: Tried to set different number of curves from points");
+        if curves.len() == self.points.len() {
+            self.curves = curves;
+        } else {
+            let default_curve = Curve::Linear;
+            self.curves = curves
+                .into_iter()
+                .chain(std::iter::repeat(default_curve))
+                .take(self.points.len())
+                .collect();
         }
-        self.curves = curves;
         self
     }
     pub fn set_curve(&mut self, curve: Curve, index: usize) {
@@ -364,16 +374,32 @@ impl Gen for EnvelopeGen {
         _resources: &mut crate::Resources,
     ) -> crate::graph::GenState {
         let release_gate_in = &inputs[0];
-        for (out, &release_gate) in outputs[0].iter_mut().zip(release_gate_in.iter()) {
+        let mut stop_sample = None;
+        for ((i, out), &release_gate) in outputs[0]
+            .iter_mut()
+            .enumerate()
+            .zip(release_gate_in.iter())
+        {
             if release_gate > 0. {
                 self.release();
             }
-            *out = self.next()
+            *out = self.next();
+            if !self.playing() && stop_sample.is_none() {
+                stop_sample = Some(i)
+            }
         }
         if self.playing {
             GenState::Continue
         } else {
-            self.stop_action
+            match self.stop_action {
+                StopAction::Continue => GenState::Continue,
+                StopAction::FreeSelf => GenState::FreeSelf,
+                StopAction::FreeSelfMendConnections => GenState::FreeSelfMendConnections,
+                StopAction::FreeGraph => GenState::FreeGraph(stop_sample.unwrap()),
+                StopAction::FreeGraphMendConnections => {
+                    GenState::FreeGraphMendConnections(stop_sample.unwrap())
+                }
+            }
         }
     }
 

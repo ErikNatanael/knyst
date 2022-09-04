@@ -628,15 +628,16 @@ pub trait Gen {
 /// connection bridge from its non constant inputs to its outputs as if it weren't there. Only inputs with a
 /// corresponding output should be passed through, e.g. in[0] -> out[0], in[1] -> out[1], in[2..5] go nowhere.
 ///
-/// The FreeGraph and FreeGraphMendConnections values also return the absolute sample after which the graph
-/// should return 0 or connect its non constant inputs to its outputs.
+/// The FreeGraph and FreeGraphMendConnections values also return the relative
+/// sample in the current block after which the graph should return 0 or connect
+/// its non constant inputs to its outputs.
 #[derive(Debug, Clone, Copy)]
 pub enum GenState {
     Continue,
     FreeSelf,
     FreeSelfMendConnections,
-    FreeGraph(u64),
-    FreeGraphMendConnections(u64),
+    FreeGraph(usize),
+    FreeGraphMendConnections(usize),
 }
 
 new_key_type! {
@@ -2270,12 +2271,11 @@ impl Gen for GraphGen {
                         }
                         GenState::FreeGraph(from_sample_nr) => {
                             self.graph_state = GenState::FreeSelf;
-                            do_empty_buffer = Some((from_sample_nr - self.sample_counter) as usize);
+                            do_empty_buffer = Some(from_sample_nr);
                         }
                         GenState::FreeGraphMendConnections(from_sample_nr) => {
                             self.graph_state = GenState::FreeSelfMendConnections;
-                            do_mend_connections =
-                                Some((from_sample_nr - self.sample_counter) as usize);
+                            do_mend_connections = Some(from_sample_nr);
                         }
                     }
                 }
