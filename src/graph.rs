@@ -621,6 +621,84 @@ pub trait Gen {
     }
 }
 
+pub struct ClosureGen {
+    process_fn:
+        Box<dyn FnMut(&[Box<[Sample]>], &mut [Box<[Sample]>], &mut Resources) -> GenState + Send>,
+    outputs: Vec<&'static str>,
+    inputs: Vec<&'static str>,
+    name: &'static str,
+}
+pub fn gen(
+    process: impl FnMut(&[Box<[Sample]>], &mut [Box<[Sample]>], &mut Resources) -> GenState
+        + 'static
+        + Send,
+) -> ClosureGen {
+    ClosureGen {
+        process_fn: Box::new(process),
+        ..Default::default()
+    }
+}
+impl ClosureGen {
+    /// Adds an output. The order of outputs depends on the order they are added.
+    pub fn output(mut self, output_name: &'static str) -> Self {
+        self.outputs.push(output_name);
+        self
+    }
+    /// Adds an input. The order of inputs depends on the order they are added.
+    pub fn input(mut self, input_name: &'static str) -> Self {
+        self.inputs.push(input_name);
+        self
+    }
+    /// Set the name of the ClosureGen.
+    pub fn name(mut self, name: &'static str) -> Self {
+        self.name = name;
+        self
+    }
+}
+impl Default for ClosureGen {
+    fn default() -> Self {
+        Self {
+            process_fn: Box::new(|_inputs, _outputs, _resources| GenState::Continue),
+            outputs: Default::default(),
+            inputs: Default::default(),
+            name: "ClosureGen",
+        }
+    }
+}
+
+impl Gen for ClosureGen {
+    fn process(
+        &mut self,
+        inputs: &[Box<[Sample]>],
+        outputs: &mut [Box<[Sample]>],
+        resources: &mut Resources,
+    ) -> GenState {
+        (self.process_fn)(inputs, outputs, resources)
+    }
+
+    fn num_inputs(&self) -> usize {
+        self.inputs.len()
+    }
+
+    fn num_outputs(&self) -> usize {
+        self.outputs.len()
+    }
+
+    fn init(&mut self, _sample_rate: Sample) {}
+
+    fn input_desc(&self, input: usize) -> &'static str {
+        self.inputs.get(input).unwrap_or(&"")
+    }
+
+    fn output_desc(&self, output: usize) -> &'static str {
+        self.outputs.get(output).unwrap_or(&"")
+    }
+
+    fn name(&self) -> &'static str {
+        self.name
+    }
+}
+
 /// The Node should return Continue unless it needs to free itself or the Graph it is in.
 ///
 /// No promise is made as to when the node or the Graph will be freed so the Node needs to do the right thing
