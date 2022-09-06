@@ -96,10 +96,16 @@ impl ParameterChange {
             input_label: None,
         }
     }
+    pub fn index(self, index: usize) -> Self {
+        self.i(index)
+    }
     pub fn i(mut self, index: usize) -> Self {
         self.input_index = Some(index);
         self.input_label = None;
         self
+    }
+    pub fn label(self, label: &'static str) -> Self {
+        self.l(label)
     }
     pub fn l(mut self, label: &'static str) -> Self {
         self.input_label = Some(label);
