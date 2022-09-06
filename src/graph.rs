@@ -893,6 +893,10 @@ impl Graph {
         if node.num_inputs() > self.inputs_buffers.len() {
             eprintln!("Warning: You are trying to add a node with more inputs than the maximum for this Graph. Try increasing the maximum number of node inputs in the GraphSettings.");
         }
+        let nodes = self.get_nodes();
+        if nodes.capacity() == nodes.len() {
+            eprintln!("Error: Trying to push a node into a Graph that is at capacity. Try increasing the number of node slots and make sure you free the nodes you don't need.");
+        }
         let input_index_to_name = node.input_indices_to_names();
         let input_name_to_index = input_index_to_name
             .iter()
@@ -2450,11 +2454,10 @@ struct GraphGen {
     num_outputs: usize,
     num_inputs: usize,
     current_task_data: TaskData,
-    // The number of updates applied to this GraphGen. Add by
-    // `updates_available` every time it finishes a block. It is a u16 so that
-    // when it overflows generation - some_generation_number fits in an i32.
+    // The number of blocks that updates applied to this GraphGen. Wraps around
+    // when it overflows. It is used to determine that a graph update has taken
+    // effect on the audio thread.
     generation: Arc<AtomicU16>,
-    // updates_available: Arc<AtomicBool>,
     // This Arc is cloned from the Graph and exists so that if the Graph gets dropped, the GraphGen can continue on without segfaulting.
     _arc_nodes: Arc<UnsafeCell<SlotMap<NodeKey, Node>>>,
     graph_state: GenState,
