@@ -2673,17 +2673,30 @@ impl GraphGenCommunicator {
         // Happy path
         if generation == cmp + 1 {
             true
-        }
-        // There has been a generation overflow
-        else if generation == 0 && cmp == u16::MAX {
-            true
-        } else {
-            if generation > cmp {
-                eprintln!("GraphGenCommunicator generation has increased more than one since last cleanup");
-            } else if cmp - generation > 1 {
-                panic!("GraphGenCommunicator generation differs by more than 1");
-            }
+        } else if generation == cmp {
             false
+        } else {
+            let difference = if cmp > generation {
+                cmp - generation
+            } else {
+                generation - cmp
+            };
+            // We have already tested for the case of the difference being 0
+            // above. If the difference is small there was probably a race
+            // condition leading to the generation being increased multiple
+            // times between cleanups. A larger difference points towards a
+            // serious error.
+            //
+            // A difference of two is unusual, but happens. More shouldn't
+            // happen, but it isn't worrying. The reason we don't want a high
+            // difference is that the generation number wraps around when it
+            // overflows the u16.
+            if difference < 16 {
+                true
+            } else {
+                eprintln!("Warning: The generation number is unexpected. This suggests some internal error. Please file a bug report.");
+                false
+            }
         }
     }
     fn generation(&self) -> u16 {
