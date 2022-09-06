@@ -83,7 +83,7 @@ fn main() {
                 output_node,
                 &mut graph,
             );
-            std::thread::sleep(Duration::from_secs_f32(0.5));
+            std::thread::sleep(Duration::from_secs_f32(0.15));
         }
         for _ in 0..4 {
             let attack = 0.02;
@@ -125,6 +125,7 @@ fn main() {
 fn sine_tone_graph(
     freq: f32,
     attack: f32,
+    amp: f32,
     duration_secs: f32,
     graph_settings: GraphSettings,
 ) -> Graph {
@@ -133,7 +134,7 @@ fn sine_tone_graph(
     g.connect(constl(freq, "freq").to_node(sin)).unwrap();
     let mut rng = thread_rng();
     let env = Envelope {
-        points: vec![(0.1, attack), (0.0, duration_secs)],
+        points: vec![(amp, attack), (0.0, duration_secs)],
         curves: vec![Curve::Linear, Curve::Exponential(2.0)],
         // TODO: Shouldnt include the sample number here
         stop_action: StopAction::FreeGraph,
@@ -160,14 +161,21 @@ fn add_sine(
     output_node: NodeAddress,
     main_graph: &mut Graph,
 ) {
-    let node = main_graph.push_graph(sine_tone_graph(freq, attack, duration_secs, graph_settings));
     let node = main_graph.push_graph(sine_tone_graph(
-        freq * 1.001,
+        freq,
         attack,
+        0.1,
         duration_secs,
         graph_settings,
     ));
     main_graph.connect(node.to(output_node));
+    let node = main_graph.push_graph(sine_tone_graph(
+        freq * 1.001,
+        attack,
+        0.1,
+        duration_secs,
+        graph_settings,
+    ));
     main_graph.connect(node.to(output_node).to_index(1));
     main_graph.commit_changes();
     main_graph.update();

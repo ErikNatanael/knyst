@@ -43,3 +43,7 @@ required-features = ["jack"]
 name = "cpal_example"
 path = "examples/cpal_example.rs"
 required-features = ["cpal"]
+[[example]]
+name = "sine_piece"
+path = "examples/sine_piece.rs"
+required-features = ["cpal"]
