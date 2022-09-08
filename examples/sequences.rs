@@ -1,0 +1,286 @@
+use std::time::Duration;
+
+use knyst::{
+    audio_backend::{CpalBackend, CpalBackendOptions},
+    envelope::{Curve, Envelope},
+    graph::{GenState, Mult, NodeAddress},
+    prelude::*,
+    wavetable::{Wavetable, WavetableOscillatorOwned},
+};
+use rand::{prelude::SliceRandom, thread_rng, Rng};
+fn main() {
+    #[rustfmt::skip]
+    let seq1_0 = vec![
+        0, -22, 9, -22, 14, -22, 0, -22,
+        9, -22, 14, -22, 22, -22, 9, -22,
+        14, -22, 22, -22, 31, -22, 14, -22,
+        9, -22, 14, -22, 22, -22, 9, -22,
+    ];
+    #[rustfmt::skip]
+    let seq2_0 = vec![
+        14, 9, 0, 9,
+        9, 0, 48 - 53, 9,
+        9, 0, 43 - 53, 39 - 53,
+        31 - 53, 9, 36, 22,
+    ];
+    let seq4_0 = vec![31, 14, 22, 9, 14, 0, 48 - 53, 9];
+
+    #[rustfmt::skip]
+    let seq1_1 = vec![
+        22, 0, 31, 0, 39, 0, 22, 0,
+        31, 0, 39, 0, 45, 0, 31, 0,
+        39, 0, 45, 0, 53, 0, 39, 0,
+        31, 0, 39, 0, 44, 0, 31, 0,
+    ];
+    #[rustfmt::skip]
+    let seq2_1 = vec![
+        39, 31, 22, 31,
+        31, 22, 17, 31,
+        22, 17, 8, 22,
+        0, 22, 17, 53,
+    ];
+    let seq4_1 = vec![53, 39, 45, 31, 39, 22, 17, 31];
+
+    let mut backend = CpalBackend::new(CpalBackendOptions::default()).unwrap();
+
+    let sample_rate = backend.sample_rate() as f32;
+    let block_size = backend.block_size().unwrap_or(64);
+    let resources = Resources::new(sample_rate);
+    let graph_settings = GraphSettings {
+        block_size,
+        sample_rate,
+        latency: Duration::from_millis(100),
+        num_outputs: backend.num_outputs(),
+        ..Default::default()
+    };
+    let mut graph: Graph = Graph::new(graph_settings);
+    backend.start_processing(&mut graph, resources).unwrap();
+
+    let dist_sine = graph.push_gen(WavetableOscillatorOwned::new(Wavetable::sine()));
+    graph.connect(constl(0.03, "freq").to_node(dist_sine));
+    let dist_sine_mul = graph.push_gen(Mult);
+    graph.connect(dist_sine.to(dist_sine_mul));
+    graph.connect(consti(1.5, 1).to_node(dist_sine_mul));
+
+    let output_node = graph.push_gen(
+        gen(move |inputs, outputs, resources| {
+            let (out0, rest) = outputs.split_at_mut(1);
+            let mut out0 = &mut out0[0];
+            let mut out1 = &mut rest[0];
+            for ((((o0, o1), i0), i1), dist) in out0
+                .iter_mut()
+                .zip(out1.iter_mut())
+                .zip(inputs[0].iter())
+                .zip(inputs[1].iter())
+                .zip(inputs[2].iter())
+            {
+                *o0 = i0.clamp(-0.9, 0.9);
+                *o1 = i1.clamp(-0.9, 0.9);
+            }
+            GenState::Continue
+        })
+        .output("out0")
+        .output("out1")
+        .input("in0")
+        .input("in1")
+        .input("distortion"),
+    );
+    graph.connect(dist_sine_mul.to(output_node).to_label("distortion"));
+    graph.connect(constl(1.5, "distortion").to_node(output_node));
+    graph.connect(Connection::out(output_node));
+    graph.connect(Connection::out(output_node).to_index(1));
+
+    struct Section {
+        loop_count: usize,
+    }
+    impl Section {
+        fn fast_part(&self) -> bool {
+            self.loop_count % 4 == 2 || self.loop_count % 4 == 3
+        }
+        fn ostinato(&self) -> bool {
+            self.loop_count % 2 == 1
+        }
+        fn high_octave(&self) -> f32 {
+            if self.fast_part() || self.ostinato() {
+                2.0
+            } else {
+                1.0
+            }
+        }
+    }
+
+    let mut section = Section { loop_count: 0 };
+
+    let mut rng = thread_rng();
+    let mut fundamental = 440.0;
+    loop {
+        for beat_counter in 0..64 {
+            if section.fast_part() && beat_counter % 1 == 0 {
+                let freq = degree_to_freq(31, fundamental);
+                let amp = rng.gen::<f32>() * 0.5 + 0.25;
+                add_sine(
+                    freq * vec![0.125, 0.25].choose(&mut rng).unwrap(),
+                    amp,
+                    0.02,
+                    0.05,
+                    graph_settings,
+                    output_node,
+                    &mut graph,
+                );
+            }
+            if section.ostinato() && beat_counter % 2 == 0 {
+                let i = beat_counter / 2;
+                let amp = [0.4, 0.2, 0.6, 0.2, 1.0, 0.2, 0.4, 0.2][i % 8];
+                let freq = degree_to_freq(seq1_0[(beat_counter / 2) % seq1_0.len()], fundamental);
+                add_sine(
+                    freq * 0.5,
+                    amp,
+                    0.001,
+                    0.25,
+                    graph_settings,
+                    output_node,
+                    &mut graph,
+                );
+            }
+            if beat_counter % 4 == 0 {
+                let i = beat_counter / 4;
+                let amp = [0.8, 0.6, 0.4, 0.7][i % 4];
+                let freq = degree_to_freq(seq2_0[(beat_counter / 4) % seq2_0.len()], fundamental);
+                add_sine(freq, amp, 0.1, 0.5, graph_settings, output_node, &mut graph);
+            }
+            if beat_counter % 8 == 0 {
+                let i = beat_counter / 8;
+                let amp = [1.0, 0.5, 0.8, 0.5][i % 4];
+                let freq = degree_to_freq(seq4_0[(beat_counter / 8) % seq4_0.len()], fundamental);
+                add_sine(freq, amp, 0.1, 1.2, graph_settings, output_node, &mut graph);
+            }
+
+            std::thread::sleep(Duration::from_millis(150));
+        }
+        let mut f_degrees = vec![0, 22, 31, 39, 45, 53, 17 + 53, 22 + 53, 17 + 53, 8 + 53, 45];
+        for beat_counter in 0..64 {
+            if section.fast_part() && beat_counter % 1 == 0 {
+                let amp = rng.gen::<f32>() * 0.5 + 0.25;
+                let degree = f_degrees[beat_counter % f_degrees.len()];
+                let freq = degree_to_freq(degree, fundamental);
+                add_sine(
+                    freq * 0.125 * 2.0_f32.powi((beat_counter / f_degrees.len()) as i32),
+                    amp,
+                    rng.gen::<f32>().powi(3) * 0.25,
+                    0.20,
+                    graph_settings,
+                    output_node,
+                    &mut graph,
+                );
+            }
+            if section.ostinato() && beat_counter % 2 == 0 {
+                let i = beat_counter / 2;
+                let amp = [0.4, 0.2, 0.6, 0.2, 1.0, 0.2, 0.4, 0.2][i % 8];
+                let freq = degree_to_freq(seq1_1[(beat_counter / 2) % seq1_1.len()], fundamental);
+                add_sine(
+                    freq * 0.5,
+                    amp,
+                    0.001,
+                    0.25,
+                    graph_settings,
+                    output_node,
+                    &mut graph,
+                );
+            }
+            if beat_counter % 4 == 0 {
+                let i = beat_counter / 4;
+                let amp = [1.0, 0.6, 0.3, 0.5][i % 4];
+                let freq = degree_to_freq(seq2_1[(beat_counter / 4) % seq2_1.len()], fundamental);
+                add_sine(
+                    freq * section.high_octave(),
+                    amp,
+                    0.1,
+                    0.9,
+                    graph_settings,
+                    output_node,
+                    &mut graph,
+                );
+            }
+            if beat_counter % 8 == 0 {
+                let i = beat_counter / 8;
+                let amp = [1.0, 0.6, 0.8, 0.5][i % 4];
+                let freq = degree_to_freq(seq4_1[(beat_counter / 8) % seq4_1.len()], fundamental);
+                add_sine(
+                    freq * section.high_octave(),
+                    amp,
+                    0.2,
+                    1.2,
+                    graph_settings,
+                    output_node,
+                    &mut graph,
+                );
+            }
+
+            if section.loop_count % 4 == 3 {
+                fundamental = rng.gen::<f32>() * 200. + 300.;
+            }
+            std::thread::sleep(Duration::from_millis(150));
+        }
+        section.loop_count += 1;
+        if section.loop_count % 4 == 0 {
+            fundamental = rng.gen::<f32>() * 200. + 300.;
+        }
+    }
+}
+
+fn degree_to_freq(degree: i32, root: f32) -> f32 {
+    root * 2.0_f32.powf(degree as f32 / 53.0)
+}
+
+fn sine_tone_graph(
+    freq: f32,
+    attack: f32,
+    amp: f32,
+    duration_secs: f32,
+    graph_settings: GraphSettings,
+) -> Graph {
+    let mut g = Graph::new(graph_settings);
+    let sin = g.push_gen(WavetableOscillatorOwned::new(Wavetable::sine()));
+    g.connect(constl(freq, "freq").to_node(sin)).unwrap();
+    let mut rng = thread_rng();
+    let env = Envelope {
+        points: vec![(amp, attack), (0.0, duration_secs)],
+        curves: vec![Curve::Linear, Curve::Exponential(2.0)],
+        // TODO: Shouldnt include the sample number here
+        stop_action: StopAction::FreeGraph,
+        ..Default::default()
+    };
+    let mut env = env.to_gen();
+    // TODO: It is very unintuitive that you have to manually start the envelope
+    env.start();
+    let env = g.push_gen(env);
+    let mult = g.push_gen(Mult);
+    g.connect(sin.to(mult)).unwrap();
+    g.connect(env.to(mult).to_index(1)).unwrap();
+    g.connect(Connection::out(mult)).unwrap();
+    g.connect(Connection::out(mult).to_index(1)).unwrap();
+    g.commit_changes();
+    g
+}
+
+fn add_sine(
+    freq: f32,
+    amp: f32,
+    attack: f32,
+    duration_secs: f32,
+    graph_settings: GraphSettings,
+    output_node: NodeAddress,
+    main_graph: &mut Graph,
+) {
+    let node = main_graph.push_graph(sine_tone_graph(
+        freq,
+        attack,
+        0.05 * amp,
+        duration_secs,
+        graph_settings,
+    ));
+    main_graph.connect(node.to(output_node));
+    main_graph.connect(node.to(output_node).to_index(1));
+    main_graph.commit_changes();
+    main_graph.update();
+}
