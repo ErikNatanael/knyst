@@ -63,6 +63,9 @@ fn main() {
     let chord = vec![1.0, 5. / 4., 3. / 2., 7. / 4., 2.0, 17. / 8.];
     let mut fundamental = 440.0;
     loop {
+        // TODO: Ramp the distortion value
+        graph.schedule_change(ParameterChange::now(output_node, -1.5).label("distortion"));
+        graph.update();
         for _ in 0..32 {
             let attack = 0.5;
             let freq = chord.choose(&mut rng).unwrap() * fundamental;
@@ -85,7 +88,8 @@ fn main() {
             );
             std::thread::sleep(Duration::from_secs_f32(0.15));
         }
-        for _ in 0..4 {
+        graph.connect(constl(rng.gen::<f32>() * 1.5, "distortion").to_node(output_node));
+        for _ in 0..1 {
             let attack = 0.02;
             let freq = chord.choose(&mut rng).unwrap() * fundamental;
             add_sine(freq, attack, 2.0, graph_settings, output_node, &mut graph);
