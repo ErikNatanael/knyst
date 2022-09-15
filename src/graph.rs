@@ -2891,14 +2891,12 @@ impl Gen for Ramp {
             if recalculate {
                 let num_samples = (time * self.sample_rate).floor();
                 self.step = (value - self.current_value) / num_samples;
-                // println!("recalculated step to {}", self.step);
             }
             if (self.current_value - value).abs() < 0.0001 {
                 self.current_value = *value;
                 self.step = 0.;
             }
             self.current_value += self.step;
-            // println!("{}", self.current_value);
             *out = self.current_value;
         }
         GenState::Continue
