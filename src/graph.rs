@@ -2848,6 +2848,93 @@ struct FeedbackEdge {
     feedback_destination: NodeIndex,
 }
 
+pub struct Ramp {
+    // Compare with the current value. If there is change, recalculate the step.
+    last_value: Sample,
+    // Compare with the current value. If there is change, recalculate the step.
+    last_time: Sample,
+    current_value: Sample,
+    step: Sample,
+    sample_rate: Sample,
+}
+
+impl Ramp {
+    pub fn new() -> Self {
+        Self {
+            last_value: 0.0,
+            last_time: 0.0,
+            current_value: 0.0,
+            step: 0.0,
+            sample_rate: 0.0,
+        }
+    }
+}
+impl Gen for Ramp {
+    fn process(
+        &mut self,
+        inputs: &[Box<[Sample]>],
+        outputs: &mut [Box<[Sample]>],
+        _resources: &mut Resources,
+    ) -> GenState {
+        let values = &inputs[0];
+        let times = &inputs[1];
+        for ((value, time), out) in values.iter().zip(times.iter()).zip(outputs[0].iter_mut()) {
+            let mut recalculate = false;
+            if *value != self.last_value {
+                self.last_value = *value;
+                recalculate = true;
+            }
+            if *time != self.last_time {
+                self.last_time = *time;
+                recalculate = true;
+            }
+            if recalculate {
+                let num_samples = (time * self.sample_rate).floor();
+                self.step = (value - self.current_value) / num_samples;
+                // println!("recalculated step to {}", self.step);
+            }
+            if (self.current_value - value).abs() < 0.0001 {
+                self.current_value = *value;
+                self.step = 0.;
+            }
+            self.current_value += self.step;
+            // println!("{}", self.current_value);
+            *out = self.current_value;
+        }
+        GenState::Continue
+    }
+
+    fn num_inputs(&self) -> usize {
+        2
+    }
+
+    fn num_outputs(&self) -> usize {
+        1
+    }
+
+    fn init(&mut self, sample_rate: Sample) {
+        self.sample_rate = sample_rate;
+    }
+
+    fn input_desc(&self, input: usize) -> &'static str {
+        match input {
+            0 => "value",
+            1 => "time",
+            _ => "",
+        }
+    }
+
+    fn output_desc(&self, output: usize) -> &'static str {
+        match output {
+            0 => "ramped_value",
+            _ => "",
+        }
+    }
+
+    fn name(&self) -> &'static str {
+        "Ramp"
+    }
+}
 pub struct Mult;
 impl Gen for Mult {
     fn process(

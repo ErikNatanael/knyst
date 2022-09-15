@@ -4,7 +4,7 @@ use fastapprox::fast::tanh;
 use knyst::{
     audio_backend::{CpalBackend, CpalBackendOptions},
     envelope::{Curve, Envelope},
-    graph::{GenState, Mult, NodeAddress},
+    graph::{GenState, Mult, NodeAddress, Ramp},
     prelude::*,
     wavetable::{Wavetable, WavetableOscillatorOwned},
 };
@@ -22,6 +22,7 @@ fn main() {
         num_outputs: backend.num_outputs(),
         ..Default::default()
     };
+    println!("{graph_settings:#?}");
     let mut graph: Graph = Graph::new(graph_settings);
     backend.start_processing(&mut graph, resources).unwrap();
 
@@ -29,7 +30,7 @@ fn main() {
     graph.connect(constl(0.03, "freq").to_node(dist_sine));
     let dist_sine_mul = graph.push_gen(Mult);
     graph.connect(dist_sine.to(dist_sine_mul));
-    graph.connect(consti(1.5, 1).to_node(dist_sine_mul));
+    graph.connect(consti(5.0, 1).to_node(dist_sine_mul));
 
     let output_node = graph.push_gen(
         gen(move |inputs, outputs, resources| {
@@ -54,17 +55,19 @@ fn main() {
         .input("in1")
         .input("distortion"),
     );
-    graph.connect(dist_sine_mul.to(output_node).to_label("distortion"));
-    graph.connect(constl(1.5, "distortion").to_node(output_node));
-    graph.connect(Connection::out(output_node));
-    graph.connect(Connection::out(output_node).to_index(1));
+    let dist_ramp = graph.push_gen(Ramp::new());
+    graph.connect(dist_ramp.to(output_node).to_label("distortion"));
+    graph.connect(dist_sine_mul.to(dist_ramp).to_label("value"));
+    graph.connect(constl(1.5, "value").to_node(dist_ramp));
+    graph.connect(constl(0.5, "time").to_node(dist_ramp));
+    graph.connect(Connection::out(output_node).channels(2));
 
     let mut rng = thread_rng();
     let chord = vec![1.0, 5. / 4., 3. / 2., 7. / 4., 2.0, 17. / 8.];
     let mut fundamental = 440.0;
     loop {
         // TODO: Ramp the distortion value
-        graph.schedule_change(ParameterChange::now(output_node, -1.5).label("distortion"));
+        graph.schedule_change(ParameterChange::now(dist_ramp, -1.5).label("value"));
         graph.update();
         for _ in 0..32 {
             let attack = 0.5;
@@ -88,7 +91,7 @@ fn main() {
             );
             std::thread::sleep(Duration::from_secs_f32(0.15));
         }
-        graph.connect(constl(rng.gen::<f32>() * 1.5, "distortion").to_node(output_node));
+        graph.connect(constl(rng.gen::<f32>() * 1.5, "value").to_node(dist_ramp));
         for _ in 0..1 {
             let attack = 0.02;
             let freq = chord.choose(&mut rng).unwrap() * fundamental;
@@ -116,7 +119,7 @@ fn main() {
                     output_node,
                     &mut graph,
                 );
-                std::thread::sleep(Duration::from_secs_f32(0.25));
+                std::thread::sleep(Duration::from_secs_f32(rng.gen::<f32>() * 0.35 + 0.15));
             }
         }
         fundamental *= chord.choose(&mut rng).unwrap();
@@ -168,15 +171,15 @@ fn add_sine(
     let node = main_graph.push_graph(sine_tone_graph(
         freq,
         attack,
-        0.1,
+        0.01,
         duration_secs,
         graph_settings,
     ));
     main_graph.connect(node.to(output_node));
     let node = main_graph.push_graph(sine_tone_graph(
-        freq * 1.001,
-        attack,
-        0.1,
+        freq * 1.002,
+        attack * 1.12,
+        0.01,
         duration_secs,
         graph_settings,
     ));
