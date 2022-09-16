@@ -10,6 +10,7 @@ use knyst::{
 };
 use rand::{prelude::SliceRandom, thread_rng, Rng};
 fn main() {
+    // Create the backend to get the backend settings needed to create a Graph with the correct block size and sample rate etc.
     let mut backend = CpalBackend::new(CpalBackendOptions::default()).unwrap();
 
     let sample_rate = backend.sample_rate() as f32;
@@ -23,15 +24,23 @@ fn main() {
         ..Default::default()
     };
     println!("{graph_settings:#?}");
+    // Create the Graph with the settings above
     let mut graph: Graph = Graph::new(graph_settings);
+    // The backend will split the Graph into two
     backend.start_processing(&mut graph, resources).unwrap();
 
+    // Create a sine Gen to modulate the distortion parameter of the output_node below.
     let dist_sine = graph.push_gen(WavetableOscillatorOwned::new(Wavetable::sine()));
+    // Connect the constant 0.03 to the input names "freq" on the node "dist_sine"
     graph.connect(constl(0.03, "freq").to_node(dist_sine));
     let dist_sine_mul = graph.push_gen(Mult);
+    // Multiply the dist_sine by 5.0, giving it the range of +- 5.0 at 0.3 Hz
     graph.connect(dist_sine.to(dist_sine_mul));
     graph.connect(consti(5.0, 1).to_node(dist_sine_mul));
 
+    // Make a custom Gen that adds some distortion to the output with stereo
+    // inputs and outputs. You could also implement the Gen trait for your own
+    // struct.
     let output_node = graph.push_gen(
         gen(move |inputs, outputs, resources| {
             let (out0, rest) = outputs.split_at_mut(1);
@@ -55,6 +64,7 @@ fn main() {
         .input("in1")
         .input("distortion"),
     );
+    // Create a Ramp for smooth transitions between distortion values.
     let dist_ramp = graph.push_gen(Ramp::new());
     graph.connect(dist_ramp.to(output_node).to_label("distortion"));
     graph.connect(dist_sine_mul.to(dist_ramp).to_label("value"));
@@ -66,8 +76,12 @@ fn main() {
     let chord = vec![1.0, 5. / 4., 3. / 2., 7. / 4., 2.0, 17. / 8.];
     let mut fundamental = 440.0;
     loop {
-        // TODO: Ramp the distortion value
+        // Change the distortion value offset to -1.5. Note that we're setting
+        // the input value of the Ramp which is connected to the distortion
+        // value.
         graph.schedule_change(ParameterChange::now(dist_ramp, -1.5).label("value"));
+        // After scheduling a change, we need to update the graph scheduler for
+        // it to pass changes on to the audio thread.
         graph.update();
         for _ in 0..32 {
             let attack = 0.5;
@@ -129,6 +143,7 @@ fn main() {
     }
 }
 
+/// Returns a Graph containing a sine oscillator multiplied by an envelope that frees the Graph when it reaches the end.
 fn sine_tone_graph(
     freq: f32,
     attack: f32,
@@ -160,6 +175,7 @@ fn sine_tone_graph(
     g
 }
 
+/// Add sines with the settings in the parameters and some stereo enhancing effects to the main graph.
 fn add_sine(
     freq: f32,
     attack: f32,
@@ -176,6 +192,7 @@ fn add_sine(
         graph_settings,
     ));
     main_graph.connect(node.to(output_node));
+    // Make the right side sine a different pitch to enhance the stereo effect.
     let node = main_graph.push_graph(sine_tone_graph(
         freq * 1.002,
         attack * 1.12,

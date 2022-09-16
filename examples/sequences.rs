@@ -9,6 +9,7 @@ use knyst::{
 };
 use rand::{prelude::SliceRandom, thread_rng, Rng};
 fn main() {
+    // Write some pitch sequences. The pitches are in 53edo degrees, but you can just as well use 12tet.
     #[rustfmt::skip]
     let seq1_0 = vec![
         0, -22, 9, -22, 14, -22, 0, -22,
@@ -56,12 +57,7 @@ fn main() {
     let mut graph: Graph = Graph::new(graph_settings);
     backend.start_processing(&mut graph, resources).unwrap();
 
-    let dist_sine = graph.push_gen(WavetableOscillatorOwned::new(Wavetable::sine()));
-    graph.connect(constl(0.03, "freq").to_node(dist_sine));
-    let dist_sine_mul = graph.push_gen(Mult);
-    graph.connect(dist_sine.to(dist_sine_mul));
-    graph.connect(consti(1.5, 1).to_node(dist_sine_mul));
-
+    // Create a custom output node. Right now, it just acts like a brickwall limiter.
     let output_node = graph.push_gen(
         gen(move |inputs, outputs, resources| {
             let (out0, rest) = outputs.split_at_mut(1);
@@ -82,14 +78,12 @@ fn main() {
         .output("out0")
         .output("out1")
         .input("in0")
-        .input("in1")
-        .input("distortion"),
+        .input("in1"),
     );
-    graph.connect(dist_sine_mul.to(output_node).to_label("distortion"));
-    graph.connect(constl(1.5, "distortion").to_node(output_node));
-    graph.connect(Connection::out(output_node));
-    graph.connect(Connection::out(output_node).to_index(1));
+    // Connect the output_node to the output of the main graph with two channels, which are mapped 0 -> 0, 1 -> 1
+    graph.connect(Connection::out(output_node).channels(2));
 
+    // This local struct helps us keep track of the form of the piece based on the loop count.
     struct Section {
         loop_count: usize,
     }
@@ -114,6 +108,7 @@ fn main() {
     let mut rng = thread_rng();
     let mut fundamental = 440.0;
     loop {
+        // First play the minor sequences, the ones names *_0
         for beat_counter in 0..64 {
             if section.fast_part() && beat_counter % 1 == 0 {
                 let freq = degree_to_freq(31, fundamental);
@@ -157,6 +152,7 @@ fn main() {
 
             std::thread::sleep(Duration::from_millis(150));
         }
+        // Then play the major sequences, the ones names *_1
         let mut f_degrees = vec![0, 22, 31, 39, 45, 53, 17 + 53, 22 + 53, 17 + 53, 8 + 53, 45];
         for beat_counter in 0..64 {
             if section.fast_part() && beat_counter % 1 == 0 {
@@ -166,7 +162,7 @@ fn main() {
                 add_sine(
                     freq * 0.125 * 2.0_f32.powi((beat_counter / f_degrees.len()) as i32),
                     amp,
-                    rng.gen::<f32>().powi(3) * 0.25,
+                    rng.gen::<f32>().powi(3) * 0.2,
                     0.20,
                     graph_settings,
                     output_node,
