@@ -8,7 +8,7 @@ use knyst::{
     wavetable::{Wavetable, WavetableOscillatorOwned},
 };
 use rand::{prelude::SliceRandom, thread_rng, Rng};
-fn main() {
+fn main() -> anyhow::Result<()> {
     // Write some pitch sequences. The pitches are in 53edo degrees, but you can just as well use 12tet.
     #[rustfmt::skip]
     let seq1_0 = vec![
@@ -42,7 +42,7 @@ fn main() {
     ];
     let seq4_1 = vec![53, 39, 45, 31, 39, 22, 17, 31];
 
-    let mut backend = CpalBackend::new(CpalBackendOptions::default()).unwrap();
+    let mut backend = CpalBackend::new(CpalBackendOptions::default())?;
 
     let sample_rate = backend.sample_rate() as f32;
     let block_size = backend.block_size().unwrap_or(64);
@@ -55,7 +55,7 @@ fn main() {
         ..Default::default()
     };
     let mut graph: Graph = Graph::new(graph_settings);
-    backend.start_processing(&mut graph, resources).unwrap();
+    backend.start_processing(&mut graph, resources)?;
 
     // Create a custom output node. Right now, it just acts like a brickwall limiter.
     let output_node = graph.push_gen(
@@ -80,9 +80,7 @@ fn main() {
         .input("in1"),
     );
     // Connect the output_node to the output of the main graph with two channels, which are mapped 0 -> 0, 1 -> 1
-    graph
-        .connect(output_node.to_graph_out().channels(2))
-        .unwrap();
+    graph.connect(output_node.to_graph_out().channels(2))?;
 
     // This local struct helps us keep track of the form of the piece based on the loop count.
     struct Section {
@@ -122,7 +120,7 @@ fn main() {
                     graph_settings,
                     output_node,
                     &mut graph,
-                );
+                )?;
             }
             if section.ostinato() && beat_counter % 2 == 0 {
                 let i = beat_counter / 2;
@@ -136,19 +134,19 @@ fn main() {
                     graph_settings,
                     output_node,
                     &mut graph,
-                );
+                )?;
             }
             if beat_counter % 4 == 0 {
                 let i = beat_counter / 4;
                 let amp = [0.8, 0.6, 0.4, 0.7][i % 4];
                 let freq = degree_to_freq(seq2_0[(beat_counter / 4) % seq2_0.len()], fundamental);
-                add_sine(freq, amp, 0.1, 0.5, graph_settings, output_node, &mut graph);
+                add_sine(freq, amp, 0.1, 0.5, graph_settings, output_node, &mut graph)?;
             }
             if beat_counter % 8 == 0 {
                 let i = beat_counter / 8;
                 let amp = [1.0, 0.5, 0.8, 0.5][i % 4];
                 let freq = degree_to_freq(seq4_0[(beat_counter / 8) % seq4_0.len()], fundamental);
-                add_sine(freq, amp, 0.1, 1.2, graph_settings, output_node, &mut graph);
+                add_sine(freq, amp, 0.1, 1.2, graph_settings, output_node, &mut graph)?;
             }
 
             std::thread::sleep(Duration::from_millis(150));
@@ -168,7 +166,7 @@ fn main() {
                     graph_settings,
                     output_node,
                     &mut graph,
-                );
+                )?;
             }
             if section.ostinato() && beat_counter % 2 == 0 {
                 let i = beat_counter / 2;
@@ -182,7 +180,7 @@ fn main() {
                     graph_settings,
                     output_node,
                     &mut graph,
-                );
+                )?;
             }
             if beat_counter % 4 == 0 {
                 let i = beat_counter / 4;
@@ -196,7 +194,7 @@ fn main() {
                     graph_settings,
                     output_node,
                     &mut graph,
-                );
+                )?;
             }
             if beat_counter % 8 == 0 {
                 let i = beat_counter / 8;
@@ -210,7 +208,7 @@ fn main() {
                     graph_settings,
                     output_node,
                     &mut graph,
-                );
+                )?;
             }
 
             if section.loop_count % 4 == 3 {
@@ -235,10 +233,10 @@ fn sine_tone_graph(
     amp: f32,
     duration_secs: f32,
     graph_settings: GraphSettings,
-) -> Graph {
+) -> anyhow::Result<Graph> {
     let mut g = Graph::new(graph_settings);
     let sin = g.push_gen(WavetableOscillatorOwned::new(Wavetable::sine()));
-    g.connect(constant(freq).to(sin).to_label("freq")).unwrap();
+    g.connect(constant(freq).to(sin).to_label("freq"))?;
     let env = Envelope {
         points: vec![(amp, attack), (0.0, duration_secs)],
         curves: vec![Curve::Linear, Curve::Exponential(2.0)],
@@ -251,12 +249,12 @@ fn sine_tone_graph(
     env.start();
     let env = g.push_gen(env);
     let mult = g.push_gen(Mult);
-    g.connect(sin.to(mult)).unwrap();
-    g.connect(env.to(mult).to_index(1)).unwrap();
-    g.connect(mult.to_graph_out()).unwrap();
-    g.connect(mult.to_graph_out().to_index(1)).unwrap();
+    g.connect(sin.to(mult))?;
+    g.connect(env.to(mult).to_index(1))?;
+    g.connect(mult.to_graph_out())?;
+    g.connect(mult.to_graph_out().to_index(1))?;
     g.commit_changes();
-    g
+    Ok(g)
 }
 
 fn add_sine(
@@ -267,18 +265,17 @@ fn add_sine(
     graph_settings: GraphSettings,
     output_node: NodeAddress,
     main_graph: &mut Graph,
-) {
+) -> anyhow::Result<()> {
     let node = main_graph.push_graph(sine_tone_graph(
         freq,
         attack,
         0.05 * amp,
         duration_secs,
         graph_settings,
-    ));
-    main_graph.connect(node.to(output_node)).unwrap();
-    main_graph
-        .connect(node.to(output_node).to_index(1))
-        .unwrap();
+    )?);
+    main_graph.connect(node.to(output_node))?;
+    main_graph.connect(node.to(output_node).to_index(1))?;
     main_graph.commit_changes();
     main_graph.update();
+    Ok(())
 }
