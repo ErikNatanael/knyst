@@ -33,8 +33,10 @@ fn main() {
     graph.connect(node0.to(amp)).unwrap();
     graph.connect(consti(0.5, 1).to_node(amp)).unwrap();
     graph.connect(mod_amp.to(amp).to_index(1)).unwrap();
-    graph.connect(Connection::out(amp)).unwrap();
-    graph.connect(Connection::out(amp).to_index(1)).unwrap();
+    graph.connect(Connection::graph_output(amp)).unwrap();
+    graph
+        .connect(Connection::graph_output(amp).to_index(1))
+        .unwrap();
     graph.commit_changes();
     graph.update(); // Required because constant connections get converted to
                     // scheduled changes when the graph is running.

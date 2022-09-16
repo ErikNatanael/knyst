@@ -9,7 +9,7 @@ Knyst is a real time audio synthesis framework focusing on flexibility and perfo
 # Features
 
 - good runtime performance
-- interopability with static Rust DSP libraries e.g. dasp and fundsp
+- interopability with static Rust DSP libraries e.g. dasp and fundsp (they can be encapsulated in a node and added to the graph)
 - real time changes to the audio graph
 - sample accurate parameter changes
 - graphs can be nodes and changes can be applied to graphs within graphs at any depth

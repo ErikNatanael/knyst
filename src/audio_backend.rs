@@ -368,6 +368,7 @@ pub mod cpal_backend {
     {
         let channels = config.channels as usize;
 
+        // TODO: Send error back from the audio thread in a unified way.
         let err_fn = |err| eprintln!("an error occurred on stream: {}", err);
 
         let input_buffers = vec![vec![0.0; 0].into_boxed_slice(); 0].into_boxed_slice();

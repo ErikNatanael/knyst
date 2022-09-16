@@ -4,12 +4,13 @@ use fastapprox::fast::tanh;
 use knyst::{
     audio_backend::{CpalBackend, CpalBackendOptions},
     envelope::{Curve, Envelope},
-    graph::{GenState, Mult, NodeAddress},
+    graph::{GenState, Mult, NodeAddress, Ramp},
     prelude::*,
     wavetable::{Wavetable, WavetableOscillatorOwned},
 };
 use rand::{prelude::SliceRandom, thread_rng, Rng};
 fn main() {
+    // Create the backend to get the backend settings needed to create a Graph with the correct block size and sample rate etc.
     let mut backend = CpalBackend::new(CpalBackendOptions::default()).unwrap();
 
     let sample_rate = backend.sample_rate() as f32;
@@ -22,15 +23,24 @@ fn main() {
         num_outputs: backend.num_outputs(),
         ..Default::default()
     };
+    println!("{graph_settings:#?}");
+    // Create the Graph with the settings above
     let mut graph: Graph = Graph::new(graph_settings);
+    // The backend will split the Graph into two
     backend.start_processing(&mut graph, resources).unwrap();
 
+    // Create a sine Gen to modulate the distortion parameter of the output_node below.
     let dist_sine = graph.push_gen(WavetableOscillatorOwned::new(Wavetable::sine()));
+    // Connect the constant 0.03 to the input names "freq" on the node "dist_sine"
     graph.connect(constant(0.03).to(dist_sine).to_label("freq"));
     let dist_sine_mul = graph.push_gen(Mult);
+    // Multiply the dist_sine by 5.0, giving it the range of +- 5.0 at 0.3 Hz
     graph.connect(dist_sine.to(dist_sine_mul));
     graph.connect(constant(1.5).to(dist_sine_mul).to_index(1));
 
+    // Make a custom Gen that adds some distortion to the output with stereo
+    // inputs and outputs. You could also implement the Gen trait for your own
+    // struct.
     let output_node = graph.push_gen(
         gen(move |inputs, outputs, resources| {
             let (out0, rest) = outputs.split_at_mut(1);
@@ -54,16 +64,24 @@ fn main() {
         .input("in1")
         .input("distortion"),
     );
-    graph.connect(dist_sine_mul.to(output_node).to_label("distortion"));
-    graph.connect(constant(1.5).to(output_node).to_label("distortion"));
+    // Create a Ramp for smooth transitions between distortion values.
+    let dist_ramp = graph.push_gen(Ramp::new());
+    graph.connect(dist_ramp.to(output_node).to_label("distortion"));
+    graph.connect(dist_sine_mul.to(dist_ramp).to_label("value"));
+    graph.connect(constl(1.5).to(dist_ramp).to_label("value"));
+    graph.connect(constl(0.5).to(dist_ramp).to_label("time"));
     graph.connect(output_node.to_graph_out().channels(2));
 
     let mut rng = thread_rng();
     let chord = vec![1.0, 5. / 4., 3. / 2., 7. / 4., 2.0, 17. / 8.];
     let mut fundamental = 440.0;
     loop {
-        // TODO: Ramp the distortion value
-        graph.schedule_change(ParameterChange::now(output_node, -1.5).label("distortion"));
+        // Change the distortion value offset to -1.5. Note that we're setting
+        // the input value of the Ramp which is connected to the distortion
+        // value.
+        graph.schedule_change(ParameterChange::now(dist_ramp, -1.5).label("value"));
+        // After scheduling a change, we need to update the graph scheduler for
+        // it to pass changes on to the audio thread.
         graph.update();
         for _ in 0..32 {
             let attack = 0.5;
@@ -87,7 +105,7 @@ fn main() {
             );
             std::thread::sleep(Duration::from_secs_f32(0.15));
         }
-        graph.connect(constl(rng.gen::<f32>() * 1.5, "distortion").to_node(output_node));
+        graph.connect(constl(rng.gen::<f32>() * 1.5, "value").to_node(dist_ramp));
         for _ in 0..1 {
             let attack = 0.02;
             let freq = chord.choose(&mut rng).unwrap() * fundamental;
@@ -115,7 +133,7 @@ fn main() {
                     output_node,
                     &mut graph,
                 );
-                std::thread::sleep(Duration::from_secs_f32(0.25));
+                std::thread::sleep(Duration::from_secs_f32(rng.gen::<f32>() * 0.35 + 0.15));
             }
         }
         fundamental *= chord.choose(&mut rng).unwrap();
@@ -125,6 +143,7 @@ fn main() {
     }
 }
 
+/// Returns a Graph containing a sine oscillator multiplied by an envelope that frees the Graph when it reaches the end.
 fn sine_tone_graph(
     freq: f32,
     attack: f32,
@@ -157,6 +176,7 @@ fn sine_tone_graph(
     g
 }
 
+/// Add sines with the settings in the parameters and some stereo enhancing effects to the main graph.
 fn add_sine(
     freq: f32,
     attack: f32,
@@ -168,15 +188,16 @@ fn add_sine(
     let node = main_graph.push_graph(sine_tone_graph(
         freq,
         attack,
-        0.1,
+        0.01,
         duration_secs,
         graph_settings,
     ));
     main_graph.connect(node.to(output_node));
+    // Make the right side sine a different pitch to enhance the stereo effect.
     let node = main_graph.push_graph(sine_tone_graph(
-        freq * 1.001,
-        attack,
-        0.1,
+        freq * 1.002,
+        attack * 1.12,
+        0.01,
         duration_secs,
         graph_settings,
     ));
