@@ -1,6 +1,7 @@
 use buffer::{Buffer, BufferIndex};
 use core::fmt::Debug;
 use downcast_rs::{impl_downcast, Downcast};
+use graph::NodeAddress;
 use std::collections::HashMap;
 use wavetable::{Wavetable, WavetableArena, SINE_WAVETABLE};
 
@@ -169,4 +170,47 @@ pub enum StandardWt {
     FastSine = 0,
     FastSineDiff,
     Last,
+}
+
+/// Interface for setting up and interacting with a running audio graph.
+///
+/// You can just as well manually use the AudioBackend and together with Graph,
+/// but using this interface instead saves you from having to think about
+/// regularly updating the scheduler
+struct Knyst {}
+
+// Action: push a gen, add connections to its inputs and to its outputs
+// 1. push_gen -> NodeHandle
+// 2. connect input NodeHandles to NodeHandle
+// 3. connect NodeHandle outputs to other NodeHandles
+// 4. connect NodeHandle to the graph outputs
+//
+// If you're creating a whole graph all at once, you probably want to do it in a
+// function that returns said Graph. Then you end up with NodeAddresses to the
+// nodes within the graph anyways.
+
+/// Asynchronous NodeAddress. Returned from the helper thread interface when
+/// using it to schedule an event that returns a NodeAddress
+enum NodeHandle {
+    Waiting(rtrb::Consumer<NodeAddress>),
+    Received(NodeAddress),
+}
+
+impl NodeHandle {
+    pub fn get(&mut self) -> Option<NodeAddress> {
+        let n = match self {
+            NodeHandle::Waiting(consumer) => {
+                if let Ok(node_address) = consumer.pop() {
+                    Some(node_address)
+                } else {
+                    None
+                }
+            }
+            NodeHandle::Received(n) => Some(*n),
+        };
+        if let Some(n) = n {
+            *self = NodeHandle::Received(n);
+        }
+        n
+    }
 }
