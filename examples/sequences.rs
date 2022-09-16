@@ -57,10 +57,10 @@ fn main() {
     backend.start_processing(&mut graph, resources).unwrap();
 
     let dist_sine = graph.push_gen(WavetableOscillatorOwned::new(Wavetable::sine()));
-    graph.connect(constl(0.03, "freq").to_node(dist_sine));
+    graph.connect(constant(0.03).to(dist_sine).to_label("freq"));
     let dist_sine_mul = graph.push_gen(Mult);
     graph.connect(dist_sine.to(dist_sine_mul));
-    graph.connect(consti(1.5, 1).to_node(dist_sine_mul));
+    graph.connect(constant(1.5).to(dist_sine_mul).to_index(1));
 
     let output_node = graph.push_gen(
         gen(move |inputs, outputs, resources| {
@@ -86,9 +86,9 @@ fn main() {
         .input("distortion"),
     );
     graph.connect(dist_sine_mul.to(output_node).to_label("distortion"));
-    graph.connect(constl(1.5, "distortion").to_node(output_node));
-    graph.connect(Connection::out(output_node));
-    graph.connect(Connection::out(output_node).to_index(1));
+    graph.connect(constant(1.5).to(output_node).to_label("distortion"));
+    graph.connect(Connection::graph_output(output_node));
+    graph.connect(Connection::graph_output(output_node).to_index(1));
 
     struct Section {
         loop_count: usize,
@@ -241,7 +241,7 @@ fn sine_tone_graph(
 ) -> Graph {
     let mut g = Graph::new(graph_settings);
     let sin = g.push_gen(WavetableOscillatorOwned::new(Wavetable::sine()));
-    g.connect(constl(freq, "freq").to_node(sin)).unwrap();
+    g.connect(constant(freq).to(sin).to_label("freq")).unwrap();
     let mut rng = thread_rng();
     let env = Envelope {
         points: vec![(amp, attack), (0.0, duration_secs)],
@@ -257,8 +257,9 @@ fn sine_tone_graph(
     let mult = g.push_gen(Mult);
     g.connect(sin.to(mult)).unwrap();
     g.connect(env.to(mult).to_index(1)).unwrap();
-    g.connect(Connection::out(mult)).unwrap();
-    g.connect(Connection::out(mult).to_index(1)).unwrap();
+    g.connect(Connection::graph_output(mult)).unwrap();
+    g.connect(Connection::graph_output(mult).to_index(1))
+        .unwrap();
     g.commit_changes();
     g
 }

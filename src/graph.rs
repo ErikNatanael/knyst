@@ -45,6 +45,15 @@ impl NodeAddress {
             feedback: false,
         }
     }
+    pub fn to_graph_out(&self) -> Connection {
+        Connection::GraphOutput {
+            source: *self,
+            from_index: Some(0),
+            from_label: None,
+            to_index: 0,
+            channels: 1,
+        }
+    }
     pub fn feedback_to(&self, sink_node: NodeAddress) -> Connection {
         Connection::Node {
             source: *self,
@@ -58,6 +67,25 @@ impl NodeAddress {
         }
     }
 }
+
+pub struct GraphInput;
+impl GraphInput {
+    pub fn to(sink_node: NodeAddress) -> Connection {
+        Connection::GraphInput {
+            from_index: 0,
+            sink: sink_node,
+            to_index: None,
+            to_label: None,
+            channels: 1,
+        }
+    }
+}
+
+// graph.connect(sine.to(GraphOut))
+// graph.connect(sine.to(GRAPH_OUT))
+// graph.connect(sine.to_graph_out())
+// graph.connect(GraphIn::to(sine).from_index(1).to_label("freq"))
+// graph.connect(GRAPH_IN.to(sine).from_index(1).to_label("freq"))
 
 #[derive(Clone, Copy)]
 pub struct ParameterChange {
@@ -189,24 +217,8 @@ pub fn constant(value: Sample) -> Connection {
         to_label: None,
     }
 }
-pub fn constl(value: Sample, label: &'static str) -> Connection {
-    Connection::Constant {
-        value,
-        sink: None,
-        to_index: None,
-        to_label: Some(label),
-    }
-}
-pub fn consti(value: Sample, index: usize) -> Connection {
-    Connection::Constant {
-        value,
-        sink: None,
-        to_index: Some(index),
-        to_label: None,
-    }
-}
 impl Connection {
-    pub fn out(source_node: NodeAddress) -> Self {
+    pub fn graph_output(source_node: NodeAddress) -> Self {
         Self::GraphOutput {
             source: source_node,
             from_index: Some(0),
@@ -274,7 +286,9 @@ impl Connection {
             graph_inputs: true,
         }
     }
-    pub fn from_node(mut self, source_node: NodeAddress) -> Self {
+    /// Sets the source of a Connection. Only valid for Connection::Node and
+    /// Connection::GraphOutput. On other variants it does nothing.
+    pub fn from(mut self, source_node: NodeAddress) -> Self {
         match &mut self {
             Connection::Node { source, .. } => {
                 *source = source_node;
@@ -288,7 +302,9 @@ impl Connection {
         }
         self
     }
-    pub fn to_node(mut self, sink_node: NodeAddress) -> Self {
+    /// Sets the source of a Connection. Does nothing on a
+    /// Connection::GraphOutput or Connection::Clear.
+    pub fn to(mut self, sink_node: NodeAddress) -> Self {
         match &mut self {
             Connection::Node { sink, .. } => {
                 *sink = sink_node;
@@ -333,8 +349,8 @@ impl Connection {
         }
         self
     }
-    /// Shortcut for `input_label`
-    pub fn il(self, label: &'static str) -> Self {
+    /// Shortcut for `to_label`
+    pub fn tl(self, label: &'static str) -> Self {
         self.to_label(label)
     }
     pub fn to_index(mut self, index: usize) -> Self {
@@ -381,8 +397,8 @@ impl Connection {
             Connection::GraphInput { to_index, .. } => *to_index,
         }
     }
-    /// Shortcut for `input_index`
-    pub fn ii(self, index: usize) -> Self {
+    /// Shortcut for `to_index`
+    pub fn ti(self, index: usize) -> Self {
         self.to_index(index)
     }
     pub fn from_index(mut self, index: usize) -> Self {
@@ -1042,7 +1058,7 @@ impl Graph {
                 for input in inputs {
                     for output in outputs {
                         let connection = output.clone();
-                        self.connect(connection.from_node(NodeAddress {
+                        self.connect(connection.from(NodeAddress {
                             key: input.source,
                             graph_id: self.id,
                         }))
@@ -1056,7 +1072,7 @@ impl Graph {
                         let connection = input.clone();
                         match self.connect(
                             connection
-                                .to_node(output.get_source_node().unwrap())
+                                .to(output.get_source_node().unwrap())
                                 .to_index(output.get_to_index().unwrap()),
                         ) {
                             Ok(_) => (),
@@ -2998,7 +3014,7 @@ mod tests {
         let mut graph: Graph = Graph::new(GraphSettings::default());
         let node = Node::new("Dummy", Box::new(DummyGen { counter: 0.0 }));
         let node_id = graph.push_node(node);
-        graph.connect(Connection::out(node_id)).unwrap();
+        graph.connect(Connection::graph_output(node_id)).unwrap();
         graph.init();
         let mut resources = Resources::new(44100.0);
         let mut graph_node = graph_node(&mut graph);
@@ -3019,7 +3035,7 @@ mod tests {
         let node_id3 = graph.push_node(node3);
         graph.connect(node_id1.to(node_id3)).unwrap();
         graph.connect(node_id2.to(node_id3)).unwrap();
-        graph.connect(Connection::out(node_id3)).unwrap();
+        graph.connect(Connection::graph_output(node_id3)).unwrap();
         let mut graph_node = graph_node(&mut graph);
         let mut resources = Resources::new(44100.0);
         graph_node.process(&null_input(), &mut resources);
@@ -3034,8 +3050,8 @@ mod tests {
         });
         let node = Node::new("Dummy", Box::new(DummyGen { counter: 0.0 }));
         let node_id = graph.push_node(node);
-        graph.connect(constant(0.5).to_node(node_id)).unwrap();
-        graph.connect(Connection::out(node_id)).unwrap();
+        graph.connect(constant(0.5).to(node_id)).unwrap();
+        graph.connect(Connection::graph_output(node_id)).unwrap();
         let mut graph_node = graph_node(&mut graph);
         let mut resources = Resources::new(44100.0);
         graph_node.process(&null_input(), &mut resources);
@@ -3051,18 +3067,20 @@ mod tests {
         });
         let node = Node::new("Dummy", Box::new(DummyGen { counter: 0.0 }));
         let node_id = inner_graph.push_node(node);
-        inner_graph.connect(Connection::out(node_id)).unwrap();
+        inner_graph
+            .connect(Connection::graph_output(node_id))
+            .unwrap();
         let mut graph: Graph = Graph::new(GraphSettings {
             block_size: BLOCK,
             ..Default::default()
         });
         let inner_graph_node_id = graph.push_graph(inner_graph);
         graph
-            .connect(Connection::out(inner_graph_node_id).channels(2))
+            .connect(Connection::graph_output(inner_graph_node_id).channels(2))
             .unwrap();
         // Parent graphs should propagate a connection to its child graphs without issue
         graph
-            .connect(constant(CONSTANT_INPUT_TO_NODE).to_node(node_id))
+            .connect(constant(CONSTANT_INPUT_TO_NODE).to(node_id))
             .unwrap();
         let mut graph_node = graph_node(&mut graph);
         let mut resources = Resources::new(44100.0);
@@ -3091,8 +3109,10 @@ mod tests {
         let n2 = graph.push_node(Node::new("Dummy", Box::new(DummyGen { counter: 4.0 })));
         let n3 = graph.push_node(Node::new("Dummy", Box::new(DummyGen { counter: 5.0 })));
         let n4 = graph.push_node(Node::new("Dummy", Box::new(DummyGen { counter: 1.0 })));
-        graph.connect(Connection::out(n1)).unwrap();
-        graph.connect(Connection::out(n0).to_index(1)).unwrap();
+        graph.connect(Connection::graph_output(n1)).unwrap();
+        graph
+            .connect(Connection::graph_output(n0).to_index(1))
+            .unwrap();
         graph.connect(n0.to(n1)).unwrap();
         graph.connect(n2.to(n3)).unwrap();
         graph.connect(n3.to(n4)).unwrap();
@@ -3142,8 +3162,8 @@ mod tests {
         for i in 0..10 {
             let node = Node::new("Dummy", Box::new(DummyGen { counter: 0.0 }));
             let node_id = graph.push_node(node);
-            graph.connect(constant(0.5).to_node(node_id)).unwrap();
-            graph.connect(Connection::out(node_id)).unwrap();
+            graph.connect(constant(0.5).to(node_id)).unwrap();
+            graph.connect(Connection::graph_output(node_id)).unwrap();
             graph.commit_changes();
             graph.update();
             graph_node.process(&null_input(), &mut resources);
@@ -3177,7 +3197,7 @@ mod tests {
                     .to_label("counter"),
             )
             .unwrap();
-        graph.connect(Connection::out(node_id)).unwrap();
+        graph.connect(Connection::graph_output(node_id)).unwrap();
         graph.commit_changes();
         let input = vec![
             vec![0.0; BLOCK].into_boxed_slice(),
@@ -3204,7 +3224,7 @@ mod tests {
             if let Some(last) = last_node.take() {
                 graph.connect(node.to(last)).unwrap();
             } else {
-                graph.connect(Connection::out(node)).unwrap();
+                graph.connect(Connection::graph_output(node)).unwrap();
             }
             last_node = Some(node);
             nodes.push(node);
@@ -3256,7 +3276,7 @@ mod tests {
             if let Some(last) = last_node.take() {
                 graph.connect(node.to(last)).unwrap();
             } else {
-                graph.connect(Connection::out(node)).unwrap();
+                graph.connect(Connection::graph_output(node)).unwrap();
             }
             last_node = Some(node);
             nodes.push(node);
@@ -3275,7 +3295,7 @@ mod tests {
             if let Some(last) = last_node.take() {
                 graph.connect(node.to(last)).unwrap();
             } else {
-                graph.connect(Connection::out(node)).unwrap();
+                graph.connect(Connection::graph_output(node)).unwrap();
             }
             last_node = Some(node);
             nodes.push(node);
@@ -3366,7 +3386,7 @@ mod tests {
             value: 3.,
             mend: false,
         });
-        graph.connect(Connection::out(n0)).unwrap();
+        graph.connect(Connection::graph_output(n0)).unwrap();
         graph.connect(n1.to(n0)).unwrap();
         graph.connect(n2.to(n1)).unwrap();
         graph.connect(n3.to(n2)).unwrap();
@@ -3411,9 +3431,9 @@ mod tests {
         let mut resources = Resources::new(44100.0);
         let node0 = graph.push_gen(OneGen {});
         let node1 = graph.push_gen(OneGen {});
-        graph.connect(Connection::out(node0)).unwrap();
+        graph.connect(Connection::graph_output(node0)).unwrap();
         graph.connect(node1.to(node0)).unwrap();
-        graph.connect(consti(2., 0).to_node(node1)).unwrap();
+        graph.connect(constant(2.).to(node1)).unwrap();
         graph.commit_changes();
         graph
             .schedule_change(ParameterChange::absolute_samples(node0, 1.0, 3).i(0))
