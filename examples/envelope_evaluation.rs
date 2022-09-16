@@ -1,4 +1,4 @@
-use knyst::envelope::{Envelope, EnvelopeGen};
+use knyst::envelope::Envelope;
 
 fn main() {
     let sample_rate = 44100.0;

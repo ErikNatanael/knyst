@@ -379,7 +379,7 @@ pub mod cpal_backend {
             config,
             move |output: &mut [T], _: &cpal::OutputCallbackInfo| {
                 // TODO: When CPAL support duplex streams, copy inputs to graph inputs here.
-                for (frame_i, frame) in output.chunks_mut(channels).enumerate() {
+                for frame in output.chunks_mut(channels) {
                     if sample_counter >= graph_block_size {
                         node.process(&input_buffers, &mut resources);
                         sample_counter = 0;

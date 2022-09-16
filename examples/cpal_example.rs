@@ -35,9 +35,7 @@ fn main() {
         .unwrap();
     let amp = graph.push_gen(Mult);
     graph.connect(node0.to(amp)).unwrap();
-    graph
-        .connect(constant(0.5).to_node(amp).to_index(1))
-        .unwrap();
+    graph.connect(constant(0.5).to(amp).to_index(1)).unwrap();
     graph.connect(mod_amp.to(amp).to_index(1)).unwrap();
     graph.connect(amp.to_graph_out()).unwrap();
     graph.connect(amp.to_graph_out().to_index(1)).unwrap();

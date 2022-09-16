@@ -59,16 +59,15 @@ fn main() {
 
     // Create a custom output node. Right now, it just acts like a brickwall limiter.
     let output_node = graph.push_gen(
-        gen(move |inputs, outputs, resources| {
+        gen(move |inputs, outputs, _resources| {
             let (out0, rest) = outputs.split_at_mut(1);
-            let mut out0 = &mut out0[0];
-            let mut out1 = &mut rest[0];
-            for ((((o0, o1), i0), i1), dist) in out0
+            let out0 = &mut out0[0];
+            let out1 = &mut rest[0];
+            for (((o0, o1), i0), i1) in out0
                 .iter_mut()
                 .zip(out1.iter_mut())
                 .zip(inputs[0].iter())
                 .zip(inputs[1].iter())
-                .zip(inputs[2].iter())
             {
                 *o0 = i0.clamp(-0.9, 0.9);
                 *o1 = i1.clamp(-0.9, 0.9);
@@ -81,7 +80,9 @@ fn main() {
         .input("in1"),
     );
     // Connect the output_node to the output of the main graph with two channels, which are mapped 0 -> 0, 1 -> 1
-    graph.connect(output_node.to_graph_out().channels(2));
+    graph
+        .connect(output_node.to_graph_out().channels(2))
+        .unwrap();
 
     // This local struct helps us keep track of the form of the piece based on the loop count.
     struct Section {
@@ -153,7 +154,7 @@ fn main() {
             std::thread::sleep(Duration::from_millis(150));
         }
         // Then play the major sequences, the ones names *_1
-        let mut f_degrees = vec![0, 22, 31, 39, 45, 53, 17 + 53, 22 + 53, 17 + 53, 8 + 53, 45];
+        let f_degrees = vec![0, 22, 31, 39, 45, 53, 17 + 53, 22 + 53, 17 + 53, 8 + 53, 45];
         for beat_counter in 0..64 {
             if section.fast_part() && beat_counter % 1 == 0 {
                 let amp = rng.gen::<f32>() * 0.5 + 0.25;
@@ -238,7 +239,6 @@ fn sine_tone_graph(
     let mut g = Graph::new(graph_settings);
     let sin = g.push_gen(WavetableOscillatorOwned::new(Wavetable::sine()));
     g.connect(constant(freq).to(sin).to_label("freq")).unwrap();
-    let mut rng = thread_rng();
     let env = Envelope {
         points: vec![(amp, attack), (0.0, duration_secs)],
         curves: vec![Curve::Linear, Curve::Exponential(2.0)],
@@ -253,9 +253,8 @@ fn sine_tone_graph(
     let mult = g.push_gen(Mult);
     g.connect(sin.to(mult)).unwrap();
     g.connect(env.to(mult).to_index(1)).unwrap();
-    g.connect(Connection::graph_output(mult)).unwrap();
-    g.connect(Connection::graph_output(mult).to_index(1))
-        .unwrap();
+    g.connect(mult.to_graph_out()).unwrap();
+    g.connect(mult.to_graph_out().to_index(1)).unwrap();
     g.commit_changes();
     g
 }
@@ -276,8 +275,10 @@ fn add_sine(
         duration_secs,
         graph_settings,
     ));
-    main_graph.connect(node.to(output_node));
-    main_graph.connect(node.to(output_node).to_index(1));
+    main_graph.connect(node.to(output_node)).unwrap();
+    main_graph
+        .connect(node.to(output_node).to_index(1))
+        .unwrap();
     main_graph.commit_changes();
     main_graph.update();
 }
