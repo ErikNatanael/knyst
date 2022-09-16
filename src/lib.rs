@@ -1,3 +1,39 @@
+//! # Knyst - audio graph and synthesis library
+//!
+//! Knyst is a real time audio synthesis framework focusing on flexibility and
+//! performance. It's main target use case is desktop multi-threaded
+//! environments, but it can also do single threaded and/or non real time
+//! synthesis. Embedded platforms are currently not supported, but on the
+//! roadmap.
+//!
+//! ## Status
+//!
+//! Knyst is in its early stages. Expect large breaking API changes between
+//! versions.
+//!
+//! ## The name
+//!
+//! "Knyst" is a Swedish word meaning _very faint sound_.
+//!
+//! ## Architecture
+//!
+//! The core of Knyst is the [`Graph`] struct and the [`Gen`] trait. [`Graph`]s
+//! can have [`Node`]s containing anything that implements [`Gen`]. [`Graph`]s
+//! can also themselves be added as a [`Node`].
+//!
+//! [`Node`]s in a running [`Graph`] can be freed or signal to the [`Graph`]
+//! that they or the entire [`Graph`] should be freed. [`Connection`]s between
+//! [`Node`]s and the inputs and outputs of a [`Graph`] can also be changed
+//! while the [`Graph`] is running. This way, Knyst acheives a similar
+//! flexibility to SuperCollider.
+//!
+//! It is easy to get things wrong when using a [`Graph`] as a [`Gen`] directly
+//! so that functionality is encapsulated. For the highest level [`Graph`] of
+//! your program you may want to use [`Graph::to_node`] to get a [`Node`] which
+//! you can run in a real time thread or non real time to generate samples.
+//! Using the [`audio_backend`]s this process is automated for you.
+//!
+
 use buffer::{Buffer, BufferIndex};
 use core::fmt::Debug;
 use downcast_rs::{impl_downcast, Downcast};
@@ -13,13 +49,15 @@ pub mod wavetable;
 pub mod xorrng;
 
 pub type Sample = f32;
-/// The number of samples per wavetable, and also the number of high bits used
+/// The number of samples per [`wavetable`], and also the number of high bits used
 /// for the phase indexing into the wavetable. With the current u32 phase, this can be maximum 16.
 pub const TABLE_POWER: u32 = 16;
+/// The size of tables for the Knyst [`wavetable`] types. TABLE_SIZE is 2^TABLE_POWER
 pub const TABLE_SIZE: usize = 2_usize.pow(TABLE_POWER);
 /// The high mask is used to 0 everything above the table size so that adding
 /// further would have the same effect as wrapping.
 pub const TABLE_HIGH_MASK: u32 = TABLE_SIZE as u32 - 1;
+/// Max number of the fractional part of a integer phase. Currently, 16 bits are used for the fractional part.
 pub const FRACTIONAL_PART: u32 = 65536;
 pub trait AnyData: Downcast + Send + Debug {}
 impl_downcast!(AnyData);
@@ -164,7 +202,7 @@ impl Resources {
 // The repr(C) guarantees the order of the enum variants will be conserved
 #[repr(u32)]
 #[allow(dead_code)]
-/// Used for indexing the standard precalculated wavetables
+/// Some wavetables are always precalculated. This enum gives you their indices in the [`Resources`] if you want to use them in your own [`Gen`].
 pub enum StandardWt {
     FastSine = 0,
     FastSineDiff,

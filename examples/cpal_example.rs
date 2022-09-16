@@ -1,13 +1,14 @@
-use std::time::Duration;
-
+use anyhow::Result;
 use knyst::{
     audio_backend::{CpalBackend, CpalBackendOptions},
     graph::Mult,
     prelude::*,
     wavetable::{Wavetable, WavetableOscillatorOwned},
 };
-fn main() {
-    let mut backend = CpalBackend::new(CpalBackendOptions::default()).unwrap();
+use std::time::Duration;
+
+fn main() -> Result<()> {
+    let mut backend = CpalBackend::new(CpalBackendOptions::default())?;
 
     let sample_rate = backend.sample_rate() as f32;
     let block_size = backend.block_size().unwrap_or(64);
@@ -19,26 +20,20 @@ fn main() {
         num_outputs: backend.num_outputs(),
         ..Default::default()
     });
-    backend.start_processing(&mut graph, resources).unwrap();
+    backend.start_processing(&mut graph, resources)?;
     let node0 = graph.push_gen(WavetableOscillatorOwned::new(Wavetable::sine()));
-    graph
-        .connect(constant(440.).to(node0).to_label("freq"))
-        .unwrap();
+    graph.connect(constant(440.).to(node0).to_label("freq"))?;
     let modulator = graph.push_gen(WavetableOscillatorOwned::new(Wavetable::sine()));
-    graph
-        .connect(constant(5.).to(modulator).to_label("freq"))
-        .unwrap();
+    graph.connect(constant(5.).to(modulator).to_label("freq"))?;
     let mod_amp = graph.push_gen(Mult);
-    graph.connect(modulator.to(mod_amp)).unwrap();
-    graph
-        .connect(constant(0.25).to(mod_amp).to_index(1))
-        .unwrap();
+    graph.connect(modulator.to(mod_amp))?;
+    graph.connect(constant(0.25).to(mod_amp).to_index(1))?;
     let amp = graph.push_gen(Mult);
-    graph.connect(node0.to(amp)).unwrap();
-    graph.connect(constant(0.5).to(amp).to_index(1)).unwrap();
-    graph.connect(mod_amp.to(amp).to_index(1)).unwrap();
-    graph.connect(amp.to_graph_out()).unwrap();
-    graph.connect(amp.to_graph_out().to_index(1)).unwrap();
+    graph.connect(node0.to(amp))?;
+    graph.connect(constant(0.5).to(amp).to_index(1))?;
+    graph.connect(mod_amp.to(amp).to_index(1))?;
+    graph.connect(amp.to_graph_out())?;
+    graph.connect(amp.to_graph_out().to_index(1))?;
     graph.commit_changes();
     graph.update(); // Required because constant connections get converted to
                     // scheduled changes when the graph is running.
@@ -50,9 +45,7 @@ fn main() {
                 println!("{}", input.trim());
                 let input = input.trim();
                 if let Ok(freq) = input.parse::<usize>() {
-                    graph
-                        .schedule_change(ParameterChange::now(node0, freq as f32).l("freq"))
-                        .unwrap();
+                    graph.schedule_change(ParameterChange::now(node0, freq as f32).l("freq"))?;
                     graph.update();
                 } else if input == "q" {
                     break;
@@ -62,4 +55,5 @@ fn main() {
         }
         input.clear();
     }
+    Ok(())
 }
