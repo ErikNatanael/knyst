@@ -37,6 +37,7 @@
 use buffer::{Buffer, BufferIndex};
 use core::fmt::Debug;
 use downcast_rs::{impl_downcast, Downcast};
+use graph::{Connection, Gen, Graph, Node};
 use std::collections::HashMap;
 use wavetable::{Wavetable, WavetableArena, SINE_WAVETABLE};
 

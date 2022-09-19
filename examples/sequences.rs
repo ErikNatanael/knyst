@@ -240,7 +240,6 @@ fn sine_tone_graph(
     let env = Envelope {
         points: vec![(amp, attack), (0.0, duration_secs)],
         curves: vec![Curve::Linear, Curve::Exponential(2.0)],
-        // TODO: Shouldnt include the sample number here
         stop_action: StopAction::FreeGraph,
         ..Default::default()
     };

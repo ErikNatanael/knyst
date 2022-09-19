@@ -1,3 +1,16 @@
+//! To use the backends in this module you need to enable either the jack or the cpal feature.
+//!
+//! [`JackBackend`] currently has better support including a duplex client with
+//! the same number of inputs and outputs as the [`Graph`].
+//!
+//! To use an [`AudioBackend`], first create it to get the parameters of the
+//! system. When you have created your main graph, call
+//! [`AudioBackend::start_processing`]. This will do something similar to
+//! calling [`Graph::to_node`] and populating the backend output buffer with the
+//! output of the [`Graph`]. From this point, the [`Graph`] is considered to be
+//! running, meaning changes to the [`Graph`] may take longer to perform since
+//! they involve the audio thread.
+
 use crate::{graph::Graph, Resources};
 
 #[cfg(feature = "cpal")]
