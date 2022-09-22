@@ -67,12 +67,14 @@ pub enum StopAction {
     FreeGraphMendConnections,
 }
 
+/// Settings used to initialise [`Resources`].
 pub struct ResourcesSettings {
     pub sample_rate: Sample,
     /// The maximum number of wavetables that can be added to the Resources. The standard wavetables will always be available regardless.
     pub max_wavetables: usize,
     /// The maximum number of buffers that can be added to the Resources
     pub max_buffers: usize,
+    pub max_user_data: usize,
 }
 impl Default for ResourcesSettings {
     fn default() -> Self {
@@ -80,13 +82,18 @@ impl Default for ResourcesSettings {
             sample_rate: 44100.0,
             max_wavetables: 10,
             max_buffers: 10,
+            max_user_data: 0,
         }
     }
 }
 
-/// Resources contains common resources for all Nodes in some structure.
+/// Common resources for all Nodes in a Graph and all its sub Graphs:
+/// - [`Wavetable`]
+/// - [`Buffer`]
+/// - [`fastrand::Rng`]
+///
+/// You can also add any resource you need to be shared between nodes using [`AnyData`].
 pub struct Resources {
-    // TODO: Replace with a HopSlotMap
     pub buffers: SlotMap<BufferKey, Buffer>,
     pub wavetables: SlotMap<WavetableKey, Wavetable>,
     /// A precalculated value based on the sample rate and the table size. The
@@ -130,12 +137,23 @@ impl Resources {
             rng,
         }
     }
-    pub fn push_user_data(&mut self, key: String, data: Box<dyn AnyData>) {
-        self.user_data.insert(key, data);
+    /// Insert any kind of data using [`AnyData`]. Returns the `data` in an error if there is not enough space for the data in the HashTable.
+    pub fn insert_user_data(
+        &mut self,
+        key: String,
+        data: Box<dyn AnyData>,
+    ) -> Result<(), Box<dyn AnyData>> {
+        if self.user_data.len() < self.user_data.capacity() {
+            self.user_data.insert(key, data);
+            Ok(())
+        } else {
+            Err(data)
+        }
     }
     pub fn get_user_data(&mut self, key: &String) -> Option<&mut Box<dyn AnyData>> {
         self.user_data.get_mut(key)
     }
+
     pub fn insert_wavetable(&mut self, wavetable: Wavetable) -> Result<WavetableKey, Wavetable> {
         if self.wavetables.len() < self.wavetables.capacity() {
             Ok(self.wavetables.insert(wavetable))
@@ -153,9 +171,23 @@ impl Resources {
             Err(buf)
         }
     }
-    pub fn buf_rate_scale(&self, buffer_key: BufferKey, sample_rate: f64) -> f64 {
+    /// Returns the rate with which a buffer needs to be played to sound at its original speed at the current sample rate.
+    ///
+    /// # Example:
+    /// ```
+    /// # use knyst::prelude::*;
+    /// // Create a buffer with a sample rate of 44100.0
+    /// let buffer = Buffer::new(1024, 44100.0);
+    /// let mut resources = Resources::new(ResourcesSettings{
+    ///     sample_rate: 48000.,
+    ///     ..Default::default()
+    /// });
+    /// let key = resources.insert_buffer(buffer).unwrap();
+    /// assert_eq!(resources.buf_rate_scale(key), 44100.0 / 48000.0);
+    /// ```
+    pub fn buf_rate_scale(&self, buffer_key: BufferKey) -> f64 {
         if let Some(buf) = self.buffers.get(buffer_key) {
-            buf.buf_rate_scale(sample_rate)
+            buf.buf_rate_scale(self.sample_rate)
         } else {
             1.0
         }
