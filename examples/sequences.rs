@@ -6,6 +6,7 @@ use knyst::{
     graph::{GenState, Mult, NodeAddress},
     prelude::*,
     wavetable::{Wavetable, WavetableOscillatorOwned},
+    ResourcesSettings,
 };
 use rand::{prelude::SliceRandom, thread_rng, Rng};
 fn main() -> anyhow::Result<()> {
@@ -46,7 +47,10 @@ fn main() -> anyhow::Result<()> {
 
     let sample_rate = backend.sample_rate() as f32;
     let block_size = backend.block_size().unwrap_or(64);
-    let resources = Resources::new(sample_rate);
+    let resources = Resources::new(ResourcesSettings {
+        sample_rate,
+        ..Default::default()
+    });
     let graph_settings = GraphSettings {
         block_size,
         sample_rate,

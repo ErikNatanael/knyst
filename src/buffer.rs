@@ -1,5 +1,6 @@
 use std::{fs::File, path::Path};
 
+use slotmap::new_key_type;
 use symphonia::core::{
     audio::{AudioBufferRef, Signal},
     codecs::{DecoderOptions, CODEC_TYPE_NULL},
@@ -11,7 +12,9 @@ use symphonia::core::{
 
 use super::Sample;
 
-pub type BufferIndex = usize;
+new_key_type! {
+    pub struct BufferKey;
+}
 /// The Buffer is currently very similar to Wavetable, but they may evolve differently
 #[derive(Clone, Debug)]
 pub struct Buffer {
@@ -19,7 +22,6 @@ pub struct Buffer {
     size: f64,
     /// The sample rate of the buffer, can be different from the sample rate of the audio server
     sample_rate: f64,
-    dealloc: bool,
 }
 
 impl Buffer {
@@ -28,7 +30,6 @@ impl Buffer {
             buffer: vec![0.0; size],
             size: size as f64,
             sample_rate,
-            dealloc: false,
         }
     }
     pub fn from_vec(buffer: Vec<Sample>, sample_rate: f64) -> Self {
@@ -37,7 +38,6 @@ impl Buffer {
             buffer,
             size,
             sample_rate,
-            dealloc: false,
         }
     }
 
@@ -199,8 +199,5 @@ impl Buffer {
     }
     pub fn size(&self) -> f64 {
         self.size
-    }
-    pub fn mark_for_deallocation(&mut self) {
-        self.dealloc = true;
     }
 }

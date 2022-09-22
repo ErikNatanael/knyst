@@ -1,42 +1,59 @@
-use crate::{Resources, Sample, TABLE_HIGH_MASK, TABLE_SIZE};
+use slotmap::new_key_type;
+
+use crate::{Resources, Sample};
 
 use crate::graph::{Gen, GenState};
 // use std::f64::consts::PI;
 use crate::xorrng::XOrShift32Rng;
 use std::f32::consts::PI;
 
-pub const SINE_WAVETABLE: WavetableIndex = 0;
+/// The number of samples per [`wavetable`], and also the number of high bits used
+/// for the phase indexing into the wavetable. With the current u32 phase, this can be maximum 16.
+pub const TABLE_POWER: u32 = 16;
+/// The size of tables for the Knyst [`wavetable`] types. TABLE_SIZE is 2^TABLE_POWER
+pub const TABLE_SIZE: usize = 2_usize.pow(TABLE_POWER);
+/// The high mask is used to 0 everything above the table size so that adding
+/// further would have the same effect as wrapping.
+pub const TABLE_HIGH_MASK: u32 = TABLE_SIZE as u32 - 1;
+/// Max number of the fractional part of a integer phase. Currently, 16 bits are used for the fractional part.
+pub const FRACTIONAL_PART: u32 = 65536;
 
 // We could later turn WavetableIndex into a generational index if we'd want
 pub type WavetableIndex = usize;
 
+new_key_type! {
+    /// Key for selecting a wavetable that has been added to Resources.
+    pub struct WavetableKey;
+}
+
+/// Wavetable is a standardised wavetable with a buffer of samples, as well as a
+/// separate buffer with the difference between the current sample and the next.
+/// The wavetable is of size [`TABLE_SIZE`] and can be indexed using a [`Phase`].
 #[derive(Debug, Clone)]
 pub struct Wavetable {
     buffer: Vec<Sample>,      // Box<[Sample; 131072]>,
     diff_buffer: Vec<Sample>, // Box<[Sample; 131072]>,
-    // Store the size as an f64 to find fractional indexes without typecasting
-    size: Sample,
 }
 
 impl Wavetable {
     pub fn new() -> Self {
-        let wavetable_size = TABLE_SIZE;
-        let w_size = if !is_power_of_2(wavetable_size) {
-            // Make a power of two by taking the log2 and discarding the fractional part of the answer and then squaring again
-            ((wavetable_size as f64).log2() as usize).pow(2)
-        } else {
-            wavetable_size
-        };
-        let buffer = vec![0.0; w_size];
-        let diff_buffer = vec![0.0; w_size];
+        let buffer = vec![0.0; TABLE_SIZE];
+        let diff_buffer = vec![0.0; TABLE_SIZE];
         Wavetable {
             buffer,
             diff_buffer,
-            size: w_size as Sample,
         }
     }
+    pub fn update_diff_buffer(&mut self) {
+        let diff_buffer: Vec<f32> = self
+            .buffer
+            .iter()
+            .zip(self.buffer.iter().skip(1).cycle())
+            .map(|(&a, &b)| b - a)
+            .collect();
+        self.diff_buffer = diff_buffer;
+    }
     pub fn from_buffer(buffer: Vec<Sample>) -> Self {
-        let size = buffer.len() as Sample;
         let diff_buffer: Vec<f32> = buffer
             .iter()
             .zip(buffer.iter().skip(1).cycle())
@@ -45,7 +62,6 @@ impl Wavetable {
         Self {
             buffer,
             diff_buffer,
-            size,
         }
     }
     pub fn sine() -> Self {
@@ -53,8 +69,9 @@ impl Wavetable {
         let mut wt = Wavetable::new();
         // Fill buffer with a sine
         for i in 0..wavetable_size {
-            wt.buffer[i] = ((i as Sample / wt.size) * PI * 2.0).sin();
+            wt.buffer[i] = ((i as Sample / TABLE_SIZE as f32) * PI * 2.0).sin();
         }
+        wt.update_diff_buffer();
         wt
     }
     pub fn multi_sine(num_harmonics: usize) -> Self {
@@ -62,6 +79,7 @@ impl Wavetable {
         wt.fill_sine(num_harmonics, 1.0);
         wt.add_noise(0.95, (num_harmonics as f64 * 3723.83626).floor() as u32);
         wt.normalize();
+        wt.update_diff_buffer();
         wt
     }
     pub fn crazy(seed: u32) -> Self {
@@ -74,6 +92,7 @@ impl Wavetable {
         }
         wt.add_noise(1.0 - xorrng.gen_f64() * 0.05, seed + wavetable_size as u32);
         wt.normalize();
+        wt.update_diff_buffer();
         wt
     }
     /// Produces a Hann window
@@ -82,6 +101,7 @@ impl Wavetable {
         // This approach was heavily influenced by the SuperCollider Signal implementation
         wt.fill(0.5);
         wt.add_sine(1.0, 0.5, -0.5 * PI);
+        wt.update_diff_buffer();
         wt
     }
     /// Produces a Hamming window
@@ -90,6 +110,7 @@ impl Wavetable {
         // This approach was heavily influenced by the SuperCollider Signal implementation
         wt.fill(0.53836);
         wt.add_sine(1.0, 0.46164, -0.5 * PI);
+        wt.update_diff_buffer();
         wt
     }
     /// Produces a Sine window
@@ -97,20 +118,23 @@ impl Wavetable {
         let mut wt = Wavetable::new();
         // This approach was heavily influenced by the SuperCollider Signal implementation
         wt.add_sine(0.5, 1.0, 0.0);
+        wt.update_diff_buffer();
         wt
     }
     pub fn fill(&mut self, value: Sample) {
         for sample in &mut self.buffer {
             *sample = value;
         }
+        self.update_diff_buffer();
     }
     pub fn add_sine(&mut self, freq: Sample, amplitude: Sample, phase: Sample) {
-        let step = (freq * PI * 2.0) / self.size;
+        let step = (freq * PI * 2.0) / TABLE_SIZE as f32;
         let mut phase = phase;
         for sample in &mut self.buffer {
             *sample += phase.sin() * amplitude;
             phase += step;
         }
+        self.update_diff_buffer();
     }
     pub fn fill_sine(&mut self, num_harmonics: usize, freq: Sample) {
         for n in 0..num_harmonics {
@@ -119,13 +143,15 @@ impl Wavetable {
                 0 => 1.0,
                 _ => ((num_harmonics - n) as Sample / (num_harmonics) as Sample) * 0.5,
             };
-            for i in 0..self.size as usize {
-                self.buffer[i] += ((i as Sample / self.size) * PI * 2.0 * freq * (n + 1) as Sample
-                    + start_phase)
-                    .sin()
-                    * harmonic_amp;
+            for i in 0..TABLE_SIZE {
+                self.buffer[i] +=
+                    ((i as Sample / TABLE_SIZE as f32) * PI * 2.0 * freq * (n + 1) as Sample
+                        + start_phase)
+                        .sin()
+                        * harmonic_amp;
             }
         }
+        self.update_diff_buffer();
     }
     pub fn add_saw(&mut self, num_harmonics: usize, amp: Sample) {
         for i in 0..num_harmonics {
@@ -140,6 +166,7 @@ impl Wavetable {
                         * amp;
             }
         }
+        self.update_diff_buffer();
     }
     pub fn add_odd_harmonics(&mut self, num_harmonics: usize, amp_falloff: Sample) {
         for i in 0..num_harmonics {
@@ -160,6 +187,7 @@ impl Wavetable {
                     * harmonic_amp;
             }
         }
+        self.update_diff_buffer();
     }
     pub fn add_noise(&mut self, probability: f64, seed: u32) {
         let mut xorrng = XOrShift32Rng::new(seed);
@@ -174,11 +202,13 @@ impl Wavetable {
                 }
             }
         }
+        self.update_diff_buffer();
     }
     pub fn multiply(&mut self, mult: Sample) {
         for sample in &mut self.buffer {
             *sample *= mult;
         }
+        self.update_diff_buffer();
     }
     pub fn normalize(&mut self) {
         // Find highest absolute value
@@ -193,6 +223,7 @@ impl Wavetable {
         for sample in &mut self.buffer {
             *sample *= scaler;
         }
+        self.update_diff_buffer();
     }
 
     /// Linearly interpolate between the value in between which the phase points.
@@ -209,10 +240,6 @@ impl Wavetable {
     pub fn get(&self, phase: Phase) -> Sample {
         unsafe { *self.buffer.get_unchecked(phase.integer_component()) }
     }
-}
-
-fn is_power_of_2(num: usize) -> bool {
-    return num > 0 && num & (num - 1) == 0;
 }
 
 pub struct WavetableArena {
@@ -332,22 +359,32 @@ impl Phase {
         // bits we use for our table size, so we don't need 2^16 size tables.
         ((self.0 >> 16) & TABLE_HIGH_MASK) as usize
     }
+    /// Returns the fractional component, but as the lower bits of a u32.
     #[inline]
     pub fn fractional_component(&self) -> u32 {
-        const FRACTIONAL_PART: u32 = u16::MAX as u32;
-        self.0 & FRACTIONAL_PART
+        const FRACTIONAL_MASK: u32 = u16::MAX as u32;
+        self.0 & FRACTIONAL_MASK
     }
+    /// Returns the fractional component of the phase.
     #[inline]
     pub fn fractional_component_f32(&self) -> f32 {
-        const HIGH_BITS: u32 = u16::MAX as u32;
-        (self.0 & HIGH_BITS) as f32 / HIGH_BITS as f32
+        const FRACTIONAL_MASK: u32 = u16::MAX as u32;
+        (self.0 & FRACTIONAL_MASK) as f32 / FRACTIONAL_MASK as f32
     }
+    /// Increase the phase by the given step. The step should be the
+    /// frequency/sample_rate * [`TABLE_SIZE`] * [`FRACTIONAL_PART`]. [`Resources`]
+    /// holds a value `freq_to_phase_inc` which, multiplied by the desired
+    /// frequency, gives this step value.
     #[inline]
     pub fn increase(&mut self, add: u32) {
         self.0 = self.0.wrapping_add(add);
     }
 }
 
+/// Don't use! This is the same as Phase, but stored in an f32. Last time I
+/// benchmarked it was significantly slower. I'm leaving it here so that I, next
+/// time I wonder if the floating point phase is indeed slower, can run the
+/// benchmark and find out.
 pub struct PhaseF32(pub f32);
 
 impl PhaseF32 {
@@ -371,12 +408,12 @@ impl PhaseF32 {
 pub struct Oscillator {
     step: u32,
     phase: Phase,
-    wavetable: WavetableIndex,
+    wavetable: WavetableKey,
     amp: Sample,
 }
 
 impl Oscillator {
-    pub fn new(wavetable: WavetableIndex) -> Self {
+    pub fn new(wavetable: WavetableKey) -> Self {
         Oscillator {
             step: 0,
             phase: Phase(0),
@@ -385,7 +422,7 @@ impl Oscillator {
         }
     }
     pub fn from_freq(
-        wavetable: WavetableIndex,
+        wavetable: WavetableKey,
         sample_rate: Sample,
         freq: Sample,
         amp: Sample,
@@ -397,7 +434,7 @@ impl Oscillator {
     }
     #[inline]
     pub fn set_freq(&mut self, freq: Sample, resources: &mut Resources) {
-        self.step = (freq / resources.freq_to_phase_inc) as u32;
+        self.step = (freq * resources.freq_to_phase_inc) as u32;
     }
     #[inline]
     pub fn set_amp(&mut self, amp: Sample) {
@@ -410,10 +447,10 @@ impl Oscillator {
     #[inline]
     fn next(&mut self, resources: &mut Resources) -> Sample {
         // Use the phase to index into the wavetable
-        let sample = match resources.wavetable_arena.get(self.wavetable) {
+        let sample = match resources.wavetables.get(self.wavetable) {
             Some(wt) => wt.get(self.phase) * self.amp,
             None => {
-                eprintln!("Wavetable doesn't exist: {}", self.wavetable);
+                eprintln!("Wavetable doesn't exist: {:?}", self.wavetable);
                 0.0
             }
         };
