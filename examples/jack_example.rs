@@ -13,7 +13,10 @@ fn main() -> Result<()> {
     let sample_rate = backend.sample_rate() as f32;
     let block_size = backend.block_size().unwrap_or(64);
     println!("sr: {sample_rate}, block: {block_size}");
-    let resources = Resources::new(sample_rate);
+    let resources = Resources::new(ResourcesSettings {
+        sample_rate,
+        ..Default::default()
+    });
     let mut graph: Graph = Graph::new(GraphSettings {
         block_size,
         sample_rate,

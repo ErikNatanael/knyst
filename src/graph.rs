@@ -18,7 +18,6 @@ use super::Resources;
 /// edge/connection specifies between which output/input of the nodes data is mapped.
 
 pub type Sample = f32;
-type NodeIndex = NodeKey;
 pub type GraphId = u64;
 
 /// Get a unique id for a Graph from this by using `fetch_add`
@@ -29,7 +28,7 @@ static NEXT_GRAPH_ID: AtomicU64 = AtomicU64::new(0);
 #[derive(Copy, Clone, Debug, PartialEq, Hash, Eq)]
 pub struct NodeAddress {
     graph_id: GraphId,
-    key: NodeIndex,
+    key: NodeKey,
 }
 
 impl NodeAddress {
@@ -794,12 +793,12 @@ pub struct Graph {
     node_input_name_to_index: SecondaryMap<NodeKey, HashMap<&'static str, usize>>,
     node_output_index_to_name: SecondaryMap<NodeKey, Vec<&'static str>>,
     node_output_name_to_index: SecondaryMap<NodeKey, HashMap<&'static str, usize>>,
-    /// List of feedback input edges for every node. The NodeIndex in the tuple is the index of the FeedbackNode doing the buffering
+    /// List of feedback input edges for every node. The NodeKey in the tuple is the index of the FeedbackNode doing the buffering
     node_feedback_edges: SecondaryMap<NodeKey, Vec<FeedbackEdge>>,
     node_feedback_node_key: SecondaryMap<NodeKey, NodeKey>,
-    node_order: Vec<NodeIndex>,
-    disconnected_nodes: Vec<NodeIndex>,
-    feedback_node_indices: Vec<NodeIndex>,
+    node_order: Vec<NodeKey>,
+    disconnected_nodes: Vec<NodeKey>,
+    feedback_node_indices: Vec<NodeKey>,
     /// If a node is a graph, that graph will be added with the same key here.
     graphs_per_node: SecondaryMap<NodeKey, Graph>,
     /// The outputs of the Graph
@@ -1916,8 +1915,8 @@ impl Graph {
     fn depth_first_search(
         &self,
         visited: &mut HashSet<NodeKey>,
-        nodes_to_process: &mut Vec<NodeIndex>,
-    ) -> Vec<NodeIndex> {
+        nodes_to_process: &mut Vec<NodeKey>,
+    ) -> Vec<NodeKey> {
         let mut stack = Vec::with_capacity(self.get_nodes().capacity());
         while nodes_to_process.len() > 0 {
             let node_index = nodes_to_process.pop().unwrap();
@@ -1933,11 +1932,7 @@ impl Graph {
         }
         stack
     }
-    fn get_deepest_output_node(
-        &self,
-        start_node: NodeIndex,
-        visited: &HashSet<NodeKey>,
-    ) -> NodeIndex {
+    fn get_deepest_output_node(&self, start_node: NodeKey, visited: &HashSet<NodeKey>) -> NodeKey {
         let mut last_connected_node_index = start_node;
         let mut last_connected_output_node_index = start_node;
         loop {
@@ -2840,7 +2835,7 @@ impl Gen for FeedbackGen {
 }
 #[derive(Clone, Debug, Copy)]
 struct Edge {
-    source: NodeIndex,
+    source: NodeKey,
     /// the output index on the destination node
     from_output_index: usize,
     /// the input index on the origin node where the input from the node is placed
@@ -2855,13 +2850,13 @@ impl Edge {}
 /// - a normal edge
 #[derive(Clone, Debug, Copy)]
 struct FeedbackEdge {
-    source: NodeIndex,
+    source: NodeKey,
     /// the output index on the destination node
     from_output_index: usize,
     /// the input index on the origin node where the input from the node is placed
     to_input_index: usize,
     /// If the source node is freed we want to remove the normal edge to the destination node.
-    feedback_destination: NodeIndex,
+    feedback_destination: NodeKey,
 }
 
 pub struct Ramp {
@@ -3100,6 +3095,8 @@ use slotmap::{new_key_type, SecondaryMap, SlotMap};
 #[cfg(test)]
 mod tests {
 
+    use crate::ResourcesSettings;
+
     use super::*;
     fn null_input() -> Vec<Box<[Sample]>> {
         vec![vec![0.0; 0].into_boxed_slice(); 0]
@@ -3168,6 +3165,9 @@ mod tests {
     fn graph_node(graph: &mut Graph) -> Node {
         graph.to_node().unwrap()
     }
+    fn test_resources_settings() -> ResourcesSettings {
+        ResourcesSettings::default()
+    }
     #[test]
     fn create_graph() {
         let mut graph: Graph = Graph::new(GraphSettings::default());
@@ -3175,7 +3175,7 @@ mod tests {
         let node_id = graph.push_node(node);
         graph.connect(Connection::graph_output(node_id)).unwrap();
         graph.init();
-        let mut resources = Resources::new(44100.0);
+        let mut resources = Resources::new(test_resources_settings());
         let mut graph_node = graph_node(&mut graph);
         graph_node.process(&null_input(), &mut resources);
         assert_eq!(graph_node.output_buffers()[0][31], 32.0);
@@ -3196,7 +3196,7 @@ mod tests {
         graph.connect(node_id2.to(node_id3)).unwrap();
         graph.connect(Connection::graph_output(node_id3)).unwrap();
         let mut graph_node = graph_node(&mut graph);
-        let mut resources = Resources::new(44100.0);
+        let mut resources = Resources::new(test_resources_settings());
         graph_node.process(&null_input(), &mut resources);
         assert_eq!(graph_node.output_buffers()[0][2], 9.0);
     }
@@ -3212,7 +3212,7 @@ mod tests {
         graph.connect(constant(0.5).to(node_id)).unwrap();
         graph.connect(Connection::graph_output(node_id)).unwrap();
         let mut graph_node = graph_node(&mut graph);
-        let mut resources = Resources::new(44100.0);
+        let mut resources = Resources::new(test_resources_settings());
         graph_node.process(&null_input(), &mut resources);
         assert_eq!(graph_node.output_buffers()[0][BLOCK - 1], 16.5);
     }
@@ -3242,7 +3242,7 @@ mod tests {
             .connect(constant(CONSTANT_INPUT_TO_NODE).to(node_id))
             .unwrap();
         let mut graph_node = graph_node(&mut graph);
-        let mut resources = Resources::new(44100.0);
+        let mut resources = Resources::new(test_resources_settings());
         graph.commit_changes();
         graph.update();
         graph_node.process(&null_input(), &mut resources);
@@ -3279,7 +3279,7 @@ mod tests {
         graph.connect(n3.to(n1).feedback(true)).unwrap();
         graph.connect(n4.to(n0).feedback(true)).unwrap();
         let mut graph_node = graph_node(&mut graph);
-        let mut resources = Resources::new(44100.0);
+        let mut resources = Resources::new(test_resources_settings());
         graph_node.process(&null_input(), &mut resources);
         let block1 = vec![2.0f32, 4., 6., 8.];
         let block2 = vec![39f32, 47., 55., 63.];
@@ -3316,7 +3316,7 @@ mod tests {
             ..Default::default()
         });
         let mut graph_node = graph_node(&mut graph);
-        let mut resources = Resources::new(44100.0);
+        let mut resources = Resources::new(test_resources_settings());
         let triangular_sequence = |n| (n * (n + 1)) / 2;
         for i in 0..10 {
             let node = Node::new("Dummy", Box::new(DummyGen { counter: 0.0 }));
@@ -3346,7 +3346,7 @@ mod tests {
             ..Default::default()
         });
         let mut graph_node = graph_node(&mut graph);
-        let mut resources = Resources::new(44100.0);
+        let mut resources = Resources::new(test_resources_settings());
         let node = Node::new("Dummy", Box::new(DummyGen { counter: 0.0 }));
         let node_id = graph.push_node(node);
         graph
@@ -3375,7 +3375,7 @@ mod tests {
             ..Default::default()
         });
         let mut graph_node = graph_node(&mut graph);
-        let mut resources = Resources::new(44100.0);
+        let mut resources = Resources::new(test_resources_settings());
         let mut nodes = vec![];
         let mut last_node = None;
         for _ in 0..10 {
@@ -3421,7 +3421,7 @@ mod tests {
             ..Default::default()
         });
         let mut graph_node = graph_node(&mut graph);
-        let mut resources = Resources::new(44100.0);
+        let mut resources = Resources::new(test_resources_settings());
         let mut nodes = vec![];
         let mut last_node = None;
         let audio_thread = std::thread::spawn(move || {
@@ -3524,7 +3524,7 @@ mod tests {
             ..Default::default()
         });
         let mut graph_node = graph_node(&mut graph);
-        let mut resources = Resources::new(44100.0);
+        let mut resources = Resources::new(test_resources_settings());
         let n0 = graph.push_gen(SelfFreeing {
             samples_countdown: 2,
             value: 1.,
@@ -3587,7 +3587,7 @@ mod tests {
             ..Default::default()
         });
         let mut graph_node = graph_node(&mut graph);
-        let mut resources = Resources::new(44100.0);
+        let mut resources = Resources::new(test_resources_settings());
         let node0 = graph.push_gen(OneGen {});
         let node1 = graph.push_gen(OneGen {});
         graph.connect(Connection::graph_output(node0)).unwrap();

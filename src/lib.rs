@@ -34,12 +34,17 @@
 //! Using the [`audio_backend`]s this process is automated for you.
 //!
 
-use buffer::{Buffer, BufferIndex};
+use buffer::{Buffer, BufferKey};
 use core::fmt::Debug;
 use downcast_rs::{impl_downcast, Downcast};
+// Import these for docs
+#[allow(unused_imports)]
 use graph::{Connection, Gen, Graph, Node};
+use slotmap::SlotMap;
 use std::collections::HashMap;
-use wavetable::{Wavetable, WavetableArena, SINE_WAVETABLE};
+use wavetable::{Wavetable, WavetableKey};
+
+use crate::wavetable::{FRACTIONAL_PART, TABLE_SIZE};
 
 pub mod audio_backend;
 pub mod buffer;
@@ -50,16 +55,6 @@ pub mod wavetable;
 pub mod xorrng;
 
 pub type Sample = f32;
-/// The number of samples per [`wavetable`], and also the number of high bits used
-/// for the phase indexing into the wavetable. With the current u32 phase, this can be maximum 16.
-pub const TABLE_POWER: u32 = 16;
-/// The size of tables for the Knyst [`wavetable`] types. TABLE_SIZE is 2^TABLE_POWER
-pub const TABLE_SIZE: usize = 2_usize.pow(TABLE_POWER);
-/// The high mask is used to 0 everything above the table size so that adding
-/// further would have the same effect as wrapping.
-pub const TABLE_HIGH_MASK: u32 = TABLE_SIZE as u32 - 1;
-/// Max number of the fractional part of a integer phase. Currently, 16 bits are used for the fractional part.
-pub const FRACTIONAL_PART: u32 = 65536;
 pub trait AnyData: Downcast + Send + Debug {}
 impl_downcast!(AnyData);
 
@@ -72,25 +67,47 @@ pub enum StopAction {
     FreeGraphMendConnections,
 }
 
-/// Resources contains common resources for all Nodes in some structure.
+/// Settings used to initialise [`Resources`].
+pub struct ResourcesSettings {
+    pub sample_rate: Sample,
+    /// The maximum number of wavetables that can be added to the Resources. The standard wavetables will always be available regardless.
+    pub max_wavetables: usize,
+    /// The maximum number of buffers that can be added to the Resources
+    pub max_buffers: usize,
+    pub max_user_data: usize,
+}
+impl Default for ResourcesSettings {
+    fn default() -> Self {
+        Self {
+            sample_rate: 44100.0,
+            max_wavetables: 10,
+            max_buffers: 10,
+            max_user_data: 0,
+        }
+    }
+}
+
+/// Common resources for all Nodes in a Graph and all its sub Graphs:
+/// - [`Wavetable`]
+/// - [`Buffer`]
+/// - [`fastrand::Rng`]
+///
+/// You can also add any resource you need to be shared between nodes using [`AnyData`].
 pub struct Resources {
-    // TODO: Replace with a HopSlotMap
-    pub buffers: Vec<Option<Buffer>>,
-    // TODO: Replace by HopSlotMap
-    pub wavetable_arena: WavetableArena,
-    // TODO: Merge with wavetable_arena and other wavetable things
-    pub lookup_tables: Vec<Vec<Sample>>,
+    pub buffers: SlotMap<BufferKey, Buffer>,
+    pub wavetables: SlotMap<WavetableKey, Wavetable>,
     /// A precalculated value based on the sample rate and the table size. The
     /// frequency * this number is the amount that the phase should increase one
     /// sample. It is stored here so that it doesn't need to be stored in every
     /// wavetable oscillator.
-    // TODO: Merge with wavetable_arena and other wavetable things
     pub freq_to_phase_inc: Sample,
-    // pub user_data: HopSlotMap<UserDataKey,Box<dyn UserData>>,
     /// UserData is meant for data that needs to be read by many nodes and
     /// updated for all of them simultaneously. Strings are used as keys for
     /// simplicity. A HopSlotMap could be used, but it would require sending and
     /// matching keys back and forth.
+    ///
+    /// This is a temporary solution. If you have a suggestion for a better way
+    /// to make Resources user extendable, plese get in touch.
     pub user_data: HashMap<String, Box<dyn AnyData>>,
 
     /// The sample rate of the audio process
@@ -99,115 +116,88 @@ pub struct Resources {
 }
 
 impl Resources {
-    pub fn new(sample_rate: Sample) -> Self {
+    pub fn new(settings: ResourcesSettings) -> Self {
         // let user_data = HopSlotMap::with_capacity_and_key(1000);
         let user_data = HashMap::with_capacity(1000);
         let rng = fastrand::Rng::new();
-        let mut wavetable_arena = WavetableArena::new();
         // Add standard wavetables to the arena
-        // Calculate the two FastSine tables
-        let mut fast_sine_table = Vec::with_capacity(TABLE_SIZE);
-        for k in 0..TABLE_SIZE {
-            fast_sine_table
-                .push((std::f64::consts::TAU * (k as f64 / TABLE_SIZE as f64)).sin() as f32);
-        }
-        let mut fast_sine_diff_table = Vec::with_capacity(TABLE_SIZE as usize);
-        for k in 0..TABLE_SIZE {
-            let v0 = fast_sine_table[k];
-            let v1 = fast_sine_table[(k + 1) % TABLE_SIZE];
-            fast_sine_diff_table.push(v1 - v0);
-        }
-        let mut lookup_tables = vec![];
-        let num_standard_wavetables = StandardWt::Last as u32;
+        let wavetables = SlotMap::with_capacity_and_key(settings.max_wavetables);
+        let buffers = SlotMap::with_capacity_and_key(settings.max_buffers);
 
-        let freq_to_phase_inc =
-            (TABLE_SIZE as f64 * FRACTIONAL_PART as f64 * (1.0 / sample_rate as f64)) as Sample;
-        for i in 0..num_standard_wavetables {
-            // Safety: We previously checked that i is within bounds
-            let y: StandardWt = unsafe { std::mem::transmute(i) };
-            match y {
-                StandardWt::FastSine => {
-                    lookup_tables.push(fast_sine_table.clone());
-                }
-                StandardWt::FastSineDiff => {
-                    lookup_tables.push(fast_sine_diff_table.clone());
-                }
-                _ => (),
-            }
-        }
-        for i in 0..1 {
-            match i {
-                SINE_WAVETABLE => {
-                    wavetable_arena.add(Wavetable::sine());
-                }
-                _ => (),
-            }
-        }
+        let freq_to_phase_inc = (TABLE_SIZE as f64
+            * FRACTIONAL_PART as f64
+            * (1.0 / settings.sample_rate as f64)) as Sample;
 
         Resources {
-            buffers: vec![None; 1000],
-            wavetable_arena,
-            lookup_tables,
+            buffers,
+            wavetables,
             freq_to_phase_inc,
             user_data,
-            sample_rate,
+            sample_rate: settings.sample_rate,
             rng,
         }
     }
-    pub fn push_user_data(&mut self, key: String, data: Box<dyn AnyData>) {
-        self.user_data.insert(key, data);
+    /// Insert any kind of data using [`AnyData`]. Returns the `data` in an error if there is not enough space for the data in the HashTable.
+    pub fn insert_user_data(
+        &mut self,
+        key: String,
+        data: Box<dyn AnyData>,
+    ) -> Result<(), Box<dyn AnyData>> {
+        if self.user_data.len() < self.user_data.capacity() {
+            self.user_data.insert(key, data);
+            Ok(())
+        } else {
+            Err(data)
+        }
     }
     pub fn get_user_data(&mut self, key: &String) -> Option<&mut Box<dyn AnyData>> {
         self.user_data.get_mut(key)
     }
-    pub fn push_buffer(&mut self, buf: Buffer) -> Result<BufferIndex, Buffer> {
-        let mut found_free_index = false;
-        let mut index: BufferIndex = 0;
-        for i in 0..self.buffers.len() {
-            let is_free = self.buffers[i].is_none();
-            if is_free {
-                index = i;
-                found_free_index = true;
-                break;
-            }
-        }
-        if found_free_index {
-            // The old value should always be None, but we're being extra careful here if we'd allow for using an occupied slot in the future
-            let _old_value = self.buffers[index].replace(buf);
-            Ok(index)
+
+    pub fn insert_wavetable(&mut self, wavetable: Wavetable) -> Result<WavetableKey, Wavetable> {
+        if self.wavetables.len() < self.wavetables.capacity() {
+            Ok(self.wavetables.insert(wavetable))
         } else {
-            // If we were unable to push the buffer we have to deallocate it
-            // self.dealloc_buf_sender.send(buf).unwrap();
+            Err(wavetable)
+        }
+    }
+    pub fn remove_wavetable(&mut self, wavetable_key: WavetableKey) -> Option<Wavetable> {
+        self.wavetables.remove(wavetable_key)
+    }
+    pub fn insert_buffer(&mut self, buf: Buffer) -> Result<BufferKey, Buffer> {
+        if self.buffers.len() < self.buffers.capacity() {
+            Ok(self.buffers.insert(buf))
+        } else {
             Err(buf)
         }
     }
-    pub fn buf_rate_scale(&self, index: BufferIndex, sample_rate: f64) -> f64 {
-        if let Some(buf) = &self.buffers[index] {
-            buf.buf_rate_scale(sample_rate)
+    /// Returns the rate with which a buffer needs to be played to sound at its original speed at the current sample rate.
+    ///
+    /// # Example:
+    /// ```
+    /// # use knyst::prelude::*;
+    /// // Create a buffer with a sample rate of 44100.0
+    /// let buffer = Buffer::new(1024, 44100.0);
+    /// let mut resources = Resources::new(ResourcesSettings{
+    ///     sample_rate: 48000.,
+    ///     ..Default::default()
+    /// });
+    /// let key = resources.insert_buffer(buffer).unwrap();
+    /// assert_eq!(resources.buf_rate_scale(key), 44100.0 / 48000.0);
+    /// ```
+    pub fn buf_rate_scale(&self, buffer_key: BufferKey) -> f64 {
+        if let Some(buf) = self.buffers.get(buffer_key) {
+            buf.buf_rate_scale(self.sample_rate)
         } else {
             1.0
         }
     }
-    pub fn remove_buffer(&mut self, index: BufferIndex) -> Option<Buffer> {
-        let mut dealloc = false;
-        if let Some(_buf) = &self.buffers[index] {
-            dealloc = true;
-        }
-        if dealloc {
-            let buf = self.buffers[index].take().expect("Resources::deallocate_buffers: Already checked that there is a Buffer here, something is wrong");
-            return Some(buf);
-        }
-        None
+    /// Removes the buffer and returns it if the key is valid. Don't do this on
+    /// the audio thread unless you have a way of sending the buffer to a
+    /// different thread for deallocation.
+    pub fn remove_buffer(&mut self, buffer_key: BufferKey) -> Option<Buffer> {
+        self.buffers.remove(buffer_key)
     }
-}
-// The repr(C) guarantees the order of the enum variants will be conserved
-#[repr(u32)]
-#[allow(dead_code)]
-/// Some wavetables are always precalculated. This enum gives you their indices in the [`Resources`] if you want to use them in your own [`Gen`].
-pub enum StandardWt {
-    FastSine = 0,
-    FastSineDiff,
-    Last,
 }
 
 pub fn db_to_amplitude(db: f32) -> f32 {

@@ -1,5 +1,6 @@
 use std::{fs::File, path::Path};
 
+use slotmap::new_key_type;
 use symphonia::core::{
     audio::{AudioBufferRef, Signal},
     codecs::{DecoderOptions, CODEC_TYPE_NULL},
@@ -9,9 +10,16 @@ use symphonia::core::{
     probe::Hint,
 };
 
+use crate::{
+    graph::{Gen, GenState},
+    Resources,
+};
+
 use super::Sample;
 
-pub type BufferIndex = usize;
+new_key_type! {
+    pub struct BufferKey;
+}
 /// The Buffer is currently very similar to Wavetable, but they may evolve differently
 #[derive(Clone, Debug)]
 pub struct Buffer {
@@ -19,7 +27,6 @@ pub struct Buffer {
     size: f64,
     /// The sample rate of the buffer, can be different from the sample rate of the audio server
     sample_rate: f64,
-    dealloc: bool,
 }
 
 impl Buffer {
@@ -28,7 +35,6 @@ impl Buffer {
             buffer: vec![0.0; size],
             size: size as f64,
             sample_rate,
-            dealloc: false,
         }
     }
     pub fn from_vec(buffer: Vec<Sample>, sample_rate: f64) -> Self {
@@ -37,7 +43,6 @@ impl Buffer {
             buffer,
             size,
             sample_rate,
-            dealloc: false,
         }
     }
 
@@ -176,10 +181,9 @@ impl Buffer {
         // TODO: Return Err if there's no audio data
         Self::from_vec(buffer, sampling_rate)
     }
-    /// Returns the rate parameter for playing this buffer with the correct speed given that the playhead moves between 0 and 1
-    pub fn buf_rate_scale(&self, server_sample_rate: f64) -> f64 {
-        let sample_rate_conversion = server_sample_rate / self.sample_rate;
-        1.0 / (self.size as f64 * sample_rate_conversion)
+    /// Returns the step size in samples for playing this buffer with the correct speed
+    pub fn buf_rate_scale(&self, server_sample_rate: f32) -> f64 {
+        self.sample_rate / server_sample_rate as f64
     }
     /// Linearly interpolate between the value in between to samples
     #[inline]
@@ -200,7 +204,103 @@ impl Buffer {
     pub fn size(&self) -> f64 {
         self.size
     }
-    pub fn mark_for_deallocation(&mut self) {
-        self.dealloc = true;
+}
+
+/// Reads a sample from a buffer and plays it back
+/// TODO: Support multi-channel buffers
+#[derive(Clone, Debug)]
+pub struct BufferReader {
+    buffer_key: BufferKey,
+    read_pointer: f64,
+    rate: f64,
+    base_rate: f64, // The basic rate for playing the buffer at normal speed
+    pub finished: bool,
+    pub looping: bool,
+    amp: Sample,
+}
+
+impl BufferReader {
+    pub fn new(buffer_key: BufferKey, rate: f64, amp: Sample) -> Self {
+        BufferReader {
+            buffer_key,
+            read_pointer: 0.0,
+            base_rate: 0.0, // initialise to the correct value the first time next() is called
+            rate,
+            finished: false,
+            looping: true,
+            amp,
+        }
+    }
+    pub fn reset(&mut self) {
+        self.jump_to(0.0);
+    }
+    pub fn jump_to(&mut self, new_pointer_pos: f64) {
+        self.read_pointer = new_pointer_pos;
+        self.finished = false;
+    }
+}
+
+impl Gen for BufferReader {
+    fn next(&mut self, resources: &mut Resources) -> Sample {
+        if !self.finished {
+            if let Some(buffer) = &mut resources.buffers.get(self.buffer_key) {
+                if self.base_rate == 0.0 {
+                    self.base_rate = buffer.buf_rate_scale(resources.sample_rate.into());
+                }
+                let sample = buffer.get((self.read_pointer * buffer.size) as usize);
+                self.read_pointer += self.base_rate * self.rate;
+                if self.read_pointer >= 1.0 {
+                    self.finished = true;
+                    if self.looping {
+                        self.reset();
+                    }
+                }
+                sample * self.amp
+            } else {
+                0.0
+            }
+        } else {
+            0.0
+        }
+    }
+
+    fn process(
+        &mut self,
+        inputs: &[Box<[crate::graph::Sample]>],
+        outputs: &mut [Box<[crate::graph::Sample]>],
+        resources: &mut crate::Resources,
+    ) -> crate::graph::GenState {
+        if let Some(buffer) = &mut resources.buffers.get(self.buffer_key) {
+            // Initialise the base rate if it hasn't been set
+            if self.base_rate == 0.0 {
+                self.base_rate = buffer.buf_rate_scale(resources.sample_rate.into());
+            }
+
+            for out in outputs[0].iter_mut() {
+                let sample = buffer.get((self.read_pointer * buffer.size) as usize);
+                self.read_pointer += self.base_rate * self.rate;
+                if self.read_pointer >= 1.0 {
+                    self.finished = true;
+                    if self.looping {
+                        self.reset();
+                    }
+                }
+                *out = sample * self.amp;
+            }
+        } else {
+            // Output zeroes if the buffer doesn't exist.
+            // TODO: Send error back to the user that the buffer doesn't exist without interrupting the audio thread.
+            outputs[0].fill(0.0);
+            eprintln!("Error: BufferReader: buffer doesn't exist in Resources");
+        }
+        GenState::Continue
+    }
+
+    fn num_inputs(&self) -> usize {
+        todo!()
+    }
+
+    fn num_outputs(&self) -> usize {
+        todo!()
     }
 }
