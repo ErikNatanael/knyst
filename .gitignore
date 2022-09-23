@@ -1,2 +1,6 @@
 /target
 /Cargo.lock
+
+flamegraph.svg
+callgrind*
+perf*
