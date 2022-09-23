@@ -2972,6 +2972,80 @@ impl Gen for Mult {
     fn num_outputs(&self) -> usize {
         1
     }
+
+    fn input_desc(&self, input: usize) -> &'static str {
+        match input {
+            0 => "value0",
+            1 => "value1",
+            _ => "",
+        }
+    }
+
+    fn output_desc(&self, _output: usize) -> &'static str {
+        "product"
+    }
+
+    fn name(&self) -> &'static str {
+        "Mult"
+    }
+}
+/// Pan a mono signal to stereo using the cos/sine pan law. Pan value should be between 0 and 1, 0.5 being in the center
+/// TODO: Implement multiple different pan laws, maybe as a generic.
+pub struct PanMonoToStereo;
+impl Gen for PanMonoToStereo {
+    fn process(
+        &mut self,
+        inputs: &[Box<[Sample]>],
+        outputs: &mut [Box<[Sample]>],
+        _resources: &mut Resources,
+    ) -> GenState {
+        let signals = &inputs[0];
+        let pans = &inputs[1];
+        let (lefts, rest) = outputs.split_at_mut(1);
+        let lefts = &mut lefts[0];
+        let rights = &mut rest[0];
+        for (((left, right), signal), pan) in lefts
+            .iter_mut()
+            .zip(rights.iter_mut())
+            .zip(signals.iter())
+            .zip(pans.iter())
+        {
+            let pan_pos_radians = pan * std::f32::consts::FRAC_PI_2;
+            let left_gain = fastapprox::fast::cos(pan_pos_radians);
+            let right_gain = fastapprox::fast::sin(pan_pos_radians);
+            *left = signal * left_gain;
+            *right = signal * right_gain;
+        }
+        GenState::Continue
+    }
+
+    fn num_inputs(&self) -> usize {
+        2
+    }
+
+    fn num_outputs(&self) -> usize {
+        2
+    }
+
+    fn input_desc(&self, input: usize) -> &'static str {
+        match input {
+            0 => "signal",
+            1 => "pan",
+            _ => "",
+        }
+    }
+
+    fn output_desc(&self, output: usize) -> &'static str {
+        match output {
+            0 => "left",
+            1 => "right",
+            _ => "",
+        }
+    }
+
+    fn name(&self) -> &'static str {
+        "PanMonoToStereo"
+    }
 }
 
 struct NaiveSine {

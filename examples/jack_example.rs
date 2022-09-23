@@ -33,6 +33,17 @@ fn main() -> Result<()> {
     graph.connect(constant(0.5).to(amp).to_index(1))?;
     graph.connect(mod_amp.to(amp).to_index(1))?;
     graph.connect(amp.to_graph_out())?;
+    let node1 = graph.push_gen(WavetableOscillatorOwned::new(Wavetable::sine()));
+    graph.connect(constant(220.).to(node1).to_label("freq"))?;
+    let modulator = graph.push_gen(WavetableOscillatorOwned::new(Wavetable::sine()));
+    graph.connect(constant(3.).to(modulator).to_label("freq"))?;
+    let mod_amp = graph.push_gen(Mult);
+    graph.connect(modulator.to(mod_amp))?;
+    graph.connect(constant(0.25).to(mod_amp).to_index(1))?;
+    let amp = graph.push_gen(Mult);
+    graph.connect(node1.to(amp))?;
+    graph.connect(constant(0.5).to(amp).to_index(1))?;
+    graph.connect(mod_amp.to(amp).to_index(1))?;
     graph.connect(amp.to_graph_out().to_index(1))?;
     graph.commit_changes();
     graph.update(); // Required because constant connections get converted to
