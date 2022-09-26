@@ -1,7 +1,7 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use knyst::envelope::{Curve, Envelope, EnvelopeGen};
-use knyst::wavetable::{Phase, PhaseF32};
-use knyst::{prelude::*, FRACTIONAL_PART};
+use knyst::prelude::*;
+use knyst::wavetable::{Phase, PhaseF32, FRACTIONAL_PART};
 
 // Test if integer phase is in fact faster than floating point phase
 pub fn phase_float_or_uint(c: &mut Criterion) {

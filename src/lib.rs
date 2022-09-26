@@ -37,6 +37,7 @@
 use buffer::{Buffer, BufferKey};
 use core::fmt::Debug;
 use downcast_rs::{impl_downcast, Downcast};
+use graph::GenState;
 // Import these for docs
 #[allow(unused_imports)]
 use graph::{Connection, Gen, Graph, Node};
@@ -66,6 +67,17 @@ pub enum StopAction {
     FreeGraph,
     FreeGraphMendConnections,
 }
+impl StopAction {
+    pub fn to_gen_state(&self, stop_sample: usize) -> GenState {
+        match self {
+            StopAction::Continue => GenState::Continue,
+            StopAction::FreeSelf => GenState::FreeSelf,
+            StopAction::FreeSelfMendConnections => GenState::FreeSelfMendConnections,
+            StopAction::FreeGraph => GenState::FreeGraph(stop_sample),
+            StopAction::FreeGraphMendConnections => GenState::FreeGraphMendConnections(stop_sample),
+        }
+    }
+}
 
 /// Settings used to initialise [`Resources`].
 pub struct ResourcesSettings {
@@ -85,6 +97,14 @@ impl Default for ResourcesSettings {
             max_user_data: 0,
         }
     }
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum ResourcesError {
+    #[error("There is not enough space to insert the given Wavetable. You can create a Resources with more space or remove old Wavetables")]
+    WavetablesFull(Wavetable),
+    #[error("There is not enough space to insert the given Buffer. You can create a Resources with more space or remove old Buffers")]
+    BuffersFull(Buffer),
 }
 
 /// Common resources for all Nodes in a Graph and all its sub Graphs:
@@ -154,21 +174,24 @@ impl Resources {
         self.user_data.get_mut(key)
     }
 
-    pub fn insert_wavetable(&mut self, wavetable: Wavetable) -> Result<WavetableKey, Wavetable> {
+    pub fn insert_wavetable(
+        &mut self,
+        wavetable: Wavetable,
+    ) -> Result<WavetableKey, ResourcesError> {
         if self.wavetables.len() < self.wavetables.capacity() {
             Ok(self.wavetables.insert(wavetable))
         } else {
-            Err(wavetable)
+            Err(ResourcesError::WavetablesFull(wavetable))
         }
     }
     pub fn remove_wavetable(&mut self, wavetable_key: WavetableKey) -> Option<Wavetable> {
         self.wavetables.remove(wavetable_key)
     }
-    pub fn insert_buffer(&mut self, buf: Buffer) -> Result<BufferKey, Buffer> {
+    pub fn insert_buffer(&mut self, buf: Buffer) -> Result<BufferKey, ResourcesError> {
         if self.buffers.len() < self.buffers.capacity() {
             Ok(self.buffers.insert(buf))
         } else {
-            Err(buf)
+            Err(ResourcesError::BuffersFull(buf))
         }
     }
     /// Returns the rate with which a buffer needs to be played to sound at its original speed at the current sample rate.
@@ -177,7 +200,7 @@ impl Resources {
     /// ```
     /// # use knyst::prelude::*;
     /// // Create a buffer with a sample rate of 44100.0
-    /// let buffer = Buffer::new(1024, 44100.0);
+    /// let buffer = Buffer::new(1024, 1, 44100.0);
     /// let mut resources = Resources::new(ResourcesSettings{
     ///     sample_rate: 48000.,
     ///     ..Default::default()

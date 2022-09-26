@@ -47,18 +47,17 @@ fn main() -> anyhow::Result<()> {
     // struct.
     let output_node = graph.push_gen(
         gen(move |inputs, outputs, _resources| {
-            let (out0, rest) = outputs.split_at_mut(1);
-            let out0 = &mut out0[0];
-            let out1 = &mut rest[0];
-            for ((((o0, o1), i0), i1), dist) in out0
-                .iter_mut()
-                .zip(out1.iter_mut())
-                .zip(inputs[0].iter())
-                .zip(inputs[1].iter())
-                .zip(inputs[2].iter())
-            {
-                *o0 = tanh(*i0 * dist.max(1.0)) * 0.5;
-                *o1 = tanh(*i1 * dist.max(1.0)) * 0.5;
+            if let [ref mut out0, ref mut out1, ..] = outputs {
+                for ((((o0, o1), i0), i1), dist) in out0
+                    .iter_mut()
+                    .zip(out1.iter_mut())
+                    .zip(inputs[0].iter())
+                    .zip(inputs[1].iter())
+                    .zip(inputs[2].iter())
+                {
+                    *o0 = tanh(*i0 * dist.max(1.0)) * 0.5;
+                    *o1 = tanh(*i1 * dist.max(1.0)) * 0.5;
+                }
             }
             GenState::Continue
         })

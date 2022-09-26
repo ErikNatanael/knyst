@@ -391,15 +391,7 @@ impl Gen for EnvelopeGen {
         if self.playing {
             GenState::Continue
         } else {
-            match self.stop_action {
-                StopAction::Continue => GenState::Continue,
-                StopAction::FreeSelf => GenState::FreeSelf,
-                StopAction::FreeSelfMendConnections => GenState::FreeSelfMendConnections,
-                StopAction::FreeGraph => GenState::FreeGraph(stop_sample.unwrap()),
-                StopAction::FreeGraphMendConnections => {
-                    GenState::FreeGraphMendConnections(stop_sample.unwrap())
-                }
-            }
+            self.stop_action.to_gen_state(stop_sample.unwrap())
         }
     }
 

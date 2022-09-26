@@ -17,17 +17,19 @@ fastapprox = "0.3"
 # Downcast used to have any user data in the Resources struct
 downcast-rs = "1.2.0"
 # Loading audio buffers
-symphonia = "0.5.1"
+symphonia = {version = "0.5.1", features = ["mp3"] }
 # JACK audio backend
 jack = { version =  "0.10", optional = true }
 # CPAL audio backend
 cpal = {version = "0.14.0", optional = true }
+dasp_sample = { version = "0.11" }
 
 
 [dev-dependencies]
 rand = "0.8"
 criterion = "0.3"
 anyhow = "1.0"
+dialog = "0.3"
 
 
 
