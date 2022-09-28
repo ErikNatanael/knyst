@@ -1,3 +1,4 @@
+//! Audio backends for getting up and running quickly.
 //! To use the backends in this module you need to enable either the jack or the cpal feature.
 //!
 //! [`JackBackend`] currently has better support including a duplex client with

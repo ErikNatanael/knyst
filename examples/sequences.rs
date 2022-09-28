@@ -248,8 +248,6 @@ fn sine_tone_graph(
         ..Default::default()
     };
     let mut env = env.to_gen();
-    // TODO: It is very unintuitive that you have to manually start the envelope
-    env.start();
     let env = g.push_gen(env);
     let mult = g.push_gen(Mult);
     g.connect(sin.to(mult))?;

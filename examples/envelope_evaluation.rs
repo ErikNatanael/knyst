@@ -10,7 +10,6 @@ fn main() {
     };
     let mut envelope = envelope.to_gen();
     let mut all_values = Vec::with_capacity(44100);
-    envelope.start();
     for _ in 0..(sample_rate as usize * 2) {
         let value = envelope.next();
         all_values.push(value);

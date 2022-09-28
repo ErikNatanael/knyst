@@ -1,3 +1,24 @@
+//! A pretty barebones Envelope Gen
+//!
+//! [`EnvelopeGen`] can be constructed directly, but it is more convenient to
+//! create an [`Envelope`] and then call [`Envelope::to_gen`] on it.
+//!
+//! ```rust
+//! use knyst::envelope::*;
+//! use knyst::prelude::*;
+//! let amplitude = 0.5;
+//! let attack_time = 0.2;
+//! let release_time = 2.0;
+//! let env = Envelope {
+//!     start_value: 0.0,
+//!     points: vec![(amplitude, attack_time), (0.0, release_time)],
+//!     curves: vec![Curve::Linear, Curve::Exponential(2.0)],
+//!     stop_action: StopAction::FreeGraph,
+//!     ..Default::default()
+//! };
+//! let mut env = env.to_gen();
+//! ```
+
 // level, duration
 type Point = (f32, f32);
 // Storing time as samples in an f64 is fine, there's adequate range and avoids type casting.
@@ -34,11 +55,14 @@ pub struct Envelope {
     pub stop_action: StopAction,
 }
 impl Envelope {
+    /// Converts an [`Envelope`] to an [`EnvelopeGen`] and starts it.
     pub fn to_gen(&self) -> EnvelopeGen {
-        EnvelopeGen::new(self.start_value, self.points.clone(), self.sample_rate)
+        let mut e = EnvelopeGen::new(self.start_value, self.points.clone(), self.sample_rate)
             .curves(self.curves.clone())
             .sustain(self.sustain)
-            .stop_action(self.stop_action)
+            .stop_action(self.stop_action);
+        e.start();
+        e
     }
 }
 impl Default for Envelope {
@@ -77,6 +101,9 @@ impl Curve {
     }
 }
 
+/// An envelope Gen. Must be started by calling [`EnvelopeGen::start`] since that
+/// will initialise it based on the settings of its segments. If you want to use
+/// it offline, it can be turned into an iterator by calling [`EnvelopeGen::iter_mut`].
 #[derive(Debug, Clone)]
 pub struct EnvelopeGen {
     pub start_value: f32,
@@ -133,7 +160,7 @@ impl EnvelopeGen {
             duration_passed: 0.,
             stop_action: StopAction::Continue,
             next_index: 1,
-            playing: false,
+            playing: true,
             sample_rate,
             sustain: SustainMode::NoSustain,
             // sustaining: false,
@@ -212,6 +239,7 @@ impl EnvelopeGen {
             }
         }
     }
+    /// Initialises the envelope based on the start_value and the first point
     pub fn start(&mut self) {
         self.playing = true;
         self.waiting_for_release = false;
@@ -224,6 +252,7 @@ impl EnvelopeGen {
         self.duration_passed = 0.;
         self.next_index = 1;
     }
+    /// Initialises the envelope based on the current value and the first point
     pub fn start_from_current(&mut self) {
         self.playing = true;
         self.waiting_for_release = false;
@@ -236,6 +265,7 @@ impl EnvelopeGen {
         self.duration_passed = 0.;
         self.next_index = 1;
     }
+    /// Releases the envelope if it is sustaining or immediately fades out if it is not.
     pub fn release(&mut self) {
         match self.sustain {
             SustainMode::NoSustain => self.fade_out(),
@@ -253,6 +283,9 @@ impl EnvelopeGen {
             }
         }
     }
+    /// Immediately fade the output to 0.0. This is called if
+    /// [`EnvelopeGen::release`] is called on a non sustaining and non looping
+    /// envelope.
     pub fn fade_out(&mut self) {
         self.source_value = self.current_value();
         self.next_index = self.points.len();
@@ -362,6 +395,9 @@ impl EnvelopeGen {
         } else {
             self.source_value // if we're not playing the envelope, the final value is saved here. If pausing is implemented, a current_value field may be needed
         }
+    }
+    pub fn iter_mut(&mut self) -> EnvelopeIterator {
+        EnvelopeIterator { envelope: self }
     }
 }
 

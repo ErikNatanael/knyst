@@ -1,3 +1,9 @@
+//! Loading sound files and other data and reading from them.
+//! Module containing buffer functionality:
+//! - [`Buffer`] for storing sound and other data
+//! - [`BufferReader`] for reading a single channel [`Buffer`] or only the first channel from a multi channel buffer
+//! - [`BufferReaderMulti`] for reading multiple channels from a [`Buffer`]. The number of channels is fixed once it has been added to a [`Graph`]
+
 use std::{fs::File, path::PathBuf};
 
 use slotmap::new_key_type;
@@ -11,8 +17,9 @@ use symphonia::core::{
     probe::Hint,
 };
 
+#[allow(unused)]
 use crate::{
-    graph::{Gen, GenState},
+    graph::{Gen, GenState, Graph},
     StopAction,
 };
 
@@ -21,7 +28,7 @@ use super::Sample;
 new_key_type! {
     pub struct BufferKey;
 }
-/// The Buffer is currently very similar to Wavetable, but they may evolve differently
+/// A buffer containing sound or data. Channels are stored interleaved in a 1-dimensional list.
 #[derive(Clone, Debug)]
 pub struct Buffer {
     buffer: Vec<Sample>,
@@ -40,6 +47,7 @@ impl Buffer {
             sample_rate,
         }
     }
+    /// Create a [`Buffer`] from a single channel buffer.
     pub fn from_vec(buffer: Vec<Sample>, sample_rate: f64) -> Self {
         let size = buffer.len() as f64;
         Buffer {
@@ -49,6 +57,9 @@ impl Buffer {
             sample_rate,
         }
     }
+    /// Create a [`Buffer`] from a multi channel buffer. Channels should be
+    /// interleaved e.g. [sample0_channel0, sample0_channel1, sample1_channel0,
+    /// sample1_channel1, ..] etc
     pub fn from_vec_interleaved(
         buffer: Vec<Sample>,
         num_channels: usize,
@@ -63,8 +74,9 @@ impl Buffer {
         }
     }
 
-    // TODO: Return whatever error is produced
-    pub fn from_file(path: impl Into<PathBuf>) -> Result<Self, SymphoniaError> {
+    /// Create a [`Buffer`] by loading a sound file from disk. Currently
+    /// supported file formats: Wave, Ogg Vorbis, FLAC, MP3
+    pub fn from_sound_file(path: impl Into<PathBuf>) -> Result<Self, SymphoniaError> {
         let path = path.into();
         let mut buffer = Vec::new();
         let mut codec_params = None;
@@ -249,8 +261,7 @@ impl Buffer {
     }
 }
 
-/// Reads a sample from a buffer and plays it back
-/// TODO: Support multi-channel buffers
+/// Reads a sample from a buffer and outputs it. In a multi channel [`Buffer`] only the first channel will be read.
 /// TODO: Support rate through an argument with a default constant of 1
 #[derive(Clone, Debug)]
 pub struct BufferReader {

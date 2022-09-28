@@ -56,7 +56,6 @@ pub fn envelope_segments(c: &mut Criterion) {
             };
             let mut envelope = envelope.to_gen();
             let mut all_values = Vec::with_capacity(44100);
-            envelope.start();
             for _ in 0..sample_rate as usize {
                 let value = envelope.next();
                 all_values.push(value);
@@ -66,14 +65,18 @@ pub fn envelope_segments(c: &mut Criterion) {
     });
     c.bench_function("envelope exponential", |b| {
         b.iter(|| {
-            let mut envelope =
-                EnvelopeGen::new(0.0, vec![(1.0, 0.1), (0.5, 0.1), (0.0, 0.5)], sample_rate)
-                    .curves(vec![
-                        Curve::Exponential(2.0),
-                        Curve::Exponential(4.0),
-                        Curve::Exponential(0.125),
-                    ]);
-            envelope.start();
+            let envelope = Envelope {
+                start_value: 0.0,
+                points: vec![(1.0, 0.1), (0.5, 0.5), (0.1, 1.2)],
+                curves: vec![
+                    Curve::Exponential(2.0),
+                    Curve::Exponential(4.0),
+                    Curve::Exponential(0.125),
+                ],
+                sample_rate,
+                ..Default::default()
+            };
+            let mut envelope = envelope.to_gen();
             let mut all_values = Vec::with_capacity(44100);
             for _ in 0..sample_rate as usize {
                 let value = envelope.next();

@@ -1,3 +1,31 @@
+//! [`Graph`] is the audio graph, the core of Knyst.
+//!
+//! To build an audio graph, add generators (anything implementing the [`Gen`]
+//! trait) to a graph and add connections between them.
+//!
+//! ```
+//! # use knyst::prelude::*;
+//! # use knyst::wavetable::*;
+//! let graph_settings = GraphSettings {
+//!     block_size: 64,
+//!     sample_rate: 44100.,
+//!     num_outputs: 2,
+//!     ..Default::default()
+//! };
+//! let mut graph = Graph::new(graph_settings);
+//! // Adding a node gives you an address to that node
+//! let sine_node_address = graph.push_gen(WavetableOscillatorOwned::new(Wavetable::sine()));
+//! // Connecting the node to the graph output
+//! graph.connect(sine_node_address.to_graph_out())?;
+//! // You need to commit changes if the graph is running.
+//! graph.commit_changes();
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+//! To produce an output from the [`Graph`] we need to turn it into a node. If
+//! you want to listen to the graph output the easiest way is to use and audio
+//! backend. Have a look at [`Graph::to_node`] if you want to do non-realtime
+//! synthesis or implement your own backend.
+
 use std::cell::UnsafeCell;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU16, AtomicU64};
@@ -612,7 +640,7 @@ pub enum ScheduleError {
 }
 
 pub trait Gen {
-    /// The input and output buffers are both indexed using [in/out_index][sample_index].
+    /// The input and output buffers are both indexed using \[in/out_index\]\[sample_index\].
     ///
     /// - *inputs*: The inputs to the Gen filled with the relevant values. May be any size the same or larger
     /// than the number of inputs to this particular Gen.
@@ -725,7 +753,7 @@ impl Gen for ClosureGen {
 /// No promise is made as to when the node or the Graph will be freed so the Node needs to do the right thing
 /// if run again the next block. E.g. a node returning `FreeSelfMendConnections` is expected to act as a
 /// connection bridge from its non constant inputs to its outputs as if it weren't there. Only inputs with a
-/// corresponding output should be passed through, e.g. in[0] -> out[0], in[1] -> out[1], in[2..5] go nowhere.
+/// corresponding output should be passed through, e.g. in\[0\] -> out\[0\], in\[1\] -> out\[1\], in\[2..5\] go nowhere.
 ///
 /// The FreeGraph and FreeGraphMendConnections values also return the relative
 /// sample in the current block after which the graph should return 0 or connect
@@ -811,7 +839,7 @@ pub struct Graph {
     sample_rate: Sample,
     ring_buffer_size: usize,
     initiated: bool,
-    /// Used for processing every node, index using [input_num][sample_in_block]
+    /// Used for processing every node, index using \[input_num\]\[sample_in_block\]
     inputs_buffers: Vec<Box<[Sample]>>,
     graph_gen_communicator: Option<GraphGenCommunicator>,
     /// The duration added to all changes scheduled to a relative time so that they have time to travel to the GraphGen.

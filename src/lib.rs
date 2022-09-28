@@ -120,7 +120,7 @@ pub struct Resources {
     /// frequency * this number is the amount that the phase should increase one
     /// sample. It is stored here so that it doesn't need to be stored in every
     /// wavetable oscillator.
-    pub freq_to_phase_inc: Sample,
+    pub freq_to_phase_inc: f64,
     /// UserData is meant for data that needs to be read by many nodes and
     /// updated for all of them simultaneously. Strings are used as keys for
     /// simplicity. A HopSlotMap could be used, but it would require sending and
@@ -144,9 +144,8 @@ impl Resources {
         let wavetables = SlotMap::with_capacity_and_key(settings.max_wavetables);
         let buffers = SlotMap::with_capacity_and_key(settings.max_buffers);
 
-        let freq_to_phase_inc = (TABLE_SIZE as f64
-            * FRACTIONAL_PART as f64
-            * (1.0 / settings.sample_rate as f64)) as Sample;
+        let freq_to_phase_inc =
+            TABLE_SIZE as f64 * FRACTIONAL_PART as f64 * (1.0 / settings.sample_rate as f64);
 
         Resources {
             buffers,

@@ -25,7 +25,7 @@ fn main() -> anyhow::Result<()> {
         .expect("Could not display dialog box")
         .unwrap();
     // Insert the buffer before sending Resources to the audio thread
-    let buffer = resources.insert_buffer(Buffer::from_file(file_path)?)?;
+    let buffer = resources.insert_buffer(Buffer::from_sound_file(file_path)?)?;
 
     let graph_settings = GraphSettings {
         block_size,

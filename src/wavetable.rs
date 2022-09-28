@@ -1,3 +1,5 @@
+//! Wavetable synthesis
+
 use slotmap::new_key_type;
 
 use crate::{Resources, Sample};
@@ -7,10 +9,11 @@ use crate::graph::{Gen, GenState};
 use crate::xorrng::XOrShift32Rng;
 use std::f32::consts::PI;
 
-/// The number of samples per [`wavetable`], and also the number of high bits used
-/// for the phase indexing into the wavetable. With the current u32 phase, this can be maximum 16.
-pub const TABLE_POWER: u32 = 16;
-/// The size of tables for the Knyst [`wavetable`] types. TABLE_SIZE is 2^TABLE_POWER
+/// Decides the number of samples per [`Wavetable`] buffer, and therefore also
+/// the number of high bits used for the phase indexing into the wavetable. With
+/// the current u32 phase, this can be maximum 16.
+pub const TABLE_POWER: u32 = 14;
+/// TABLE_SIZE is 2^TABLE_POWER
 pub const TABLE_SIZE: usize = 2_usize.pow(TABLE_POWER);
 /// The high mask is used to 0 everything above the table size so that adding
 /// further would have the same effect as wrapping.
@@ -299,7 +302,7 @@ impl WavetableOscillatorOwned {
         osc
     }
     pub fn set_freq(&mut self, freq: Sample, resources: &mut Resources) {
-        self.step = (freq * resources.freq_to_phase_inc) as u32;
+        self.step = (freq as f64 * resources.freq_to_phase_inc) as u32;
     }
     pub fn set_amp(&mut self, amp: Sample) {
         self.amp = amp;
@@ -434,7 +437,7 @@ impl Oscillator {
     }
     #[inline]
     pub fn set_freq(&mut self, freq: Sample, resources: &mut Resources) {
-        self.step = (freq * resources.freq_to_phase_inc) as u32;
+        self.step = (freq as f64 * resources.freq_to_phase_inc) as u32;
     }
     #[inline]
     pub fn set_amp(&mut self, amp: Sample) {
@@ -487,4 +490,39 @@ impl Gen for Oscillator {
     }
 }
 
-mod tests {}
+mod tests {
+    #[allow(unused)]
+    use crate::wavetable::*;
+    #[test]
+    fn phase_accuracy() {
+        let sample_rate = 48000;
+        let mut largest_diff = 0.0;
+        let mut largest_diff_freq = 0.0;
+        for freq in 1..20000 {
+            let freq = freq as f64;
+            let freq_to_phase_inc =
+                TABLE_SIZE as f64 * FRACTIONAL_PART as f64 * (1.0 / sample_rate as f64);
+            let step = (freq * freq_to_phase_inc) as u32;
+            fn step_to_freq(step: u32, sample_rate: f64) -> f64 {
+                (step as f64 * sample_rate) / (TABLE_SIZE as f64 * FRACTIONAL_PART as f64)
+            }
+            let step_as_freq = step_to_freq(step, sample_rate as f64);
+            let diff = step_as_freq - freq;
+            if diff > largest_diff {
+                largest_diff = diff;
+                largest_diff_freq = freq;
+
+                println!(
+                    "org: {}, as step: {}, dif:: {}",
+                    freq,
+                    step_as_freq,
+                    step_as_freq - freq
+                );
+            }
+        }
+        println!(
+            "largest diff\norg: {}, dif:: {}",
+            largest_diff_freq, largest_diff
+        );
+    }
+}
