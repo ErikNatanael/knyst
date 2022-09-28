@@ -18,11 +18,13 @@ fn main() -> anyhow::Result<()> {
         ..Default::default()
     });
 
+    // Get file path to a sound file from the user
     let file_path = dialog::FileSelection::new("Please select an audio file")
         .title("Open audio file")
         .show()
         .expect("Could not display dialog box")
         .unwrap();
+    // Insert the buffer before sending Resources to the audio thread
     let buffer = resources.insert_buffer(Buffer::from_file(file_path)?)?;
 
     let graph_settings = GraphSettings {
@@ -41,19 +43,6 @@ fn main() -> anyhow::Result<()> {
     let buf_playback_node =
         g.push_gen(BufferReaderMulti::new(buffer, 1.0, StopAction::FreeSelf).channels(2));
     g.connect(buf_playback_node.to_graph_out().channels(2))?;
-
-    // let node0 = g.push_gen(WavetableOscillatorOwned::new(Wavetable::sine()));
-    // g.connect(constant(440.).to(node0).to_label("freq"))?;
-    // let modulator = g.push_gen(WavetableOscillatorOwned::new(Wavetable::sine()));
-    // g.connect(constant(5.).to(modulator).to_label("freq"))?;
-    // let mod_amp = g.push_gen(Mult);
-    // g.connect(modulator.to(mod_amp))?;
-    // g.connect(constant(0.25).to(mod_amp).to_index(1))?;
-    // let amp = g.push_gen(Mult);
-    // g.connect(node0.to(amp))?;
-    // g.connect(constant(0.5).to(amp).to_index(1))?;
-    // g.connect(mod_amp.to(amp).to_index(1))?;
-    // g.connect(amp.to_graph_out())?;
 
     g.commit_changes();
     g.update();
