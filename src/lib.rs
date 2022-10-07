@@ -1,10 +1,14 @@
 //! # Knyst - audio graph and synthesis library
 //!
 //! Knyst is a real time audio synthesis framework focusing on flexibility and
-//! performance. It's main target use case is desktop multi-threaded
+//! performance. It's main target use case is desktop multi-threaded real time
 //! environments, but it can also do single threaded and/or non real time
 //! synthesis. Embedded platforms are currently not supported, but on the
 //! roadmap.
+//!
+//! The main selling point of Knyst is that the graph can be modified while it's
+//! running: nodes and connections between nodes can be added/removed. It also
+//! supports shared resources such as wavetables and buffers.
 //!
 //! ## Status
 //!
