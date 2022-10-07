@@ -30,6 +30,7 @@ rand = "0.8"
 criterion = "0.3"
 anyhow = "1.0"
 dialog = "0.3"
+fundsp = { version = "0.9" }
 
 
 
@@ -49,4 +50,8 @@ required-features = ["cpal"]
 [[example]]
 name = "sine_piece"
 path = "examples/sine_piece.rs"
+required-features = ["cpal"]
+[[example]]
+name = "fundsp_encapsulation"
+path = "examples/fundsp_encapsulation.rs"
 required-features = ["cpal"]
