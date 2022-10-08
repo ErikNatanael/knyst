@@ -307,7 +307,7 @@ impl Gen for BufferReader {
             if let Some(buffer) = &mut resources.buffers.get(self.buffer_key) {
                 // Initialise the base rate if it hasn't been set
                 if self.base_rate == 0.0 {
-                    self.base_rate = buffer.buf_rate_scale(resources.sample_rate.into());
+                    self.base_rate = buffer.buf_rate_scale(resources.sample_rate);
                 }
 
                 for (i, out) in outputs[0].iter_mut().enumerate() {
@@ -416,7 +416,7 @@ impl Gen for BufferReaderMulti {
             if let Some(buffer) = &mut resources.buffers.get(self.buffer_key) {
                 // Initialise the base rate if it hasn't been set
                 if self.base_rate == 0.0 {
-                    self.base_rate = buffer.buf_rate_scale(resources.sample_rate.into());
+                    self.base_rate = buffer.buf_rate_scale(resources.sample_rate);
                 }
                 let block_size = outputs[0].len();
                 for i in 0..block_size {

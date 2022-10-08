@@ -383,7 +383,7 @@ impl EnvelopeGen {
         self.source_value + (t * self.source_target_diff)
     }
     #[inline(always)]
-    pub fn next(&mut self) -> Sample {
+    pub fn next_sample(&mut self) -> Sample {
         if self.playing && !self.waiting_for_release {
             let value = self.current_value();
             self.duration_passed += self.current_timestep;
@@ -419,7 +419,7 @@ impl Gen for EnvelopeGen {
             if release_gate > 0. {
                 self.release();
             }
-            *out = self.next();
+            *out = self.next_sample();
             if !self.playing() && stop_sample.is_none() {
                 stop_sample = Some(i)
             }
@@ -444,11 +444,8 @@ impl Gen for EnvelopeGen {
             self.points = self
                 .points_secs
                 .iter()
-                .map(|p| {
-                    let mut p = p.clone();
-                    p.1 *= sample_rate;
-                    p
-                })
+                .copied()
+                .map(|(x, y)| (x, y * sample_rate))
                 .collect();
         }
         self.sample_rate = sample_rate;
@@ -482,7 +479,7 @@ impl<'a> Iterator for EnvelopeIterator<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.envelope.playing() {
-            Some(self.envelope.next())
+            Some(self.envelope.next_sample())
         } else {
             None
         }
@@ -497,45 +494,45 @@ mod tests {
         let sample_rate = 44100.;
         let mut env = EnvelopeGen::new(0.0, vec![(1.0, 1.0), (0.75, 0.5), (0.1, 3.0)], sample_rate);
         env.start();
-        assert_eq!(env.next(), 0.);
-        assert!(env.next() > 0.);
+        assert_eq!(env.next_sample(), 0.);
+        assert!(env.next_sample() > 0.);
         // fast forward 0.5 seconds minus the samples we've already extracted
         for _i in 0..(sample_rate * 0.5 - 2.0) as i32 {
-            env.next();
+            env.next_sample();
         }
         assert_eq!(
-            env.next(),
+            env.next_sample(),
             0.5,
             "Envelope value was expected to be 0.5 halfway between 0.0 and 1.0. {:?}",
             env
         );
         // fast forward another 0.5 seconds minus the samples we've already extracted
         for _i in 0..(sample_rate * 0.5 - 1.0) as i32 {
-            env.next();
+            env.next_sample();
         }
-        assert_eq!(env.next(), 1.0);
+        assert_eq!(env.next_sample(), 1.0);
         // fast forward to the point where we arrive at the second level
         for _i in 0..(sample_rate * 0.5 - 1.0) as i32 {
-            env.next();
+            env.next_sample();
         }
         assert_eq!(
-            env.next(),
+            env.next_sample(),
             0.75,
             "Envelope value was expected to be 0.75 right at the second point. {:?}",
             env
         );
         // fast forward past the end
         for _i in 0..(sample_rate * 3.01) as i32 {
-            env.next();
+            env.next_sample();
         }
         assert_eq!(
-            env.next(),
+            env.next_sample(),
             0.1,
             "Envelope did not keep its last value after finishing the envelope {:?}",
             env
         );
-        assert_eq!(
-            env.playing, false,
+        assert!(
+            !env.playing,
             "Envelope is not supposed to be playing after it is done {:?}",
             env
         );
