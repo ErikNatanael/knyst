@@ -51,15 +51,29 @@ harness = false
 name = "jack_example"
 path = "examples/jack_example.rs"
 required-features = ["jack"]
+
 [[example]]
 name = "cpal_example"
 path = "examples/cpal_example.rs"
 required-features = ["cpal"]
+
 [[example]]
 name = "sine_piece"
 path = "examples/sine_piece.rs"
 required-features = ["cpal"]
+
 [[example]]
 name = "fundsp_encapsulation"
 path = "examples/fundsp_encapsulation.rs"
+required-features = ["cpal"]
+
+[[example]]
+name = "sequences"
+path = "examples/sequences.rs"
+required-features = ["cpal"]
+
+
+[[example]]
+name = "sound_file_playback"
+path = "examples/sound_file_playback.rs"
 required-features = ["cpal"]
