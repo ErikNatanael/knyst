@@ -573,7 +573,7 @@ impl Task {
         // Copy all graph inputs
         for (node_input_buffer_ptr, graph_input_index) in &self.graph_inputs_to_copy {
             unsafe {
-                for (to_sample, from_sample) in (&mut **node_input_buffer_ptr)
+                for (to_sample, from_sample) in (**node_input_buffer_ptr)
                     .iter_mut()
                     .zip(graph_inputs[*graph_input_index].iter())
                 {
@@ -627,7 +627,7 @@ pub enum FreeError {
     #[error("The free action required making a new connection, but the connection failed.")]
     ConnectionError(#[from] Box<ConnectionError>),
 }
-#[derive(thiserror::Error, Debug, PartialEq)]
+#[derive(thiserror::Error, Debug, PartialEq, Eq)]
 pub enum ScheduleError {
     #[error("The graph containing the NodeAdress provided was not found. The node itself may or may not exist.")]
     GraphNotFound,
@@ -670,9 +670,12 @@ pub trait Gen {
     }
 }
 
+type SamplesSlice = [Box<[Sample]>];
+type ProcessFn =
+    Box<dyn FnMut(&SamplesSlice, &mut SamplesSlice, &mut Resources) -> GenState + Send>;
+
 pub struct ClosureGen {
-    process_fn:
-        Box<dyn FnMut(&[Box<[Sample]>], &mut [Box<[Sample]>], &mut Resources) -> GenState + Send>,
+    process_fn: ProcessFn,
     outputs: Vec<&'static str>,
     inputs: Vec<&'static str>,
     name: &'static str,
@@ -976,7 +979,7 @@ impl Graph {
         // calculating the node order of the graph. (i.e. all the nodes that
         // weren't visited)
 
-        let disconnected_nodes = std::mem::replace(&mut self.disconnected_nodes, vec![]);
+        let disconnected_nodes = std::mem::take(&mut self.disconnected_nodes);
         for node in disconnected_nodes {
             match self.free_node(NodeAddress {
                 key: node,
@@ -1050,14 +1053,15 @@ impl Graph {
                 }
             }
             let mut inputs = vec![vec![]; inputs_to_bridge];
-            for inout_index in 0..inputs_to_bridge {
+            for (inout_index, bridge_input) in inputs.iter_mut().enumerate().take(inputs_to_bridge)
+            {
                 for input in self
                     .node_input_edges
                     .get(node.key)
                     .expect("Since the key exists in the Graph its edge Vec should also exist")
                 {
                     if input.to_input_index == inout_index {
-                        inputs[inout_index].push(*input);
+                        bridge_input.push(*input);
                     }
                 }
             }
@@ -1084,7 +1088,7 @@ impl Graph {
             for (inputs, outputs) in inputs.into_iter().zip(outputs.iter()) {
                 for input in inputs {
                     for output in outputs {
-                        let connection = output.clone();
+                        let connection = output;
                         self.connect(connection.from(NodeAddress {
                             key: input.source,
                             graph_id: self.id,
@@ -1096,7 +1100,7 @@ impl Graph {
             for (graph_inputs, outputs) in graph_inputs.into_iter().zip(outputs.iter()) {
                 for input in graph_inputs {
                     for output in outputs {
-                        let connection = input.clone();
+                        let connection = input;
                         match self.connect(
                             connection
                                 .to(output.get_source_node().unwrap())
@@ -1121,7 +1125,7 @@ impl Graph {
                     },
                 }
             }
-            return Err(FreeError::GraphNotFound);
+            Err(FreeError::GraphNotFound)
         }
     }
     /// Remove the node and any edges to/from the node. This may lead to other nodes being disconnected from the output and therefore not be run, but they will not be freed.
@@ -1171,7 +1175,7 @@ impl Graph {
                 self.node_feedback_node_key.remove(node.key);
             }
             for (feedback_key, feedback_edges) in &mut self.node_feedback_edges {
-                if feedback_edges.len() > 0 {
+                if !feedback_edges.is_empty() {
                     let mut i = 0;
                     while i < feedback_edges.len() {
                         if feedback_edges[i].source == node.key
@@ -1182,7 +1186,7 @@ impl Graph {
                             i += 1;
                         }
                     }
-                    if feedback_edges.len() == 0 {
+                    if feedback_edges.is_empty() {
                         // The feedback node has no more edges to it: free it
                         let graph_id = self.id;
                         nodes_to_free.insert(NodeAddress {
@@ -1248,12 +1252,10 @@ impl Graph {
                 } else {
                     return Err(ScheduleError::InputLabelNotFound(label));
                 }
+            } else if let Some(index) = change.input_index {
+                index
             } else {
-                if let Some(index) = change.input_index {
-                    index
-                } else {
-                    0
-                }
+                0
             };
             if let Some(ggc) = &mut self.graph_gen_communicator {
                 // The GraphGen has been created so we have to be more careful
@@ -1307,7 +1309,7 @@ impl Graph {
                     },
                 }
             }
-            return Err(ConnectionError::GraphNotFound);
+            Err(ConnectionError::GraphNotFound)
         };
 
         match connection {
@@ -1390,48 +1392,46 @@ impl Graph {
                             i += 1;
                         }
                     }
-                } else {
-                    if let Some(&feedback_node) = self.node_feedback_node_key.get(source.key) {
-                        // Remove feedback edges
-                        let feedback_edge_list = &mut self.node_feedback_edges[feedback_node];
-                        let mut i = 0;
-                        while i < feedback_edge_list.len() {
-                            if feedback_edge_list[i].source == source.key
-                                && feedback_edge_list[i].feedback_destination == sink.key
-                                && feedback_edge_list[i].from_output_index >= from_index
-                                && feedback_edge_list[i].from_output_index < from_index + channels
-                                && feedback_edge_list[i].to_input_index >= from_index
-                                && feedback_edge_list[i].to_input_index < from_index + channels
-                            {
-                                feedback_edge_list.remove(i);
-                            } else {
-                                i += 1;
-                            }
+                } else if let Some(&feedback_node) = self.node_feedback_node_key.get(source.key) {
+                    // Remove feedback edges
+                    let feedback_edge_list = &mut self.node_feedback_edges[feedback_node];
+                    let mut i = 0;
+                    while i < feedback_edge_list.len() {
+                        if feedback_edge_list[i].source == source.key
+                            && feedback_edge_list[i].feedback_destination == sink.key
+                            && feedback_edge_list[i].from_output_index >= from_index
+                            && feedback_edge_list[i].from_output_index < from_index + channels
+                            && feedback_edge_list[i].to_input_index >= from_index
+                            && feedback_edge_list[i].to_input_index < from_index + channels
+                        {
+                            feedback_edge_list.remove(i);
+                        } else {
+                            i += 1;
                         }
-                        // Remove inputs to the sink
+                    }
+                    // Remove inputs to the sink
 
-                        let edge_list = &mut self.node_input_edges[sink.key];
+                    let edge_list = &mut self.node_input_edges[sink.key];
 
-                        let mut i = 0;
-                        while i < edge_list.len() {
-                            if edge_list[i].source == feedback_node
-                                && edge_list[i].from_output_index >= from_index
-                                && edge_list[i].from_output_index < from_index + channels
-                                && edge_list[i].to_input_index >= to_index
-                                && edge_list[i].to_input_index < to_index + channels
-                            {
-                                edge_list.remove(i);
-                            } else {
-                                i += 1;
-                            }
+                    let mut i = 0;
+                    while i < edge_list.len() {
+                        if edge_list[i].source == feedback_node
+                            && edge_list[i].from_output_index >= from_index
+                            && edge_list[i].from_output_index < from_index + channels
+                            && edge_list[i].to_input_index >= to_index
+                            && edge_list[i].to_input_index < to_index + channels
+                        {
+                            edge_list.remove(i);
+                        } else {
+                            i += 1;
                         }
+                    }
 
-                        if feedback_edge_list.len() == 0 {
-                            self.free_node(NodeAddress {
-                                key: feedback_node,
-                                graph_id: self.id,
-                            })?;
-                        }
+                    if feedback_edge_list.is_empty() {
+                        self.free_node(NodeAddress {
+                            key: feedback_node,
+                            graph_id: self.id,
+                        })?;
                     }
                 }
             }
@@ -1602,7 +1602,7 @@ impl Graph {
                     },
                 }
             }
-            return Err(ConnectionError::GraphNotFound);
+            Err(ConnectionError::GraphNotFound)
         };
         match connection {
             Connection::Node {
@@ -1868,7 +1868,7 @@ impl Graph {
                                     i += 1;
                                 }
                             }
-                            if feedback_edges.len() == 0 {
+                            if feedback_edges.is_empty() {
                                 let graph_id = self.id;
                                 nodes_to_free.insert(NodeAddress {
                                     graph_id,
@@ -1946,7 +1946,7 @@ impl Graph {
         nodes_to_process: &mut Vec<NodeKey>,
     ) -> Vec<NodeKey> {
         let mut stack = Vec::with_capacity(self.get_nodes().capacity());
-        while nodes_to_process.len() > 0 {
+        while !nodes_to_process.is_empty() {
             let node_index = nodes_to_process.pop().unwrap();
             stack.push(node_index);
             // cloning the input edges here to avoid unsafe
@@ -2018,7 +2018,7 @@ impl Graph {
             }
         }
 
-        let stack = self.depth_first_search(&mut visited, &mut &mut nodes_to_process);
+        let stack = self.depth_first_search(&mut visited, &mut nodes_to_process);
         self.node_order.extend(stack.into_iter().rev());
 
         // Check if feedback nodes need to be added to the node order
@@ -2593,9 +2593,8 @@ impl Scheduler {
                 || self.scheduling_queue[i].timestamp - timestamp < self.max_duration_to_send
             {
                 let change = self.scheduling_queue.remove(i);
-                match self.rb_producer.push(change) {
-                    Err(e) => eprintln!("Unable to push scheduled change into RingBuffer: {e}"),
-                    Ok(_) => (),
+                if let Err(e) = self.rb_producer.push(change) {
+                    eprintln!("Unable to push scheduled change into RingBuffer: {e}")
                 }
             } else {
                 i += 1;
@@ -2688,11 +2687,10 @@ impl GraphGenCommunicator {
             tasks,
             output_tasks,
         };
-        match self.new_task_data_producer.push(td) {
-            Err(e) => eprintln!(
+        if let Err(e) = self.new_task_data_producer.push(td) {
+            eprintln!(
                 "Unable to push new TaskData to the GraphGen. Please increase RingBuffer size. {e}"
-            ),
-            Ok(_) => (),
+            )
         }
     }
 
@@ -2887,6 +2885,7 @@ struct FeedbackEdge {
     feedback_destination: NodeKey,
 }
 
+#[derive(Default)]
 pub struct Ramp {
     // Compare with the current value. If there is change, recalculate the step.
     last_value: Sample,
@@ -2899,13 +2898,7 @@ pub struct Ramp {
 
 impl Ramp {
     pub fn new() -> Self {
-        Self {
-            last_value: 0.0,
-            last_time: 0.0,
-            current_value: 0.0,
-            step: 0.0,
-            sample_rate: 0.0,
-        }
+        Self::default()
     }
 }
 impl Gen for Ramp {

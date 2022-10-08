@@ -1,5 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use knyst::envelope::{Curve, Envelope, EnvelopeGen};
+use knyst::envelope::{Curve, Envelope};
 use knyst::prelude::*;
 use knyst::wavetable::{Phase, PhaseF32, FRACTIONAL_PART};
 
@@ -57,7 +57,7 @@ pub fn envelope_segments(c: &mut Criterion) {
             let mut envelope = envelope.to_gen();
             let mut all_values = Vec::with_capacity(44100);
             for _ in 0..sample_rate as usize {
-                let value = envelope.next();
+                let value = envelope.next_sample();
                 all_values.push(value);
                 black_box(value);
             }
@@ -79,7 +79,7 @@ pub fn envelope_segments(c: &mut Criterion) {
             let mut envelope = envelope.to_gen();
             let mut all_values = Vec::with_capacity(44100);
             for _ in 0..sample_rate as usize {
-                let value = envelope.next();
+                let value = envelope.next_sample();
                 all_values.push(value);
                 black_box(value);
             }

@@ -38,14 +38,20 @@ pub struct Wavetable {
     diff_buffer: Vec<Sample>, // Box<[Sample; 131072]>,
 }
 
-impl Wavetable {
-    pub fn new() -> Self {
+impl Default for Wavetable {
+    fn default() -> Self {
         let buffer = vec![0.0; TABLE_SIZE];
         let diff_buffer = vec![0.0; TABLE_SIZE];
         Wavetable {
             buffer,
             diff_buffer,
         }
+    }
+}
+
+impl Wavetable {
+    pub fn new() -> Self {
+        Self::default()
     }
     pub fn update_diff_buffer(&mut self) {
         let diff_buffer: Vec<f32> = self
@@ -251,8 +257,8 @@ pub struct WavetableArena {
     _freed_indexes: Vec<WavetableIndex>,
 }
 
-impl WavetableArena {
-    pub fn new() -> Self {
+impl Default for WavetableArena {
+    fn default() -> Self {
         let mut wavetables = Vec::with_capacity(20);
         for _ in 0..20 {
             wavetables.push(None);
@@ -262,6 +268,12 @@ impl WavetableArena {
             next_free_index: 0,
             _freed_indexes: vec![],
         }
+    }
+}
+
+impl WavetableArena {
+    pub fn new() -> Self {
+        Self::default()
     }
     pub fn get(&self, index: WavetableIndex) -> &Option<Wavetable> {
         &self.wavetables[index]
@@ -312,7 +324,7 @@ impl WavetableOscillatorOwned {
     }
 
     #[inline(always)]
-    pub fn next(&mut self) -> Sample {
+    pub fn next_sample(&mut self) -> Sample {
         // Use the phase to index into the wavetable
         // self.wavetable.get_linear_interp(temp_phase) * self.amp
         let sample = self.wavetable.get(self.phase) * self.amp;
@@ -332,7 +344,7 @@ impl Gen for WavetableOscillatorOwned {
         let freq_buf = &inputs[0];
         for (&freq, o) in freq_buf.iter().zip(output.iter_mut()) {
             self.set_freq(freq, resources);
-            *o = self.next();
+            *o = self.next_sample();
         }
         GenState::Continue
     }
