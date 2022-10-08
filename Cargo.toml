@@ -72,7 +72,6 @@ name = "sequences"
 path = "examples/sequences.rs"
 required-features = ["cpal"]
 
-
 [[example]]
 name = "sound_file_playback"
 path = "examples/sound_file_playback.rs"
