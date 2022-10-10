@@ -30,7 +30,7 @@ type Point = (f32, f32);
 // - because of relative time, complex behaviour of jumping around inside the envelope can be implemented (e.g. looping envelope or random/markov chain envelop movement)
 
 use crate::{
-    graph::{Gen, GenState, Sample},
+    graph::{Gen, GenContext, GenState, Sample},
     StopAction,
 };
 
@@ -405,13 +405,14 @@ impl Gen for EnvelopeGen {
     // TODO: Add more input options for runtime changes e.g. the values and durations of points
     fn process(
         &mut self,
-        inputs: &[Box<[Sample]>],
-        outputs: &mut [Box<[Sample]>],
+        ctx: GenContext,
         _resources: &mut crate::Resources,
     ) -> crate::graph::GenState {
-        let release_gate_in = &inputs[0];
+        let release_gate_in = ctx.inputs.get_channel(0);
         let mut stop_sample = None;
-        for ((i, out), &release_gate) in outputs[0]
+        for ((i, out), &release_gate) in ctx
+            .outputs
+            .get_channel_mut(0)
             .iter_mut()
             .enumerate()
             .zip(release_gate_in.iter())

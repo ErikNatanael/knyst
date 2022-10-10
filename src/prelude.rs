@@ -1,7 +1,7 @@
 pub use crate::audio_backend::AudioBackend;
 pub use crate::buffer::{Buffer, BufferKey, BufferReader};
 pub use crate::graph::{
-    constant, gen, Connection, Graph, GraphInput, GraphSettings, Mult, PanMonoToStereo,
+    constant, gen, Connection, GenContext, Graph, GraphInput, GraphSettings, Mult, PanMonoToStereo,
     ParameterChange, Ramp,
 };
 pub use crate::wavetable::{Wavetable, WavetableKey, TABLE_POWER, TABLE_SIZE};

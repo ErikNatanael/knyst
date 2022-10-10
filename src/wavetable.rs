@@ -4,7 +4,7 @@ use slotmap::new_key_type;
 
 use crate::{Resources, Sample};
 
-use crate::graph::{Gen, GenState};
+use crate::graph::{Gen, GenContext, GenState};
 // use std::f64::consts::PI;
 use crate::xorrng::XOrShift32Rng;
 use std::f32::consts::PI;
@@ -334,14 +334,9 @@ impl WavetableOscillatorOwned {
 }
 
 impl Gen for WavetableOscillatorOwned {
-    fn process(
-        &mut self,
-        inputs: &[Box<[Sample]>],
-        outputs: &mut [Box<[Sample]>],
-        resources: &mut Resources,
-    ) -> GenState {
-        let output = &mut outputs[0];
-        let freq_buf = &inputs[0];
+    fn process(&mut self, ctx: GenContext, resources: &mut Resources) -> GenState {
+        let output = ctx.outputs.get_channel_mut(0);
+        let freq_buf = ctx.inputs.get_channel(0);
         for (&freq, o) in freq_buf.iter().zip(output.iter_mut()) {
             self.set_freq(freq, resources);
             *o = self.next_sample();
@@ -474,14 +469,9 @@ impl Oscillator {
     }
 }
 impl Gen for Oscillator {
-    fn process(
-        &mut self,
-        inputs: &[Box<[Sample]>],
-        outputs: &mut [Box<[Sample]>],
-        resources: &mut Resources,
-    ) -> GenState {
-        let output = &mut outputs[0];
-        let freq_buf = &inputs[0];
+    fn process(&mut self, ctx: GenContext, resources: &mut Resources) -> GenState {
+        let output = ctx.outputs.get_channel_mut(0);
+        let freq_buf = ctx.inputs.get_channel(0);
         for (&freq, o) in freq_buf.iter().zip(output.iter_mut()) {
             self.set_freq(freq, resources);
             *o = self.next(resources);

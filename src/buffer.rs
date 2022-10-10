@@ -17,6 +17,7 @@ use symphonia::core::{
     probe::Hint,
 };
 
+use crate::graph::GenContext;
 #[allow(unused)]
 use crate::{
     graph::{Gen, GenState, Graph},
@@ -298,8 +299,7 @@ impl BufferReader {
 impl Gen for BufferReader {
     fn process(
         &mut self,
-        _inputs: &[Box<[crate::graph::Sample]>],
-        outputs: &mut [Box<[crate::graph::Sample]>],
+        ctx: GenContext,
         resources: &mut crate::Resources,
     ) -> crate::graph::GenState {
         let mut stop_sample = None;
@@ -310,7 +310,7 @@ impl Gen for BufferReader {
                     self.base_rate = buffer.buf_rate_scale(resources.sample_rate);
                 }
 
-                for (i, out) in outputs[0].iter_mut().enumerate() {
+                for (i, out) in ctx.outputs.get_channel_mut(0).iter_mut().enumerate() {
                     let samples = buffer.get_interleaved((self.read_pointer) as usize);
                     *out = samples[0];
                     // println!("out: {}", sample);
@@ -336,7 +336,8 @@ impl Gen for BufferReader {
             stop_sample = Some(0);
         }
         if let Some(stop_sample) = stop_sample {
-            for out in outputs[0][stop_sample..].iter_mut() {
+            let output = ctx.outputs.get_channel_mut(0);
+            for out in output[stop_sample..].iter_mut() {
                 *out = 0.;
             }
             self.stop_action.to_gen_state(stop_sample)
@@ -351,6 +352,12 @@ impl Gen for BufferReader {
 
     fn num_outputs(&self) -> usize {
         1
+    }
+
+    fn init(&mut self, _sample_rate: crate::graph::Sample) {}
+
+    fn input_desc(&self, _input: usize) -> &'static str {
+        ""
     }
 
     fn output_desc(&self, _output: usize) -> &'static str {
@@ -407,8 +414,7 @@ impl BufferReaderMulti {
 impl Gen for BufferReaderMulti {
     fn process(
         &mut self,
-        _inputs: &[Box<[crate::graph::Sample]>],
-        outputs: &mut [Box<[crate::graph::Sample]>],
+        ctx: GenContext,
         resources: &mut crate::Resources,
     ) -> crate::graph::GenState {
         let mut stop_sample = None;
@@ -418,11 +424,10 @@ impl Gen for BufferReaderMulti {
                 if self.base_rate == 0.0 {
                     self.base_rate = buffer.buf_rate_scale(resources.sample_rate);
                 }
-                let block_size = outputs[0].len();
-                for i in 0..block_size {
+                for i in 0..ctx.block_size() {
                     let samples = buffer.get_interleaved((self.read_pointer) as usize);
                     for out_num in 0..samples.len().min(self.num_channels) {
-                        outputs[out_num][i] = samples[out_num];
+                        ctx.outputs.write(samples[out_num], out_num, i);
                     }
                     // println!("out: {}", sample);
                     self.read_pointer += self.base_rate * self.rate;
@@ -447,7 +452,8 @@ impl Gen for BufferReaderMulti {
             stop_sample = Some(0);
         }
         if let Some(stop_sample) = stop_sample {
-            for out in outputs[0][stop_sample..].iter_mut() {
+            let output = ctx.outputs.get_channel_mut(0);
+            for out in output[stop_sample..].iter_mut() {
                 *out = 0.;
             }
             self.stop_action.to_gen_state(stop_sample)
