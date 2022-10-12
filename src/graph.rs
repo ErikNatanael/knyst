@@ -2215,7 +2215,7 @@ impl Graph {
         let nodes = unsafe { &mut *self.nodes.get() };
         for &node_key in &self.node_order {
             let num_inputs = nodes[node_key].num_inputs();
-            let first_sample = unsafe { &mut (*self.inputs_buffers_ptr)[0] } as *mut f32;
+            let first_sample = self.inputs_buffers_ptr.cast::<f32>();
             let mut input_buffers = NodeBufferRef {
                 buf: first_sample,
                 num_channels: num_inputs,
@@ -2917,7 +2917,8 @@ impl Node {
         self.output_buffers =
             Box::<[Sample]>::into_raw(vec![0.0; self.num_outputs * block_size].into_boxed_slice());
         self.output_buffers_first_ptr = if block_size * self.num_outputs > 0 {
-            unsafe { &mut (*self.output_buffers)[0] as *mut f32 }
+            // Get the pointer to the first f32 in the block without limiting its scope or going through a reference
+            self.output_buffers.cast::<f32>()
         } else {
             std::ptr::null_mut()
         };
