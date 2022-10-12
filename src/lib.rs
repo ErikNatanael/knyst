@@ -44,7 +44,7 @@ use downcast_rs::{impl_downcast, Downcast};
 use graph::GenState;
 // Import these for docs
 #[allow(unused_imports)]
-use graph::{Connection, Gen, Graph, Node};
+use graph::{Connection, Gen, Graph};
 use slotmap::SlotMap;
 use std::collections::HashMap;
 use wavetable::{Wavetable, WavetableKey};

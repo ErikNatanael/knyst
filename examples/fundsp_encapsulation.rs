@@ -92,15 +92,19 @@ fn main() -> anyhow::Result<()> {
     // inputs and outputs. You could also implement the Gen trait for your own
     // struct.
     let output_node = graph.push_gen(
-        gen(move |inputs, outputs, _resources| {
-            if let [ref mut out0, ref mut out1, ..] = outputs {
-                for ((o0, o1), dist) in out0.iter_mut().zip(out1.iter_mut()).zip(inputs[0].iter()) {
-                    use fundsp::hacker::*;
-                    let frame = fundsp_graph.get_stereo();
-                    // Apply some tanh distortion, getting the distortion amount
-                    *o0 = tanh(frame.0 as f32 * dist.max(1.0)) * 0.5;
-                    *o1 = tanh(frame.1 as f32 * dist.max(1.0)) * 0.5;
-                }
+        gen(move |ctx, _resources| {
+            let out0 = ctx.outputs.get_channel_mut(0);
+            let out1 = ctx.outputs.get_channel_mut(1);
+            for ((o0, o1), dist) in out0
+                .iter_mut()
+                .zip(out1.iter_mut())
+                .zip(ctx.inputs.get_channel(0).iter())
+            {
+                use fundsp::hacker::*;
+                let frame = fundsp_graph.get_stereo();
+                // Apply some tanh distortion, getting the distortion amount
+                *o0 = tanh(frame.0 as f32 * dist.max(1.0)) * 0.5;
+                *o1 = tanh(frame.1 as f32 * dist.max(1.0)) * 0.5;
             }
             GenState::Continue
         })

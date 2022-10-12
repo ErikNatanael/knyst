@@ -38,6 +38,8 @@ pub enum AudioBackendError {
     BackendNotRunning,
     #[error("Unable to create a node from the Graph: {0}")]
     CouldNotCreateNode(String),
+    #[error(transparent)]
+    RunGraphError(#[from] crate::graph::RunGraphError),
     #[cfg(feature = "jack")]
     #[error(transparent)]
     JackError(#[from] jack::Error),
@@ -61,7 +63,8 @@ pub enum AudioBackendError {
 #[cfg(feature = "jack")]
 mod jack_backend {
     use crate::audio_backend::{AudioBackend, AudioBackendError};
-    use crate::{graph::Graph, graph::Node, Resources, Sample};
+    use crate::graph::RunGraph;
+    use crate::{graph::Graph, Resources, Sample};
     enum JackClient {
         Passive(jack::Client),
         Active(jack::AsyncClient<JackNotifications, JackProcess>),
@@ -94,12 +97,11 @@ mod jack_backend {
             graph: &mut Graph,
             resources: Resources,
         ) -> Result<(), AudioBackendError> {
-            let node = graph.to_node().unwrap();
             if let Some(JackClient::Passive(client)) = self.client.take() {
                 let mut in_ports = vec![];
                 let mut out_ports = vec![];
-                let num_inputs = node.num_inputs();
-                let num_outputs = node.num_outputs();
+                let num_inputs = graph.num_inputs();
+                let num_outputs = graph.num_outputs();
                 for i in 0..num_inputs {
                     in_ports
                         .push(client.register_port(&format!("in_{i}"), jack::AudioIn::default())?);
@@ -109,15 +111,9 @@ mod jack_backend {
                         client.register_port(&format!("out_{i}"), jack::AudioOut::default())?,
                     );
                 }
-                let mut input_buffers = vec![];
-                for _ in 0..num_inputs {
-                    input_buffers.push(vec![0.0; graph.block_size()].into_boxed_slice());
-                }
-                let input_buffers = input_buffers.into_boxed_slice();
+                let run_graph = RunGraph::new(graph, resources)?;
                 let jack_process = JackProcess {
-                    main_node: node,
-                    input_buffers,
-                    resources,
+                    run_graph,
                     in_ports,
                     out_ports,
                 };
@@ -151,27 +147,24 @@ mod jack_backend {
     }
 
     struct JackProcess {
-        main_node: Node,
+        run_graph: RunGraph,
         in_ports: Vec<jack::Port<jack::AudioIn>>,
-        input_buffers: Box<[Box<[Sample]>]>,
-        resources: Resources,
         out_ports: Vec<jack::Port<jack::AudioOut>>,
     }
 
     impl jack::ProcessHandler for JackProcess {
         fn process(&mut self, _: &jack::Client, ps: &jack::ProcessScope) -> jack::Control {
-            for (in_port, in_buffer) in self.in_ports.iter().zip(self.input_buffers.iter_mut()) {
+            let graph_input_buffers = self.run_graph.graph_input_buffers();
+            for (i, in_port) in self.in_ports.iter().enumerate() {
                 let in_port_slice = in_port.as_slice(ps);
+                let in_buffer = graph_input_buffers.get_channel_mut(i);
                 in_buffer.clone_from_slice(in_port_slice);
             }
-            self.main_node
-                .process(&self.input_buffers, &mut self.resources);
+            self.run_graph.process_block();
 
-            for (out_port, out_buffer) in self
-                .out_ports
-                .iter_mut()
-                .zip(self.main_node.output_buffers().iter())
-            {
+            let graph_output_buffers = self.run_graph.graph_output_buffers();
+            for (i, out_port) in self.out_ports.iter_mut().enumerate() {
+                let out_buffer = graph_output_buffers.get_channel(i);
                 let out_port_slice = out_port.as_mut_slice(ps);
                 out_port_slice.clone_from_slice(out_buffer);
             }
@@ -269,7 +262,8 @@ mod jack_backend {
 #[cfg(feature = "cpal")]
 pub mod cpal_backend {
     use crate::audio_backend::{AudioBackend, AudioBackendError};
-    use crate::{graph::Graph, graph::Node, Resources};
+    use crate::graph::RunGraph;
+    use crate::{graph::Graph, Resources};
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
     pub struct CpalBackendOptions {
@@ -332,27 +326,18 @@ pub mod cpal_backend {
             if self.stream.is_some() {
                 return Err(AudioBackendError::BackendAlreadyRunning);
             }
-            let node = match graph.to_node() {
-                Ok(n) => n,
-                Err(e) => return Err(AudioBackendError::CouldNotCreateNode(e)),
-            };
-            if node.num_outputs() != self.config.channels() as usize {
+            if graph.num_outputs() != self.config.channels() as usize {
                 panic!("CpalBackend expects a graph with the same number of outputs as the device. Check CpalBackend::channels().")
             }
-            if node.num_inputs() > 0 {
+            if graph.num_inputs() > 0 {
                 eprintln!("Warning: CpalBackend currently does not support inputs into Graphs.")
             }
+            let run_graph = RunGraph::new(graph, resources)?;
             let config = self.config.clone();
             let stream = match self.config.sample_format() {
-                cpal::SampleFormat::F32 => {
-                    run::<f32>(&self.device, &config.into(), node, resources)
-                }
-                cpal::SampleFormat::I16 => {
-                    run::<i16>(&self.device, &config.into(), node, resources)
-                }
-                cpal::SampleFormat::U16 => {
-                    run::<u16>(&self.device, &config.into(), node, resources)
-                }
+                cpal::SampleFormat::F32 => run::<f32>(&self.device, &config.into(), run_graph),
+                cpal::SampleFormat::I16 => run::<i16>(&self.device, &config.into(), run_graph),
+                cpal::SampleFormat::U16 => run::<u16>(&self.device, &config.into(), run_graph),
             }?;
             self.stream = Some(stream);
             Ok(())
@@ -374,8 +359,7 @@ pub mod cpal_backend {
     fn run<T>(
         device: &cpal::Device,
         config: &cpal::StreamConfig,
-        mut node: Node,
-        mut resources: Resources,
+        mut run_graph: RunGraph,
     ) -> Result<cpal::Stream, AudioBackendError>
     where
         T: cpal::Sample,
@@ -385,23 +369,22 @@ pub mod cpal_backend {
         // TODO: Send error back from the audio thread in a unified way.
         let err_fn = |err| eprintln!("an error occurred on stream: {}", err);
 
-        let input_buffers = vec![vec![0.0; 0].into_boxed_slice(); 0].into_boxed_slice();
         let mut sample_counter = 0;
-        let graph_block_size = node.output_buffers()[0].len();
-        node.process(&input_buffers, &mut resources);
+        let graph_block_size = run_graph.block_size();
+        run_graph.process_block();
         let stream = device.build_output_stream(
             config,
             move |output: &mut [T], _: &cpal::OutputCallbackInfo| {
                 // TODO: When CPAL support duplex streams, copy inputs to graph inputs here.
                 for frame in output.chunks_mut(channels) {
                     if sample_counter >= graph_block_size {
-                        node.process(&input_buffers, &mut resources);
+                        run_graph.process_block();
                         sample_counter = 0;
                     }
-                    let buffer = node.output_buffers();
+                    let buffer = run_graph.graph_output_buffers();
                     for (channel_i, out) in frame.iter_mut().enumerate() {
                         let value: T =
-                            cpal::Sample::from::<f32>(&buffer[channel_i][sample_counter]);
+                            cpal::Sample::from::<f32>(&buffer.read(channel_i, sample_counter));
                         *out = value;
                     }
                     sample_counter += 1;

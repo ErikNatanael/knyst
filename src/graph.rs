@@ -707,7 +707,7 @@ impl NodeBufferRef {
         buffer_channel_slice
     }
     #[inline]
-    pub fn get_channel(&mut self, channel: usize) -> &[f32] {
+    pub fn get_channel(&self, channel: usize) -> &[f32] {
         assert!(channel < self.num_channels);
         assert!(!self.buf.is_null());
         let channel_offset = channel * self.block_size;
@@ -1023,12 +1023,19 @@ impl Graph {
     /// Create a node that will run this graph. This will fail if a Node or Gen has already been created from the Graph since only one Gen is allowed to exist per Graph.
     ///
     /// Only use this for manually running the main Graph (the Graph containing all other Graphs). For adding a Graph to another Graph, use the push_graph() method.
-    pub fn to_node(&mut self) -> Result<Node, String> {
+    fn to_node(&mut self) -> Result<Node, String> {
         let block_size = self.block_size();
         let graph_gen = self.create_graph_gen()?;
         let mut node = Node::new("graph", Box::new(graph_gen));
         node.init(block_size, self.sample_rate);
         Ok(node)
+    }
+
+    pub fn num_inputs(&self) -> usize {
+        self.num_inputs
+    }
+    pub fn num_outputs(&self) -> usize {
+        self.num_outputs
     }
     /// Add a graph as a node in this graph. This will allow you to change the Graph you added later on as needed.
     pub fn push_graph(&mut self, mut graph: Graph) -> NodeAddress {
@@ -2868,7 +2875,7 @@ impl GraphGenCommunicator {
     }
 }
 
-pub struct Node {
+struct Node {
     name: &'static str,
     /// A constant value per input
     input_constants: Vec<Sample>,
@@ -2889,7 +2896,8 @@ impl Node {
         let output_buffers =
             Box::<[Sample]>::into_raw(vec![0.0; num_outputs * block_size].into_boxed_slice());
 
-        let output_buffers_first_ptr = unsafe { &mut (*output_buffers)[0] } as *mut f32;
+        let output_buffers_first_ptr = std::ptr::null_mut();
+
         Node {
             name,
             input_constants: vec![0.0 as Sample; gen.num_inputs()],
@@ -2908,7 +2916,11 @@ impl Node {
     pub fn init(&mut self, block_size: usize, sample_rate: Sample) {
         self.output_buffers =
             Box::<[Sample]>::into_raw(vec![0.0; self.num_outputs * block_size].into_boxed_slice());
-        self.output_buffers_first_ptr = unsafe { &mut (*self.output_buffers)[0] } as *mut f32;
+        self.output_buffers_first_ptr = if block_size * self.num_outputs > 0 {
+            unsafe { &mut (*self.output_buffers)[0] as *mut f32 }
+        } else {
+            std::ptr::null_mut()
+        };
         self.block_size = block_size;
         self.gen.init(sample_rate);
     }
@@ -2921,7 +2933,7 @@ impl Node {
         input_buffers: &NodeBufferRef,
         resources: &mut Resources,
     ) -> GenState {
-        let outputs = NodeBufferRef {
+        let mut outputs = NodeBufferRef {
             buf: self.output_buffers_first_ptr,
             num_channels: self.num_outputs,
             block_size: self.block_size,
@@ -2970,6 +2982,106 @@ impl Drop for Node {
         drop(unsafe { Box::from_raw(self.output_buffers) })
     }
 }
+
+#[derive(thiserror::Error, Debug)]
+pub enum RunGraphError {
+    #[error("Unable to create a node from the Graph: {0}")]
+    CouldNodeCreateNode(String),
+}
+
+/// Wrapper around a [`Graph`] [`Node`] with convenience methods to run the
+/// Graph, either from an audio thread or for non-real time purposes.
+pub struct RunGraph {
+    graph_node: Node,
+    resources: Resources,
+    input_buffer_ptr: *mut f32,
+    input_buffer_length: usize,
+    input_node_buffer_ref: NodeBufferRef,
+    output_node_buffer_ref: NodeBufferRef,
+}
+
+impl RunGraph {
+    /// Prepare the necessary resources for running the graph. This will fail if
+    /// the Graph passed in has already been turned into a Node somewhere else,
+    /// for example if it has been pushed to a different Graph.
+    pub fn new(graph: &mut Graph, resources: Resources) -> Result<Self, RunGraphError> {
+        match graph.to_node() {
+            Ok(graph_node) => {
+                let input_buffer_length = graph_node.num_inputs() * graph_node.block_size;
+                let input_buffer_ptr = if input_buffer_length != 0 {
+                    let input_buffer = vec![0.0 as Sample; input_buffer_length].into_boxed_slice();
+                    let input_buffer = Box::into_raw(input_buffer);
+                    // Safety: we just created the slice of non-zero length
+                    let input_buffer = unsafe { &mut (*input_buffer)[0] as *mut f32 };
+                    input_buffer
+                } else {
+                    std::ptr::null_mut()
+                };
+                let input_node_buffer_ref = NodeBufferRef {
+                    buf: input_buffer_ptr,
+                    num_channels: graph_node.num_inputs(),
+                    block_size: graph_node.block_size,
+                };
+                // Safety: The Nodes get initiated and their buffers allocated
+                // when the Graph is split and the Node is created from it.
+                // Therefore, we can safely store a reference to a buffer in
+                // that Node here. We want to store it to be able to return a
+                // reference to it instead of an owned value which includes a
+                // raw pointer.
+                let output_node_buffer_ref = graph_node.output_buffers();
+                Ok(Self {
+                    graph_node,
+                    resources,
+                    input_buffer_length,
+                    input_buffer_ptr,
+                    input_node_buffer_ref,
+                    output_node_buffer_ref,
+                })
+            }
+            Err(e) => Err(RunGraphError::CouldNodeCreateNode(e)),
+        }
+    }
+    /// Returns the input buffer that will be read as the input of the main
+    /// graph. For example, you may want to fill this with the sound inputs of
+    /// the sound card. The buffer does not get emptied automatically. If you
+    /// don't change it between calls to [`RunGraph::process_block`], its content will be static.
+    #[inline]
+    pub fn graph_input_buffers(&mut self) -> &mut NodeBufferRef {
+        &mut self.input_node_buffer_ref
+    }
+    /// Run the Graph for one block using the inputs currently stored in the
+    /// input buffer. The results can be accessed through the output buffer
+    /// through [`RunGraph::graph_output_buffers`].
+    pub fn process_block(&mut self) {
+        self.graph_node
+            .process(&self.input_node_buffer_ref, &mut self.resources);
+    }
+    /// Return a reference to the buffer holding the output of the [`Graph`].
+    /// Channels which have no [`Connection`]/graph edge to them will be 0.0.
+    pub fn graph_output_buffers(&self) -> &NodeBufferRef {
+        &self.output_node_buffer_ref
+    }
+    pub fn block_size(&self) -> usize {
+        self.output_node_buffer_ref.block_size()
+    }
+}
+
+impl Drop for RunGraph {
+    fn drop(&mut self) {
+        // Safety: The slice is allocated when the RunGraph is created with the
+        // given size, unless that size is 0 in which case no allocation is
+        // made.
+        if !self.input_buffer_ptr.is_null() {
+            unsafe {
+                Box::from_raw(std::slice::from_raw_parts_mut(
+                    self.input_buffer_ptr,
+                    self.input_buffer_length,
+                ));
+            }
+        }
+    }
+}
+unsafe impl Send for RunGraph {}
 
 /// Buffers the output of a node from last block to simplify feedback nodes and
 /// make sure they work in all possible graphs.
@@ -3342,10 +3454,10 @@ mod tests {
         let node_id = graph.push_node(node);
         graph.connect(constant(0.5).to(node_id)).unwrap();
         graph.connect(Connection::graph_output(node_id)).unwrap();
-        let mut graph_node = graph_node(&mut graph);
-        let mut resources = Resources::new(test_resources_settings());
-        graph_node.process(&null_input(), &mut resources);
-        assert_eq!(graph_node.output_buffers().read(0, BLOCK - 1), 16.5);
+        let resources = Resources::new(test_resources_settings());
+        let mut run_graph = RunGraph::new(&mut graph, resources).unwrap();
+        run_graph.process_block();
+        assert_eq!(run_graph.graph_output_buffers().read(0, BLOCK - 1), 16.5);
     }
     #[test]
     fn graph_in_a_graph() {
@@ -3372,13 +3484,13 @@ mod tests {
         graph
             .connect(constant(CONSTANT_INPUT_TO_NODE).to(node_id))
             .unwrap();
-        let mut graph_node = graph_node(&mut graph);
-        let mut resources = Resources::new(test_resources_settings());
+        let resources = Resources::new(test_resources_settings());
+        let mut run_graph = RunGraph::new(&mut graph, resources).unwrap();
         graph.commit_changes();
         graph.update();
-        graph_node.process(&null_input(), &mut resources);
+        run_graph.process_block();
         assert_eq!(
-            graph_node.output_buffers().read(0, BLOCK - 2),
+            run_graph.graph_output_buffers().read(0, BLOCK - 2),
             (BLOCK - 1) as Sample + CONSTANT_INPUT_TO_NODE
         );
     }
@@ -3456,8 +3568,8 @@ mod tests {
             block_size: BLOCK,
             ..Default::default()
         });
-        let mut graph_node = graph_node(&mut graph);
-        let mut resources = Resources::new(test_resources_settings());
+        let resources = Resources::new(test_resources_settings());
+        let mut run_graph = RunGraph::new(&mut graph, resources).unwrap();
         let triangular_sequence = |n| (n * (n + 1)) / 2;
         for i in 0..10 {
             let node = Node::new("Dummy", Box::new(DummyGen { counter: 0.0 }));
@@ -3466,13 +3578,13 @@ mod tests {
             graph.connect(Connection::graph_output(node_id)).unwrap();
             graph.commit_changes();
             graph.update();
-            graph_node.process(&null_input(), &mut resources);
+            run_graph.process_block();
             assert_eq!(
-                graph_node.output_buffers().read(0, 0),
+                run_graph.graph_output_buffers().read(0, 0),
                 (i + 1) as f32 * 0.5 + triangular_sequence(i + 1) as f32,
                 "i: {}, output: {}, expected: {}",
                 i,
-                graph_node.output_buffers().read(0, 0),
+                run_graph.graph_output_buffers().read(0, 0),
                 (i + 1) as f32 * 0.5 + triangular_sequence(i + 1) as f32,
             );
         }
@@ -3483,11 +3595,11 @@ mod tests {
         const BLOCK: usize = 1;
         let mut graph: Graph = Graph::new(GraphSettings {
             block_size: BLOCK,
-            num_inputs: 2,
+            num_inputs: 3,
             ..Default::default()
         });
-        let mut graph_node = graph_node(&mut graph);
         let mut resources = Resources::new(test_resources_settings());
+        let mut run_graph = RunGraph::new(&mut graph, resources).unwrap();
         let node = Node::new("Dummy", Box::new(DummyGen { counter: 0.0 }));
         let node_id = graph.push_node(node);
         graph
@@ -3499,15 +3611,9 @@ mod tests {
             .unwrap();
         graph.connect(Connection::graph_output(node_id)).unwrap();
         graph.commit_changes();
-        let input = Box::<[Sample]>::into_raw(vec![0.0; BLOCK * 3].into_boxed_slice());
-        let mut input_buffer = NodeBufferRef {
-            buf: unsafe { &mut (*input)[0] },
-            num_channels: 3,
-            block_size: BLOCK,
-        };
-        input_buffer.fill_channel(10.0, 2);
-        graph_node.process(&input_buffer, &mut resources);
-        assert_eq!(graph_node.output_buffers().read(0, 0), 11.0);
+        run_graph.graph_input_buffers().fill_channel(10.0, 2);
+        run_graph.process_block();
+        assert_eq!(run_graph.graph_output_buffers().read(0, 0), 11.0);
     }
 
     #[test]
