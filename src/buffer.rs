@@ -426,10 +426,9 @@ impl Gen for BufferReaderMulti {
                 }
                 for i in 0..ctx.block_size() {
                     let samples = buffer.get_interleaved((self.read_pointer) as usize);
-                    for out_num in 0..samples.len().min(self.num_channels) {
-                        ctx.outputs.write(samples[out_num], out_num, i);
+                    for (out_num, sample) in samples.iter().take(self.num_channels).enumerate() {
+                        ctx.outputs.write(*sample, out_num, i);
                     }
-                    // println!("out: {}", sample);
                     self.read_pointer += self.base_rate * self.rate;
                     if self.read_pointer >= buffer.size() {
                         self.finished = true;

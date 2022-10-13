@@ -140,6 +140,7 @@ pub struct Resources {
 }
 
 impl Resources {
+    #[must_use]
     pub fn new(settings: ResourcesSettings) -> Self {
         // let user_data = HopSlotMap::with_capacity_and_key(1000);
         let user_data = HashMap::with_capacity(1000);

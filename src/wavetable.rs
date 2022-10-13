@@ -261,6 +261,7 @@ pub struct WavetableOscillatorOwned {
 }
 
 impl WavetableOscillatorOwned {
+    #[must_use]
     pub fn new(wavetable: Wavetable) -> Self {
         WavetableOscillatorOwned {
             step: 0,
@@ -419,12 +420,11 @@ impl Oscillator {
     #[inline]
     fn next(&mut self, resources: &mut Resources) -> Sample {
         // Use the phase to index into the wavetable
-        let sample = match resources.wavetables.get(self.wavetable) {
-            Some(wt) => wt.get(self.phase) * self.amp,
-            None => {
-                eprintln!("Wavetable doesn't exist: {:?}", self.wavetable);
-                0.0
-            }
+        let sample = if let Some(wt) = resources.wavetables.get(self.wavetable) {
+            wt.get(self.phase) * self.amp
+        } else {
+            eprintln!("Wavetable doesn't exist: {:?}", self.wavetable);
+            0.0
         };
         self.phase.increase(self.step);
         sample
