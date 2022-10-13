@@ -251,44 +251,6 @@ impl Wavetable {
     }
 }
 
-pub struct WavetableArena {
-    wavetables: Vec<Option<Wavetable>>,
-    next_free_index: WavetableIndex,
-    _freed_indexes: Vec<WavetableIndex>,
-}
-
-impl Default for WavetableArena {
-    fn default() -> Self {
-        let mut wavetables = Vec::with_capacity(20);
-        for _ in 0..20 {
-            wavetables.push(None);
-        }
-        WavetableArena {
-            wavetables,
-            next_free_index: 0,
-            _freed_indexes: vec![],
-        }
-    }
-}
-
-impl WavetableArena {
-    pub fn new() -> Self {
-        Self::default()
-    }
-    pub fn get(&self, index: WavetableIndex) -> &Option<Wavetable> {
-        &self.wavetables[index]
-    }
-    pub fn add(&mut self, wavetable: Wavetable) -> WavetableIndex {
-        // TODO: In order to do this safely in an audio thread we should pass the old value on to a helper thread for deallocation
-        // since dropping it here would probably deallocate it.
-        let _old_wavetable = self.wavetables[self.next_free_index].replace(wavetable);
-        let index = self.next_free_index;
-        self.next_free_index += 1;
-        // TODO: Check that the next free index is within the bounds of the wavetables Vec or else use the indexes that have been freed
-        index
-    }
-}
-
 /// Osciallator with an owned Wavetable
 #[derive(Debug, Clone)]
 pub struct WavetableOscillatorOwned {
