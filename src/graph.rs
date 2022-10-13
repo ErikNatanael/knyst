@@ -3859,17 +3859,22 @@ mod tests {
         graph_node.process(&null_input(), &mut resources);
         assert_eq!(graph_node.output_buffers().read(0, 0), 6.0);
         graph.commit_changes();
+        // With the generation needing to be 2 higher, we have to wait yet
+        // another round for the node to be freed.
+        assert_eq!(graph.num_nodes(), 4);
+        graph_node.process(&null_input(), &mut resources);
+        assert_eq!(graph_node.output_buffers().read(0, 0), 5.0);
+        graph.commit_changes();
         assert_eq!(graph.num_nodes(), 3);
         graph_node.process(&null_input(), &mut resources);
         assert_eq!(graph_node.output_buffers().read(0, 0), 5.0);
         graph.commit_changes();
         assert_eq!(graph.num_nodes(), 2);
         graph_node.process(&null_input(), &mut resources);
-        assert_eq!(graph_node.output_buffers().read(0, 0), 5.0);
+        assert_eq!(graph_node.output_buffers().read(0, 0), 0.0);
         graph.commit_changes();
         assert_eq!(graph.num_nodes(), 2);
         graph_node.process(&null_input(), &mut resources);
-        assert_eq!(graph_node.output_buffers().read(0, 0), 0.0);
         graph.commit_changes();
         assert_eq!(graph.num_nodes(), 1);
         graph_node.process(&null_input(), &mut resources);
