@@ -3739,12 +3739,12 @@ mod tests {
         let mut last_node = None;
         let audio_thread = std::thread::spawn(move || {
             let null_input = null_input();
-            for _ in 0..1000 {
+            for _ in 0..100 {
                 graph_node.process(&null_input, &mut resources);
                 std::thread::sleep(std::time::Duration::from_millis(1));
             }
         });
-        for _ in 0..100 {
+        for _ in 0..10 {
             let node = graph.push_gen(OneGen {});
             if let Some(last) = last_node.take() {
                 graph.connect(node.to(last)).unwrap();
@@ -3763,7 +3763,7 @@ mod tests {
         }
         let mut nodes = vec![];
         last_node = None;
-        for _ in 0..100 {
+        for _ in 0..10 {
             let node = graph.push_gen(DummyGen { counter: 0. });
             if let Some(last) = last_node.take() {
                 graph.connect(node.to(last)).unwrap();
