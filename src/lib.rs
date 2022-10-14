@@ -44,7 +44,7 @@ use downcast_rs::{impl_downcast, Downcast};
 use graph::GenState;
 // Import these for docs
 #[allow(unused_imports)]
-use graph::{Connection, Gen, Graph, Node};
+use graph::{Connection, Gen, Graph};
 use slotmap::SlotMap;
 use std::collections::HashMap;
 use wavetable::{Wavetable, WavetableKey};
@@ -63,15 +63,22 @@ pub type Sample = f32;
 pub trait AnyData: Downcast + Send + Debug {}
 impl_downcast!(AnyData);
 
+/// Specify what happens when a [`Gen`] is done with its processing. This translates to a [`GenState`] being returned from the [`Gen`], but without additional parameters.
 #[derive(Debug, Clone, Copy)]
 pub enum StopAction {
+    /// Continue running
     Continue,
+    /// Free the node containing the Gen
     FreeSelf,
+    /// Free the node containing the Gen, bridging its input node(s) to its output node(s).
     FreeSelfMendConnections,
+    /// Free the graph containing the node containing the Gen.
     FreeGraph,
+    /// Free the graph containing the node containing the Gen, bridging its input node(s) to its output node(s).
     FreeGraphMendConnections,
 }
 impl StopAction {
+    #[must_use]
     pub fn to_gen_state(&self, stop_sample: usize) -> GenState {
         match self {
             StopAction::Continue => GenState::Continue,
@@ -83,6 +90,7 @@ impl StopAction {
     }
 }
 
+#[derive(Copy, Clone, Debug)]
 /// Settings used to initialise [`Resources`].
 pub struct ResourcesSettings {
     pub sample_rate: Sample,
@@ -140,6 +148,7 @@ pub struct Resources {
 }
 
 impl Resources {
+    #[must_use]
     pub fn new(settings: ResourcesSettings) -> Self {
         // let user_data = HopSlotMap::with_capacity_and_key(1000);
         let user_data = HashMap::with_capacity(1000);
@@ -160,7 +169,10 @@ impl Resources {
             rng,
         }
     }
-    /// Insert any kind of data using [`AnyData`]. Returns the `data` in an error if there is not enough space for the data in the HashTable.
+    /// Insert any kind of data using [`AnyData`].
+    ///
+    /// # Errors
+    /// Returns the `data` in an error if there is not enough space for the data.
     pub fn insert_user_data(
         &mut self,
         key: String,
@@ -226,9 +238,11 @@ impl Resources {
     }
 }
 
+#[must_use]
 pub fn db_to_amplitude(db: f32) -> f32 {
     10.0_f32.powf(db / 20.)
 }
+#[must_use]
 pub fn amplitude_to_db(amplitude: f32) -> f32 {
     20.0 * amplitude.log10()
 }

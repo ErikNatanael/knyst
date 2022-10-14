@@ -63,15 +63,14 @@ fn main() -> anyhow::Result<()> {
 
     // Create a custom output node. Right now, it just acts like a brickwall limiter.
     let output_node = graph.push_gen(
-        gen(move |inputs, outputs, _resources| {
-            let (out0, rest) = outputs.split_at_mut(1);
-            let out0 = &mut out0[0];
-            let out1 = &mut rest[0];
+        gen(move |ctx, _resources| {
+            let out0 = ctx.outputs.get_channel_mut(0);
+            let out1 = ctx.outputs.get_channel_mut(1);
             for (((o0, o1), i0), i1) in out0
                 .iter_mut()
                 .zip(out1.iter_mut())
-                .zip(inputs[0].iter())
-                .zip(inputs[1].iter())
+                .zip(ctx.inputs.get_channel(0).iter())
+                .zip(ctx.inputs.get_channel(1).iter())
             {
                 *o0 = i0.clamp(-0.9, 0.9);
                 *o1 = i1.clamp(-0.9, 0.9);

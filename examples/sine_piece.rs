@@ -46,18 +46,18 @@ fn main() -> anyhow::Result<()> {
     // inputs and outputs. You could also implement the Gen trait for your own
     // struct.
     let output_node = graph.push_gen(
-        gen(move |inputs, outputs, _resources| {
-            if let [ref mut out0, ref mut out1, ..] = outputs {
-                for ((((o0, o1), i0), i1), dist) in out0
-                    .iter_mut()
-                    .zip(out1.iter_mut())
-                    .zip(inputs[0].iter())
-                    .zip(inputs[1].iter())
-                    .zip(inputs[2].iter())
-                {
-                    *o0 = tanh(*i0 * dist.max(1.0)) * 0.5;
-                    *o1 = tanh(*i1 * dist.max(1.0)) * 0.5;
-                }
+        gen(move |ctx, _resources| {
+            let out0 = ctx.outputs.get_channel_mut(0);
+            let out1 = ctx.outputs.get_channel_mut(1);
+            for ((((o0, o1), i0), i1), dist) in out0
+                .iter_mut()
+                .zip(out1.iter_mut())
+                .zip(ctx.inputs.get_channel(0).iter())
+                .zip(ctx.inputs.get_channel(1).iter())
+                .zip(ctx.inputs.get_channel(2).iter())
+            {
+                *o0 = tanh(*i0 * dist.max(1.0)) * 0.5;
+                *o1 = tanh(*i1 * dist.max(1.0)) * 0.5;
             }
             GenState::Continue
         })

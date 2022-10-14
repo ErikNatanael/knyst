@@ -527,43 +527,38 @@ impl Connection {
 struct Task {
     /// The node key may be used to send a message to the Graph to free the node in this Task
     node_key: NodeKey,
-    node_ptr: *mut Node,
-    /// inputs to copy from the graph inputs (whole buffers) in the form `(node_input_buffer_ptr, graph_input_index)`
-    graph_inputs_to_copy: Vec<(*mut Box<[Sample]>, usize)>,
+    input_constants: *mut [Sample],
+    /// inputs to copy from the graph inputs (whole buffers) in the form `(from_graph_input_index, to_node_input_index)`
+    graph_inputs_to_copy: Vec<(usize, usize)>,
     /// list of tuples of single floats in the form `(from, to)` where the `from` points to an output of a different node and the `to` points to the input buffer.
-    inputs_to_copy: Vec<(*const Sample, *mut Sample)>,
-    input_buffers_ptr: *mut Box<[Sample]>,
-    num_inputs: usize,
+    inputs_to_copy: Vec<(*mut Sample, *mut Sample)>,
+    input_buffers: NodeBufferRef,
+    gen: *mut dyn Gen,
+    output_buffers_first_ptr: *mut Sample,
+    block_size: usize,
+    num_outputs: usize,
 }
 impl Task {
     fn init_constants(&mut self) {
-        let node = unsafe { &mut *self.node_ptr };
         // Copy all constants
-        let node_constants = &node.input_constants;
-        let inputs_buffers: &mut [Box<[Sample]>] =
-            unsafe { std::slice::from_raw_parts_mut(self.input_buffers_ptr, self.num_inputs) };
-        for (input, &constant) in inputs_buffers.iter_mut().zip(node_constants.iter()) {
-            input.fill(constant);
+        let node_constants = unsafe { &*self.input_constants };
+        for (channel, &constant) in node_constants.iter().enumerate() {
+            self.input_buffers.fill_channel(constant, channel);
         }
     }
     fn apply_constant_change(&mut self, change: &ScheduledChange, start_sample_in_block: usize) {
-        let node = unsafe { &mut *self.node_ptr };
         match change.kind {
             ScheduledChangeKind::Constant { index, value } => {
-                node.set_constant(value, index);
-                let inputs_buffers: &mut [Box<[Sample]>] = unsafe {
-                    std::slice::from_raw_parts_mut(self.input_buffers_ptr, self.num_inputs)
-                };
-                for constant in &mut inputs_buffers[index][start_sample_in_block..] {
-                    *constant = value;
+                let node_constants = unsafe { &mut *self.input_constants };
+                node_constants[index] = value;
+                for i in start_sample_in_block..self.input_buffers.block_size() {
+                    self.input_buffers.write(value, index, i);
                 }
             }
         }
     }
-    fn run(&mut self, graph_inputs: &[Box<[Sample]>], resources: &mut Resources) -> GenState {
-        let node = unsafe { &mut *self.node_ptr };
-        let inputs_buffers: &mut [Box<[Sample]>] =
-            unsafe { std::slice::from_raw_parts_mut(self.input_buffers_ptr, self.num_inputs) };
+    fn run(&mut self, graph_inputs: &NodeBufferRef, resources: &mut Resources) -> GenState {
+        // let node = unsafe { &mut *self.node_ptr };
         // Copy all inputs
         for (from, to) in &self.inputs_to_copy {
             unsafe {
@@ -571,27 +566,39 @@ impl Task {
             }
         }
         // Copy all graph inputs
-        for (node_input_buffer_ptr, graph_input_index) in &self.graph_inputs_to_copy {
-            unsafe {
-                for (to_sample, from_sample) in (**node_input_buffer_ptr)
-                    .iter_mut()
-                    .zip(graph_inputs[*graph_input_index].iter())
-                {
-                    *to_sample += *from_sample;
-                }
+        for (graph_input_index, node_input_index) in &self.graph_inputs_to_copy {
+            for i in 0..self.input_buffers.block_size {
+                self.input_buffers.write(
+                    graph_inputs.read(*graph_input_index, i),
+                    *node_input_index,
+                    i,
+                );
             }
         }
         // Process node
-        node.process(inputs_buffers, resources)
+        // node.process(&self.input_buffers, resources)
+        let mut outputs = NodeBufferRef {
+            buf: self.output_buffers_first_ptr,
+            num_channels: self.num_outputs,
+            block_size: self.block_size,
+        };
+        let ctx = GenContext {
+            inputs: &self.input_buffers,
+            outputs: &mut outputs,
+        };
+        assert!(!self.gen.is_null());
+        unsafe { (*self.gen).process(ctx, resources) }
     }
 }
 
 unsafe impl Send for Task {}
 
-/// Copy the entire buffer from `input_buffer_ptr` to the `graph_output_index`
-/// of the outputs buffer. Used to copy from a node to the output of a Graph.
+/// Copy the entire channel from `input_index` from `input_buffers` to the
+/// `graph_output_index` channel of the outputs buffer. Used to copy from a node
+/// to the output of a Graph.
 struct OutputTask {
-    input_buffer_ptr: *const Box<[Sample]>,
+    input_buffers: NodeBufferRef,
+    input_index: usize,
     graph_output_index: usize,
 }
 unsafe impl Send for OutputTask {}
@@ -648,12 +655,7 @@ pub trait Gen {
     /// - *outputs*: The buffer to place the result of the Gen inside. This buffer may contain any data and
     /// will not be zeroed. If the output should be zero, the Gen needs to write zeroes into the output
     /// buffer. This buffer will be correctly sized to hold the number of outputs that the Gen requires.
-    fn process(
-        &mut self,
-        inputs: &[Box<[Sample]>],
-        outputs: &mut [Box<[Sample]>],
-        resources: &mut Resources,
-    ) -> GenState;
+    fn process(&mut self, ctx: GenContext, resources: &mut Resources) -> GenState;
     fn num_inputs(&self) -> usize;
     fn num_outputs(&self) -> usize;
     /// Initialize buffers etc.
@@ -670,9 +672,135 @@ pub trait Gen {
     }
 }
 
-type SamplesSlice = [Box<[Sample]>];
-type ProcessFn =
-    Box<dyn FnMut(&SamplesSlice, &mut SamplesSlice, &mut Resources) -> GenState + Send>;
+/// Wrapper around a buffer of output samples. The NodeBuffer does not own the
+/// data it points to, it is just a wrapper around a pointer to the buffer to
+/// make accessing it more convenient.
+///
+/// The samples are stored in a `*mut [Sample]` layout out one channel after the
+/// other as if it was a `*mut[*mut [Sample]]`. In benchmarks this was as fast as
+/// iterating over multiple `&mut[Sample]`
+///
+/// TODO: Change the way we read and write values
+pub struct NodeBufferRef {
+    buf: *mut Sample,
+    num_channels: usize,
+    block_size: usize,
+}
+impl NodeBufferRef {
+    /// Produces a buffer with 0 channels that you cannot read from or write to, but it may be useful as a first input to a node that has no inputs.
+    pub fn null_buffer() -> Self {
+        Self {
+            buf: std::ptr::null_mut(),
+            num_channels: 0,
+            block_size: 0,
+        }
+    }
+    #[inline]
+    pub fn write(&mut self, value: f32, channel: usize, sample_index: usize) {
+        assert!(channel < self.num_channels);
+        assert!(sample_index < self.block_size);
+        assert!(!self.buf.is_null());
+        let buffer_slice = unsafe {
+            std::slice::from_raw_parts_mut(self.buf, self.num_channels * self.block_size)
+        };
+        unsafe {
+            *buffer_slice.get_unchecked_mut(channel * self.block_size + sample_index) = value
+        };
+    }
+    /// Decouples the lifetime of the returned slice from self so that slices to different channels can be returned.
+    #[inline]
+    pub fn get_channel_mut<'a, 'b>(&'a mut self, channel: usize) -> &'b mut [f32] {
+        assert!(channel < self.num_channels);
+        assert!(!self.buf.is_null());
+        let channel_offset = channel * self.block_size;
+        let buffer_channel_slice = unsafe {
+            let ptr_at_channel = self.buf.add(channel_offset);
+            std::slice::from_raw_parts_mut(ptr_at_channel, self.block_size)
+        };
+        buffer_channel_slice
+    }
+    #[inline]
+    pub fn get_channel(&self, channel: usize) -> &[f32] {
+        assert!(channel < self.num_channels);
+        assert!(!self.buf.is_null());
+        let channel_offset = channel * self.block_size;
+        let buffer_channel_slice = unsafe {
+            let ptr_at_channel = self.buf.add(channel_offset);
+            std::slice::from_raw_parts(ptr_at_channel, self.block_size)
+        };
+        buffer_channel_slice
+    }
+    #[inline]
+    pub fn add(&mut self, value: f32, channel: usize, sample_index: usize) {
+        assert!(channel < self.num_channels);
+        assert!(sample_index < self.block_size);
+        assert!(!self.buf.is_null());
+        unsafe {
+            let buffer_slice =
+                std::slice::from_raw_parts_mut(self.buf, self.num_channels * self.block_size);
+            let sample =
+                (*buffer_slice).get_unchecked_mut(channel * self.block_size + sample_index);
+            *sample += value
+        };
+    }
+    #[inline]
+    pub fn read(&self, channel: usize, sample_index: usize) -> Sample {
+        assert!(channel < self.num_channels);
+        assert!(sample_index < self.block_size);
+        assert!(!self.buf.is_null());
+        unsafe {
+            let buffer_slice =
+                std::slice::from_raw_parts_mut(self.buf, self.num_channels * self.block_size);
+            *(*buffer_slice).get_unchecked(channel * self.block_size + sample_index)
+        }
+    }
+    #[inline]
+    fn fill_channel(&mut self, value: f32, channel: usize) {
+        assert!(channel < self.num_channels);
+        assert!(!self.buf.is_null());
+        let channel_offset = channel * self.block_size;
+        let buffer_channel_slice = unsafe {
+            let ptr_at_channel = self.buf.add(channel_offset);
+            std::slice::from_raw_parts_mut(ptr_at_channel, self.block_size)
+        };
+        for sample in buffer_channel_slice {
+            *sample = value;
+        }
+    }
+    #[inline]
+    fn fill(&mut self, value: f32) {
+        assert!(!self.buf.is_null());
+        let buffer_slice = unsafe {
+            std::slice::from_raw_parts_mut(self.buf, self.num_channels * self.block_size)
+        };
+        for sample in buffer_slice {
+            *sample = value;
+        }
+    }
+    fn ptr_to_sample(&mut self, channel: usize, sample_index: usize) -> *mut Sample {
+        assert!(channel < self.num_channels);
+        assert!(sample_index < self.block_size);
+        unsafe { self.buf.add(channel * self.block_size + sample_index) }
+    }
+    pub fn channels(&self) -> usize {
+        self.num_channels
+    }
+    pub fn block_size(&self) -> usize {
+        self.block_size
+    }
+}
+
+pub struct GenContext<'a, 'b> {
+    pub inputs: &'a NodeBufferRef,
+    pub outputs: &'b mut NodeBufferRef,
+}
+impl<'a, 'b> GenContext<'a, 'b> {
+    pub fn block_size(&self) -> usize {
+        self.outputs.block_size
+    }
+}
+
+type ProcessFn = Box<dyn FnMut(GenContext, &mut Resources) -> GenState + Send>;
 
 pub struct ClosureGen {
     process_fn: ProcessFn,
@@ -681,9 +809,7 @@ pub struct ClosureGen {
     name: &'static str,
 }
 pub fn gen(
-    process: impl FnMut(&[Box<[Sample]>], &mut [Box<[Sample]>], &mut Resources) -> GenState
-        + 'static
-        + Send,
+    process: impl FnMut(GenContext, &mut Resources) -> GenState + 'static + Send,
 ) -> ClosureGen {
     ClosureGen {
         process_fn: Box::new(process),
@@ -710,7 +836,7 @@ impl ClosureGen {
 impl Default for ClosureGen {
     fn default() -> Self {
         Self {
-            process_fn: Box::new(|_inputs, _outputs, _resources| GenState::Continue),
+            process_fn: Box::new(|_ctx, _resources| GenState::Continue),
             outputs: Default::default(),
             inputs: Default::default(),
             name: "ClosureGen",
@@ -719,13 +845,8 @@ impl Default for ClosureGen {
 }
 
 impl Gen for ClosureGen {
-    fn process(
-        &mut self,
-        inputs: &[Box<[Sample]>],
-        outputs: &mut [Box<[Sample]>],
-        resources: &mut Resources,
-    ) -> GenState {
-        (self.process_fn)(inputs, outputs, resources)
+    fn process(&mut self, ctx: GenContext, resources: &mut Resources) -> GenState {
+        (self.process_fn)(ctx, resources)
     }
 
     fn num_inputs(&self) -> usize {
@@ -763,10 +884,15 @@ impl Gen for ClosureGen {
 /// its non constant inputs to its outputs.
 #[derive(Debug, Clone, Copy)]
 pub enum GenState {
+    /// Continue running
     Continue,
+    /// Free the node containing the Gen
     FreeSelf,
+    /// Free the node containing the Gen, bridging its input node(s) to its output node(s).
     FreeSelfMendConnections,
+    /// Free the graph containing the node containing the Gen.
     FreeGraph(usize),
+    /// Free the graph containing the node containing the Gen, bridging its input node(s) to its output node(s).
     FreeGraphMendConnections(usize),
 }
 
@@ -813,6 +939,16 @@ impl Default for GraphSettings {
     }
 }
 
+// Hold on to an allocation and drop it when we're done. Can be easily wrapped in an Arc
+struct OwnedRawBuffer {
+    ptr: *mut [f32],
+}
+impl Drop for OwnedRawBuffer {
+    fn drop(&mut self) {
+        unsafe { drop(Box::from_raw(self.ptr)) }
+    }
+}
+
 pub struct Graph {
     id: GraphId,
     nodes: Arc<UnsafeCell<SlotMap<NodeKey, Node>>>,
@@ -843,7 +979,10 @@ pub struct Graph {
     ring_buffer_size: usize,
     initiated: bool,
     /// Used for processing every node, index using \[input_num\]\[sample_in_block\]
-    inputs_buffers: Vec<Box<[Sample]>>,
+    // inputs_buffers: Vec<Box<[Sample]>>,
+    /// A pointer to an allocation that is being used for the inputs to nodes, and aliased in the inputs_buffers
+    inputs_buffers_ptr: Arc<OwnedRawBuffer>,
+    max_node_inputs: usize,
     graph_gen_communicator: Option<GraphGenCommunicator>,
     /// The duration added to all changes scheduled to a relative time so that they have time to travel to the GraphGen.
     latency: Duration,
@@ -867,7 +1006,12 @@ impl Graph {
             ring_buffer_size,
             latency,
         } = options;
-        let inputs_buffers = vec![vec![0.0; block_size].into_boxed_slice(); max_node_inputs];
+        let inputs_buffers_ptr = Box::<[Sample]>::into_raw(
+            vec![0.0 as Sample; block_size * max_node_inputs].into_boxed_slice(),
+        );
+        let inputs_buffers_ptr = Arc::new(OwnedRawBuffer {
+            ptr: inputs_buffers_ptr,
+        });
         let id = NEXT_GRAPH_ID.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let nodes = Arc::new(UnsafeCell::new(SlotMap::with_capacity_and_key(num_nodes)));
         let node_input_edges = SecondaryMap::with_capacity(num_nodes);
@@ -897,7 +1041,8 @@ impl Graph {
             sample_rate,
             latency,
             initiated: false,
-            inputs_buffers,
+            inputs_buffers_ptr,
+            max_node_inputs,
             ring_buffer_size,
             graph_gen_communicator: None,
         }
@@ -905,12 +1050,19 @@ impl Graph {
     /// Create a node that will run this graph. This will fail if a Node or Gen has already been created from the Graph since only one Gen is allowed to exist per Graph.
     ///
     /// Only use this for manually running the main Graph (the Graph containing all other Graphs). For adding a Graph to another Graph, use the push_graph() method.
-    pub fn to_node(&mut self) -> Result<Node, String> {
+    fn split_and_create_node(&mut self) -> Result<Node, String> {
         let block_size = self.block_size();
         let graph_gen = self.create_graph_gen()?;
         let mut node = Node::new("graph", Box::new(graph_gen));
         node.init(block_size, self.sample_rate);
         Ok(node)
+    }
+
+    pub fn num_inputs(&self) -> usize {
+        self.num_inputs
+    }
+    pub fn num_outputs(&self) -> usize {
+        self.num_outputs
     }
     /// Add a graph as a node in this graph. This will allow you to change the Graph you added later on as needed.
     pub fn push_graph(&mut self, mut graph: Graph) -> NodeAddress {
@@ -936,7 +1088,7 @@ impl Graph {
     ///
     /// Making it not public means Graphs cannot be accidentally added, but a Node<Graph> can still be created for the top level one if preferred.
     fn push_node(&mut self, mut node: Node) -> NodeAddress {
-        if node.num_inputs() > self.inputs_buffers.len() {
+        if node.num_inputs() > self.max_node_inputs {
             eprintln!("Warning: You are trying to add a node with more inputs than the maximum for this Graph. Try increasing the maximum number of node inputs in the GraphSettings.");
         }
         let nodes = self.get_nodes();
@@ -1886,7 +2038,22 @@ impl Graph {
                     self.graph_input_edges[node.key].clear();
                 }
                 if input_constants {
-                    self.get_nodes_mut()[node.key].input_constants.fill(0.);
+                    // Clear input constants by scheduling them all to be set to 0 now
+                    let num_node_inputs = self.get_nodes_mut()[node.key].num_inputs();
+                    if let Some(ggc) = &mut self.graph_gen_communicator {
+                        // The GraphGen has been created so we have to be more careful
+                        for index in 0..num_node_inputs {
+                            let change_kind = ScheduledChangeKind::Constant { index, value: 0.0 };
+                            ggc.scheduler.schedule_asap(node.key, change_kind);
+                        }
+                    } else {
+                        // We are fine to set the constants on the node
+                        // directly. In fact we have to because the Scheduler
+                        // doesn't exist.
+                        for index in 0..num_node_inputs {
+                            self.get_nodes_mut()[node.key].set_constant(0.0, index);
+                        }
+                    }
                 }
                 if output_nodes {
                     for (_key, edges) in &mut self.node_input_edges {
@@ -2088,8 +2255,14 @@ impl Graph {
         let mut tasks = vec![];
         // Safety: No other thread will access the SlotMap. All we're doing with the buffers is taking pointers; there's no manipulation.
         let nodes = unsafe { &mut *self.nodes.get() };
-        let inputs_buffers = self.inputs_buffers.as_mut_slice();
+        let first_sample = self.inputs_buffers_ptr.ptr.cast::<f32>();
         for &node_key in &self.node_order {
+            let num_inputs = nodes[node_key].num_inputs();
+            let mut input_buffers = NodeBufferRef {
+                buf: first_sample,
+                num_channels: num_inputs,
+                block_size: self.block_size,
+            };
             // Collect inputs into the node's input buffer
             let input_edges = &self.node_input_edges[node_key];
             let graph_input_edges = &self.graph_input_edges[node_key];
@@ -2100,41 +2273,40 @@ impl Graph {
 
             for input_edge in input_edges {
                 let source = &nodes[input_edge.source];
-                let output_values = &source.output_buffers[input_edge.from_output_index];
-                let input_buffer = &mut inputs_buffers[input_edge.to_input_index];
-                for i in 0..self.block_size {
+                let mut output_values = source.output_buffers();
+                for sample_index in 0..self.block_size {
+                    let channel = input_edge.from_output_index;
                     inputs_to_copy.push((
-                        &output_values[i] as *const Sample,
-                        &mut input_buffer[i] as *mut Sample,
+                        output_values.ptr_to_sample(channel, sample_index),
+                        input_buffers.ptr_to_sample(channel, sample_index),
                     ));
                 }
             }
             for input_edge in graph_input_edges {
-                let input_buffer = &mut inputs_buffers[input_edge.to_input_index];
-                graph_inputs_to_copy.push((
-                    input_buffer as *mut Box<[Sample]>,
-                    input_edge.from_output_index,
-                ));
+                graph_inputs_to_copy
+                    .push((input_edge.from_output_index, input_edge.to_input_index));
             }
-            // Add feedback input edges. This will read the previous value from the Node, provided this Node is before that Node.
             for feedback_edge in feedback_input_edges {
                 let source = &nodes[feedback_edge.source];
-                let output_values = &source.output_buffers[feedback_edge.from_output_index];
-                let input_buffer = &mut inputs_buffers[feedback_edge.to_input_index];
+                let mut output_values = source.output_buffers();
                 for i in 0..self.block_size {
                     inputs_to_copy.push((
-                        &output_values[i] as *const Sample,
-                        &mut input_buffer[i] as *mut Sample,
+                        output_values.ptr_to_sample(feedback_edge.from_output_index, i),
+                        input_buffers.ptr_to_sample(feedback_edge.from_output_index, i),
                     ));
                 }
             }
+            let node = &nodes[node_key];
             tasks.push(Task {
-                node_ptr: &mut nodes[node_key] as *mut Node,
                 node_key,
                 inputs_to_copy,
                 graph_inputs_to_copy,
-                input_buffers_ptr: inputs_buffers.as_mut_ptr(),
-                num_inputs: inputs_buffers.len(),
+                input_buffers,
+                input_constants: node.input_constants,
+                gen: node.gen,
+                output_buffers_first_ptr: node.output_buffers_first_ptr,
+                block_size: node.block_size,
+                num_outputs: node.num_outputs,
             });
         }
         tasks
@@ -2143,10 +2315,10 @@ impl Graph {
         let mut output_tasks = vec![];
         for output_edge in &self.output_edges {
             let source = &self.get_nodes()[output_edge.source];
-            let output_values = &source.output_buffers[output_edge.from_output_index];
             let graph_output_index = output_edge.to_input_index;
             output_tasks.push(OutputTask {
-                input_buffer_ptr: output_values as *const Box<[Sample]>,
+                input_buffers: source.output_buffers(),
+                input_index: output_edge.from_output_index,
                 graph_output_index,
             });
         }
@@ -2200,6 +2372,7 @@ impl Graph {
             _arc_nodes: self.nodes.clone(),
             task_data_to_be_dropped_producer,
             new_task_data_consumer,
+            _arc_inputs_buffers_ptr: self.inputs_buffers_ptr.clone(),
         };
         self.graph_gen_communicator = Some(graph_gen_communicator);
         Ok(graph_gen)
@@ -2310,12 +2483,7 @@ impl Gen for GraphGen {
     fn name(&self) -> &'static str {
         "GraphGen"
     }
-    fn process(
-        &mut self,
-        inputs: &[Box<[Sample]>],
-        outputs: &mut [Box<[Sample]>],
-        resources: &mut Resources,
-    ) -> GenState {
+    fn process(&mut self, ctx: GenContext, resources: &mut Resources) -> GenState {
         match self.graph_state {
             GenState::Continue => {
                 // TODO: Support output with a different block size, i.e. local buffering and running this graph more or less often than the parent graph
@@ -2381,7 +2549,7 @@ impl Gen for GraphGen {
                             i += 1;
                         }
                     }
-                    match task.run(inputs, resources) {
+                    match task.run(ctx.inputs, resources) {
                         GenState::Continue => (),
                         GenState::FreeSelf => {
                             // We don't care if it fails since if it does the
@@ -2408,37 +2576,34 @@ impl Gen for GraphGen {
                 }
 
                 // Set the output of the graph
-                // Zero the output buffer. Since many nodes may write to the same output we
-                // need to add the outputs together. The Node makes no promise as to the content of
-                // the output buffer provided.
-                for output in outputs.iter_mut() {
-                    output.fill(0.0);
-                }
-                // for edge in &self.output_edges {
-                //     let input_values = &self.get_nodes()[edge.source].output_buffers[edge.from_output_index];
-                //     let output = &mut outputs[edge.to_input_index];
-                //     for i in 0..self.block_size {
-                //         let value = input_values[i];
-                //         output[i] += value;
-                //     }
-                // }
+                // Zero the output buffer.
+                ctx.outputs.fill(0.0);
                 for output_task in output_tasks.iter() {
-                    let input_values = unsafe { &*output_task.input_buffer_ptr };
-                    let output = &mut outputs[output_task.graph_output_index];
+                    let input_values = output_task
+                        .input_buffers
+                        .get_channel(output_task.input_index);
+                    let output = ctx.outputs.get_channel_mut(output_task.graph_output_index);
                     for i in 0..self.block_size {
                         let value = input_values[i];
+                        // Since many nodes may write to the same output we
+                        // need to add the outputs together. The Node makes no promise as to the content of
+                        // the output buffer provided.
                         output[i] += value;
                     }
                 }
                 if let Some(from_relative_sample_nr) = do_empty_buffer {
-                    for output in outputs.iter_mut() {
+                    for channel in 0..ctx.outputs.channels() {
+                        let output = ctx.outputs.get_channel_mut(channel);
                         for sample in &mut output[from_relative_sample_nr..] {
                             *sample = 0.0;
                         }
                     }
                 }
                 if let Some(from_relative_sample_nr) = do_mend_connections {
-                    for (input, output) in inputs.iter().zip(outputs.iter_mut()) {
+                    let num_channels = ctx.inputs.channels().min(ctx.outputs.channels());
+                    for channel in 0..num_channels {
+                        let input = ctx.inputs.get_channel(channel);
+                        let output = ctx.outputs.get_channel_mut(channel);
                         // TODO: Check if the input is constant or not first. Only non-constant inputs should be passed through (because it's "mending" the connection)
                         for (i, o) in input[from_relative_sample_nr..]
                             .iter()
@@ -2452,12 +2617,13 @@ impl Gen for GraphGen {
                 self.timestamp.store(self.sample_counter, Ordering::SeqCst);
             }
             GenState::FreeSelf => {
-                for output in outputs.iter_mut() {
-                    output.fill(0.0);
-                }
+                ctx.outputs.fill(0.0);
             }
             GenState::FreeSelfMendConnections => {
-                for (input, output) in inputs.iter().zip(outputs.iter_mut()) {
+                let num_channels = ctx.inputs.channels().min(ctx.outputs.channels());
+                for channel in 0..num_channels {
+                    let input = ctx.inputs.get_channel(channel);
+                    let output = ctx.outputs.get_channel_mut(channel);
                     // TODO: Check if the input is constant or not first. Only non-constant inputs should be passed through (because it's "mending" the connection)
                     for (i, o) in input.iter().zip(output.iter_mut()) {
                         *o = *i;
@@ -2482,10 +2648,11 @@ impl Gen for GraphGen {
 /// This gets placed as a dyn Gen in a Node in a Graph. It's how the Graph gets
 /// run. The Graph communicates with the GraphGen in a thread safe way.
 ///
-/// Safety: Using this struct is safe only if used in conjunction with the
+/// # Safety
+/// Using this struct is safe only if used in conjunction with the
 /// Graph. The Graph owns nodes and gives its corresponding GraphGen raw
 /// pointers to them through Tasks, but it never accesses or deallocates a node
-/// while it can be accessed by the GraphGen through a Task. The GraphGen
+/// while it can be accessed by the [`GraphGen`] through a Task. The [`GraphGen`]
 /// mustn't use the _arc_nodes field; it is only there to make sure the nodes
 /// don't get dropped.
 struct GraphGen {
@@ -2499,6 +2666,8 @@ struct GraphGen {
     generation: Arc<AtomicU16>,
     // This Arc is cloned from the Graph and exists so that if the Graph gets dropped, the GraphGen can continue on without segfaulting.
     _arc_nodes: Arc<UnsafeCell<SlotMap<NodeKey, Node>>>,
+    // This Arc makes sure the input buffers allocation is valid for as long as it needs to be
+    _arc_inputs_buffers_ptr: Arc<OwnedRawBuffer>,
     graph_state: GenState,
     /// Stores the number of completed samples, updated at the end of a block
     sample_counter: u64,
@@ -2709,6 +2878,8 @@ impl GraphGenCommunicator {
         let generation = self.generation.load(Ordering::SeqCst);
         // Happy path
         if generation == cmp + 1 {
+            false
+        } else if generation == cmp + 2 {
             true
         } else if generation == cmp {
             false
@@ -2750,35 +2921,69 @@ impl GraphGenCommunicator {
     }
 }
 
-pub struct Node {
-    name: &'static str,
-    /// A constant value per input
-    input_constants: Vec<Sample>,
-    /// input buffers are layed out [i0: [s0, s1, s2...], i1: [s0, s1, s2...]]
-    // output_buffers: Vec<Vec<Sample>>,
-    output_buffers: Box<[Box<[Sample]>]>,
-    gen: Box<dyn Gen + Send>,
+/// The Node is a very unsafe struct. Be very careful when changing it.
+///
+/// - The Gen is not allowed to be replaced.
+/// - The input_constants buffer mustn't be deallocated until the Node is dropped.
+/// - init must not be called after the Node has started being used on the audio thread.
+/// - the number of inputs/outputs of the Gen must not change.
+struct Node {
+    // name: &'static str,
+    /// index by input_channel
+    input_constants: *mut [Sample],
+    /// index by `output_channel * block_size + sample_index`
+    output_buffers: *mut [Sample],
+    output_buffers_first_ptr: *mut Sample,
+    block_size: usize,
+    num_outputs: usize,
+    gen: *mut (dyn Gen + Send),
 }
 
+unsafe impl Send for Node {}
+
 impl Node {
-    pub fn new(name: &'static str, gen: Box<dyn Gen + Send>) -> Self {
+    pub fn new(_name: &'static str, gen: Box<dyn Gen + Send>) -> Self {
+        let num_outputs = gen.num_outputs();
+        let block_size = 0;
+        let output_buffers =
+            Box::<[Sample]>::into_raw(vec![0.0; num_outputs * block_size].into_boxed_slice());
+
+        let output_buffers_first_ptr = std::ptr::null_mut();
+
         Node {
-            name,
-            input_constants: vec![0.0 as Sample; gen.num_inputs()],
-            gen,
-            output_buffers: vec![vec![0.0; 0].into_boxed_slice(); 0].into_boxed_slice(),
+            // name,
+            input_constants: Box::into_raw(
+                vec![0.0 as Sample; gen.num_inputs()].into_boxed_slice(),
+            ),
+            gen: Box::into_raw(gen),
+            output_buffers,
+            output_buffers_first_ptr,
+            num_outputs,
+            block_size,
         }
     }
-    pub fn name(&self) -> &'static str {
-        self.name
-    }
+    // pub fn name(&self) -> &'static str {
+    //     self.name
+    // }
     /// *Allocates memory*
     /// Allocates enough memory for the given block size
     pub fn init(&mut self, block_size: usize, sample_rate: Sample) {
+        // Free the previous buffer
+        unsafe {
+            drop(Box::from_raw(self.output_buffers));
+        }
         self.output_buffers =
-            vec![vec![0.0 as Sample; block_size].into_boxed_slice(); self.gen.num_outputs()]
-                .into_boxed_slice();
-        self.gen.init(sample_rate);
+            Box::<[Sample]>::into_raw(vec![0.0; self.num_outputs * block_size].into_boxed_slice());
+        self.output_buffers_first_ptr = if block_size * self.num_outputs > 0 {
+            // Get the pointer to the first f32 in the block without limiting its scope or going through a reference
+            self.output_buffers.cast::<f32>()
+        } else {
+            std::ptr::null_mut()
+        };
+        self.block_size = block_size;
+        unsafe {
+            (*self.gen).init(sample_rate);
+        }
     }
     /// Use the embedded Gen to generate values that are placed in the
     /// output_buffer. The Graph will have already filled the input buffer with
@@ -2786,41 +2991,161 @@ impl Node {
     #[inline]
     pub fn process(
         &mut self,
-        input_buffers: &[Box<[Sample]>],
+        input_buffers: &NodeBufferRef,
         resources: &mut Resources,
     ) -> GenState {
-        self.gen
-            .process(input_buffers, &mut self.output_buffers[..], resources)
+        let mut outputs = NodeBufferRef {
+            buf: self.output_buffers_first_ptr,
+            num_channels: self.num_outputs,
+            block_size: self.block_size,
+        };
+        let ctx = GenContext {
+            inputs: input_buffers,
+            outputs: &mut outputs,
+        };
+        unsafe { (*self.gen).process(ctx, resources) }
     }
     pub fn set_constant(&mut self, value: Sample, input_index: usize) {
-        self.input_constants[input_index] = value;
+        unsafe {
+            (*self.input_constants)[input_index] = value;
+        }
     }
-    pub fn output_buffers(&self) -> &[Box<[Sample]>] {
-        &self.output_buffers
+    pub fn output_buffers(&self) -> NodeBufferRef {
+        NodeBufferRef {
+            buf: self.output_buffers_first_ptr,
+            num_channels: self.num_outputs,
+            block_size: self.block_size,
+        }
     }
     pub fn num_inputs(&self) -> usize {
         // self.gen.num_inputs()
         // Not dynamic dispatch, may be faster
-        self.input_constants.len()
+        unsafe { &*self.input_constants }.len()
     }
     pub fn num_outputs(&self) -> usize {
-        self.gen.num_outputs()
+        self.num_outputs
     }
     pub fn input_indices_to_names(&self) -> Vec<&'static str> {
         let mut list = vec![];
         for i in 0..self.num_inputs() {
-            list.push(self.gen.input_desc(i));
+            list.push(unsafe { (*self.gen).input_desc(i) });
         }
         list
     }
     pub fn output_indices_to_names(&self) -> Vec<&'static str> {
         let mut list = vec![];
         for i in 0..self.num_outputs() {
-            list.push(self.gen.output_desc(i));
+            list.push(unsafe { (*self.gen).output_desc(i) });
         }
         list
     }
 }
+impl Drop for Node {
+    fn drop(&mut self) {
+        drop(unsafe { Box::from_raw(self.output_buffers) });
+        drop(unsafe { Box::from_raw(self.input_constants) });
+        drop(unsafe { Box::from_raw(self.gen) });
+    }
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum RunGraphError {
+    #[error("Unable to create a node from the Graph: {0}")]
+    CouldNodeCreateNode(String),
+}
+
+/// Wrapper around a [`Graph`] [`Node`] with convenience methods to run the
+/// Graph, either from an audio thread or for non-real time purposes.
+pub struct RunGraph {
+    graph_node: Node,
+    resources: Resources,
+    input_buffer_ptr: *mut f32,
+    input_buffer_length: usize,
+    input_node_buffer_ref: NodeBufferRef,
+    output_node_buffer_ref: NodeBufferRef,
+}
+
+impl RunGraph {
+    /// Prepare the necessary resources for running the graph. This will fail if
+    /// the Graph passed in has already been turned into a Node somewhere else,
+    /// for example if it has been pushed to a different Graph.
+    pub fn new(graph: &mut Graph, resources: Resources) -> Result<Self, RunGraphError> {
+        match graph.split_and_create_node() {
+            Ok(graph_node) => {
+                let input_buffer_length = graph_node.num_inputs() * graph_node.block_size;
+                let input_buffer_ptr = if input_buffer_length != 0 {
+                    let input_buffer = vec![0.0 as Sample; input_buffer_length].into_boxed_slice();
+                    let input_buffer = Box::into_raw(input_buffer);
+                    // Safety: we just created the slice of non-zero length
+                    input_buffer.cast::<f32>()
+                } else {
+                    std::ptr::null_mut()
+                };
+                let input_node_buffer_ref = NodeBufferRef {
+                    buf: input_buffer_ptr,
+                    num_channels: graph_node.num_inputs(),
+                    block_size: graph_node.block_size,
+                };
+                // Safety: The Nodes get initiated and their buffers allocated
+                // when the Graph is split and the Node is created from it.
+                // Therefore, we can safely store a reference to a buffer in
+                // that Node here. We want to store it to be able to return a
+                // reference to it instead of an owned value which includes a
+                // raw pointer.
+                let output_node_buffer_ref = graph_node.output_buffers();
+                Ok(Self {
+                    graph_node,
+                    resources,
+                    input_buffer_length,
+                    input_buffer_ptr,
+                    input_node_buffer_ref,
+                    output_node_buffer_ref,
+                })
+            }
+            Err(e) => Err(RunGraphError::CouldNodeCreateNode(e)),
+        }
+    }
+    /// Returns the input buffer that will be read as the input of the main
+    /// graph. For example, you may want to fill this with the sound inputs of
+    /// the sound card. The buffer does not get emptied automatically. If you
+    /// don't change it between calls to [`RunGraph::process_block`], its content will be static.
+    #[inline]
+    pub fn graph_input_buffers(&mut self) -> &mut NodeBufferRef {
+        &mut self.input_node_buffer_ref
+    }
+    /// Run the Graph for one block using the inputs currently stored in the
+    /// input buffer. The results can be accessed through the output buffer
+    /// through [`RunGraph::graph_output_buffers`].
+    pub fn process_block(&mut self) {
+        self.graph_node
+            .process(&self.input_node_buffer_ref, &mut self.resources);
+    }
+    /// Return a reference to the buffer holding the output of the [`Graph`].
+    /// Channels which have no [`Connection`]/graph edge to them will be 0.0.
+    pub fn graph_output_buffers(&self) -> &NodeBufferRef {
+        &self.output_node_buffer_ref
+    }
+    pub fn block_size(&self) -> usize {
+        self.output_node_buffer_ref.block_size()
+    }
+}
+
+impl Drop for RunGraph {
+    fn drop(&mut self) {
+        // Safety: The slice is allocated when the RunGraph is created with the
+        // given size, unless that size is 0 in which case no allocation is
+        // made.
+        if !self.input_buffer_ptr.is_null() {
+            unsafe {
+                drop(Box::from_raw(std::slice::from_raw_parts_mut(
+                    self.input_buffer_ptr,
+                    self.input_buffer_length,
+                )));
+            }
+        }
+    }
+}
+unsafe impl Send for RunGraph {}
 
 /// Buffers the output of a node from last block to simplify feedback nodes and
 /// make sure they work in all possible graphs.
@@ -2839,15 +3164,14 @@ impl FeedbackGen {
 }
 
 impl Gen for FeedbackGen {
-    fn process(
-        &mut self,
-        inputs: &[Box<[Sample]>],
-        outputs: &mut [Box<[Sample]>],
-        _resources: &mut Resources,
-    ) -> GenState {
-        for (input, output) in inputs.iter().zip(outputs) {
-            for (i, o) in input.iter().zip(output.iter_mut()) {
-                *o = *i;
+    fn process(&mut self, ctx: GenContext, _resources: &mut Resources) -> GenState {
+        for channel in 0..self.num_channels {
+            for sample_index in 0..ctx.block_size() {
+                ctx.outputs.write(
+                    ctx.inputs.read(channel, sample_index),
+                    channel,
+                    sample_index,
+                );
             }
         }
         GenState::Continue
@@ -2902,22 +3226,17 @@ impl Ramp {
     }
 }
 impl Gen for Ramp {
-    fn process(
-        &mut self,
-        inputs: &[Box<[Sample]>],
-        outputs: &mut [Box<[Sample]>],
-        _resources: &mut Resources,
-    ) -> GenState {
-        let values = &inputs[0];
-        let times = &inputs[1];
-        for ((value, time), out) in values.iter().zip(times.iter()).zip(outputs[0].iter_mut()) {
+    fn process(&mut self, ctx: GenContext, _resources: &mut Resources) -> GenState {
+        for i in 0..ctx.block_size() {
+            let value = ctx.inputs.read(0, i);
+            let time = ctx.inputs.read(1, i);
             let mut recalculate = false;
-            if *value != self.last_value {
-                self.last_value = *value;
+            if value != self.last_value {
+                self.last_value = value;
                 recalculate = true;
             }
-            if *time != self.last_time {
-                self.last_time = *time;
+            if time != self.last_time {
+                self.last_time = time;
                 recalculate = true;
             }
             if recalculate {
@@ -2925,11 +3244,11 @@ impl Gen for Ramp {
                 self.step = (value - self.current_value) / num_samples;
             }
             if (self.current_value - value).abs() < 0.0001 {
-                self.current_value = *value;
+                self.current_value = value;
                 self.step = 0.;
             }
             self.current_value += self.step;
-            *out = self.current_value;
+            ctx.outputs.write(self.current_value, 0, i);
         }
         GenState::Continue
     }
@@ -2967,16 +3286,10 @@ impl Gen for Ramp {
 }
 pub struct Mult;
 impl Gen for Mult {
-    fn process(
-        &mut self,
-        inputs: &[Box<[Sample]>],
-        outputs: &mut [Box<[Sample]>],
-        _resources: &mut Resources,
-    ) -> GenState {
-        let i0 = &inputs[0];
-        let i1 = &inputs[1];
-        for (o, (in0, in1)) in outputs[0].iter_mut().zip(i0.iter().zip(i1.iter())) {
-            *o = in0 * in1;
+    fn process(&mut self, ctx: GenContext, _resources: &mut Resources) -> GenState {
+        for i in 0..ctx.block_size() {
+            let value = ctx.inputs.read(0, i) * ctx.inputs.read(1, i);
+            ctx.outputs.write(value, 0, i);
         }
         GenState::Continue
     }
@@ -3009,28 +3322,15 @@ impl Gen for Mult {
 /// TODO: Implement multiple different pan laws, maybe as a generic.
 pub struct PanMonoToStereo;
 impl Gen for PanMonoToStereo {
-    fn process(
-        &mut self,
-        inputs: &[Box<[Sample]>],
-        outputs: &mut [Box<[Sample]>],
-        _resources: &mut Resources,
-    ) -> GenState {
-        let signals = &inputs[0];
-        let pans = &inputs[1];
-        let (lefts, rest) = outputs.split_at_mut(1);
-        let lefts = &mut lefts[0];
-        let rights = &mut rest[0];
-        for (((left, right), signal), pan) in lefts
-            .iter_mut()
-            .zip(rights.iter_mut())
-            .zip(signals.iter())
-            .zip(pans.iter())
-        {
+    fn process(&mut self, ctx: GenContext, _resources: &mut Resources) -> GenState {
+        for i in 0..ctx.block_size() {
+            let signal = ctx.inputs.read(0, i);
+            let pan = ctx.inputs.read(1, i);
             let pan_pos_radians = pan * std::f32::consts::FRAC_PI_2;
             let left_gain = fastapprox::fast::cos(pan_pos_radians);
             let right_gain = fastapprox::fast::sin(pan_pos_radians);
-            *left = signal * left_gain;
-            *right = signal * right_gain;
+            ctx.outputs.write(signal * left_gain, 0, i);
+            ctx.outputs.write(signal * right_gain, 1, i);
         }
         GenState::Continue
     }
@@ -3076,19 +3376,13 @@ impl NaiveSine {
 }
 
 impl Gen for NaiveSine {
-    fn process(
-        &mut self,
-        inputs: &[Box<[Sample]>],
-        outputs: &mut [Box<[Sample]>],
-        resources: &mut Resources,
-    ) -> GenState {
-        let output = &mut outputs[0];
-        let freq_buf = &inputs[0];
-        let amp_buf = &inputs[1];
-        for ((&freq, &amp), o) in freq_buf.iter().zip(amp_buf.iter()).zip(output.iter_mut()) {
+    fn process(&mut self, ctx: GenContext, resources: &mut Resources) -> GenState {
+        for i in 0..ctx.block_size() {
+            let freq = ctx.inputs.read(0, i);
+            let amp = ctx.inputs.read(1, i);
             self.update_freq(freq, resources.sample_rate);
             self.amp = amp;
-            *o = self.phase.cos() * self.amp;
+            ctx.outputs.write(self.phase.cos() * self.amp, 0, i);
             self.phase += self.phase_step;
             if self.phase > 1.0 {
                 self.phase -= 1.0;
@@ -3119,20 +3413,15 @@ mod tests {
     use crate::ResourcesSettings;
 
     use super::*;
-    fn null_input() -> Vec<Box<[Sample]>> {
-        vec![vec![0.0; 0].into_boxed_slice(); 0]
+    fn null_input() -> NodeBufferRef {
+        NodeBufferRef::null_buffer()
     }
     // Outputs its input value + 1
     struct OneGen {}
     impl Gen for OneGen {
-        fn process(
-            &mut self,
-            inputs: &[Box<[Sample]>],
-            outputs: &mut [Box<[Sample]>],
-            _resources: &mut Resources,
-        ) -> GenState {
-            for (i, o) in inputs[0].iter().zip(outputs[0].iter_mut()) {
-                *o = i + 1.0;
+        fn process(&mut self, ctx: GenContext, _resources: &mut Resources) -> GenState {
+            for i in 0..ctx.block_size() {
+                ctx.outputs.write(ctx.inputs.read(0, i) + 1.0, 0, i);
             }
             GenState::Continue
         }
@@ -3155,15 +3444,11 @@ mod tests {
         counter: f32,
     }
     impl Gen for DummyGen {
-        fn process(
-            &mut self,
-            inputs: &[Box<[Sample]>],
-            outputs: &mut [Box<[Sample]>],
-            _resources: &mut Resources,
-        ) -> GenState {
-            for (i, o) in inputs[0].iter().zip(outputs[0].iter_mut()) {
-                self.counter += 1.0;
-                *o = i + self.counter;
+        fn process(&mut self, ctx: GenContext, _resources: &mut Resources) -> GenState {
+            for i in 0..ctx.block_size() {
+                self.counter += 1.;
+                ctx.outputs
+                    .write(ctx.inputs.read(0, i) + self.counter, 0, i);
             }
             GenState::Continue
         }
@@ -3184,11 +3469,12 @@ mod tests {
         }
     }
     fn graph_node(graph: &mut Graph) -> Node {
-        graph.to_node().unwrap()
+        graph.split_and_create_node().unwrap()
     }
     fn test_resources_settings() -> ResourcesSettings {
         ResourcesSettings::default()
     }
+
     #[test]
     fn create_graph() {
         let mut graph: Graph = Graph::new(GraphSettings::default());
@@ -3199,7 +3485,7 @@ mod tests {
         let mut resources = Resources::new(test_resources_settings());
         let mut graph_node = graph_node(&mut graph);
         graph_node.process(&null_input(), &mut resources);
-        assert_eq!(graph_node.output_buffers()[0][31], 32.0);
+        assert_eq!(graph_node.output_buffers().read(0, 31), 32.0);
     }
     #[test]
     fn multiple_nodes() {
@@ -3219,7 +3505,7 @@ mod tests {
         let mut graph_node = graph_node(&mut graph);
         let mut resources = Resources::new(test_resources_settings());
         graph_node.process(&null_input(), &mut resources);
-        assert_eq!(graph_node.output_buffers()[0][2], 9.0);
+        assert_eq!(graph_node.output_buffers().read(0, 2), 9.0);
     }
     #[test]
     fn constant_inputs() {
@@ -3232,10 +3518,10 @@ mod tests {
         let node_id = graph.push_node(node);
         graph.connect(constant(0.5).to(node_id)).unwrap();
         graph.connect(Connection::graph_output(node_id)).unwrap();
-        let mut graph_node = graph_node(&mut graph);
-        let mut resources = Resources::new(test_resources_settings());
-        graph_node.process(&null_input(), &mut resources);
-        assert_eq!(graph_node.output_buffers()[0][BLOCK - 1], 16.5);
+        let resources = Resources::new(test_resources_settings());
+        let mut run_graph = RunGraph::new(&mut graph, resources).unwrap();
+        run_graph.process_block();
+        assert_eq!(run_graph.graph_output_buffers().read(0, BLOCK - 1), 16.5);
     }
     #[test]
     fn graph_in_a_graph() {
@@ -3262,13 +3548,13 @@ mod tests {
         graph
             .connect(constant(CONSTANT_INPUT_TO_NODE).to(node_id))
             .unwrap();
-        let mut graph_node = graph_node(&mut graph);
-        let mut resources = Resources::new(test_resources_settings());
+        let resources = Resources::new(test_resources_settings());
+        let mut run_graph = RunGraph::new(&mut graph, resources).unwrap();
         graph.commit_changes();
         graph.update();
-        graph_node.process(&null_input(), &mut resources);
+        run_graph.process_block();
         assert_eq!(
-            graph_node.output_buffers()[0][BLOCK - 2],
+            run_graph.graph_output_buffers().read(0, BLOCK - 2),
             (BLOCK - 1) as Sample + CONSTANT_INPUT_TO_NODE
         );
     }
@@ -3304,27 +3590,37 @@ mod tests {
         graph_node.process(&null_input(), &mut resources);
         let block1 = vec![2.0f32, 4., 6., 8.];
         let block2 = vec![39f32, 47., 55., 63.];
-        for (&output, expected) in graph_node.output_buffers()[0].iter().zip(block1) {
+        for (&output, expected) in graph_node
+            .output_buffers()
+            .get_channel(0)
+            .iter()
+            .zip(block1)
+        {
             assert_eq!(
                 output,
                 expected,
                 "block1 failed with o: {}, expected: {}, n1: {:#?}, n0: {:#?}",
                 output,
                 expected,
-                graph_node.output_buffers()[0],
-                graph_node.output_buffers()[1]
+                graph_node.output_buffers().get_channel(0),
+                graph_node.output_buffers().get_channel(1)
             );
         }
         graph_node.process(&null_input(), &mut resources);
-        for (&output, expected) in graph_node.output_buffers()[0].iter().zip(block2) {
+        for (&output, expected) in graph_node
+            .output_buffers()
+            .get_channel(0)
+            .iter()
+            .zip(block2)
+        {
             assert_eq!(
                 output,
                 expected,
                 "block2 failed with o: {}, expected: {}, n1: {:#?}, n0: {:#?}",
                 output,
                 expected,
-                graph_node.output_buffers()[0],
-                graph_node.output_buffers()[1]
+                graph_node.output_buffers().get_channel(0),
+                graph_node.output_buffers().get_channel(1)
             );
         }
     }
@@ -3336,8 +3632,8 @@ mod tests {
             block_size: BLOCK,
             ..Default::default()
         });
-        let mut graph_node = graph_node(&mut graph);
-        let mut resources = Resources::new(test_resources_settings());
+        let resources = Resources::new(test_resources_settings());
+        let mut run_graph = RunGraph::new(&mut graph, resources).unwrap();
         let triangular_sequence = |n| (n * (n + 1)) / 2;
         for i in 0..10 {
             let node = Node::new("Dummy", Box::new(DummyGen { counter: 0.0 }));
@@ -3346,13 +3642,13 @@ mod tests {
             graph.connect(Connection::graph_output(node_id)).unwrap();
             graph.commit_changes();
             graph.update();
-            graph_node.process(&null_input(), &mut resources);
+            run_graph.process_block();
             assert_eq!(
-                graph_node.output_buffers()[0][0],
+                run_graph.graph_output_buffers().read(0, 0),
                 (i + 1) as f32 * 0.5 + triangular_sequence(i + 1) as f32,
                 "i: {}, output: {}, expected: {}",
                 i,
-                graph_node.output_buffers()[0][0],
+                run_graph.graph_output_buffers().read(0, 0),
                 (i + 1) as f32 * 0.5 + triangular_sequence(i + 1) as f32,
             );
         }
@@ -3363,11 +3659,11 @@ mod tests {
         const BLOCK: usize = 1;
         let mut graph: Graph = Graph::new(GraphSettings {
             block_size: BLOCK,
-            num_inputs: 2,
+            num_inputs: 3,
             ..Default::default()
         });
-        let mut graph_node = graph_node(&mut graph);
-        let mut resources = Resources::new(test_resources_settings());
+        let resources = Resources::new(test_resources_settings());
+        let mut run_graph = RunGraph::new(&mut graph, resources).unwrap();
         let node = Node::new("Dummy", Box::new(DummyGen { counter: 0.0 }));
         let node_id = graph.push_node(node);
         graph
@@ -3379,13 +3675,9 @@ mod tests {
             .unwrap();
         graph.connect(Connection::graph_output(node_id)).unwrap();
         graph.commit_changes();
-        let input = vec![
-            vec![0.0; BLOCK].into_boxed_slice(),
-            vec![0.0; BLOCK].into_boxed_slice(),
-            vec![10.0; BLOCK].into_boxed_slice(),
-        ];
-        graph_node.process(&input, &mut resources);
-        assert_eq!(graph_node.output_buffers()[0][0], 11.0);
+        run_graph.graph_input_buffers().fill_channel(10.0, 2);
+        run_graph.process_block();
+        assert_eq!(run_graph.graph_output_buffers().read(0, 0), 11.0);
     }
 
     #[test]
@@ -3411,25 +3703,25 @@ mod tests {
         }
         graph.commit_changes();
         graph_node.process(&null_input(), &mut resources);
-        assert_eq!(graph_node.output_buffers()[0][0], 10.0);
+        assert_eq!(graph_node.output_buffers().read(0, 0), 10.0);
         graph.free_node(nodes[9]).unwrap();
         graph.commit_changes();
         graph_node.process(&null_input(), &mut resources);
-        assert_eq!(graph_node.output_buffers()[0][0], 9.0);
+        assert_eq!(graph_node.output_buffers().read(0, 0), 9.0);
         graph.free_node(nodes[4]).unwrap();
         graph.commit_changes();
         graph_node.process(&null_input(), &mut resources);
-        assert_eq!(graph_node.output_buffers()[0][0], 4.0);
+        assert_eq!(graph_node.output_buffers().read(0, 0), 4.0);
         graph.connect(nodes[5].to(nodes[3])).unwrap();
         graph.commit_changes();
         graph_node.process(&null_input(), &mut resources);
-        assert_eq!(graph_node.output_buffers()[0][0], 8.0);
+        assert_eq!(graph_node.output_buffers().read(0, 0), 8.0);
         for node in &nodes[1..4] {
             graph.free_node(*node).unwrap();
         }
         graph.commit_changes();
         graph_node.process(&null_input(), &mut resources);
-        assert_eq!(graph_node.output_buffers()[0][0], 1.0);
+        assert_eq!(graph_node.output_buffers().read(0, 0), 1.0);
         assert_eq!(graph.free_node(nodes[4]), Err(FreeError::NodeNotFound));
     }
 
@@ -3446,12 +3738,13 @@ mod tests {
         let mut nodes = vec![];
         let mut last_node = None;
         let audio_thread = std::thread::spawn(move || {
-            for _ in 0..1000 {
-                graph_node.process(&null_input(), &mut resources);
+            let null_input = null_input();
+            for _ in 0..100 {
+                graph_node.process(&null_input, &mut resources);
                 std::thread::sleep(std::time::Duration::from_millis(1));
             }
         });
-        for _ in 0..100 {
+        for _ in 0..10 {
             let node = graph.push_gen(OneGen {});
             if let Some(last) = last_node.take() {
                 graph.connect(node.to(last)).unwrap();
@@ -3470,7 +3763,7 @@ mod tests {
         }
         let mut nodes = vec![];
         last_node = None;
-        for _ in 0..100 {
+        for _ in 0..10 {
             let node = graph.push_gen(DummyGen { counter: 0. });
             if let Some(last) = last_node.take() {
                 graph.connect(node.to(last)).unwrap();
@@ -3499,21 +3792,16 @@ mod tests {
         mend: bool,
     }
     impl Gen for SelfFreeing {
-        fn process(
-            &mut self,
-            inputs: &[Box<[Sample]>],
-            outputs: &mut [Box<[Sample]>],
-            _resources: &mut Resources,
-        ) -> GenState {
-            for (input, output) in inputs[0].iter().zip(outputs[0].iter_mut()) {
+        fn process(&mut self, ctx: GenContext, _resources: &mut Resources) -> GenState {
+            for i in 0..ctx.block_size() {
                 if self.samples_countdown == 0 {
                     if self.mend {
-                        *output = *input;
+                        ctx.outputs.write(ctx.inputs.read(0, i), 0, i);
                     } else {
-                        *output = 0.;
+                        ctx.outputs.write(0., 0, i);
                     }
                 } else {
-                    *output = *input + self.value;
+                    ctx.outputs.write(ctx.inputs.read(0, i) + self.value, 0, i);
                     self.samples_countdown -= 1;
                 }
             }
@@ -3536,8 +3824,8 @@ mod tests {
             1
         }
     }
-    #[test]
 
+    #[test]
     fn self_freeing_nodes() {
         const BLOCK: usize = 1;
         let mut graph: Graph = Graph::new(GraphSettings {
@@ -3574,25 +3862,30 @@ mod tests {
         graph.commit_changes();
         assert_eq!(graph.num_nodes(), 4);
         graph_node.process(&null_input(), &mut resources);
-        assert_eq!(graph_node.output_buffers()[0][0], 7.0);
+        assert_eq!(graph_node.output_buffers().read(0, 0), 7.0);
         graph.commit_changes();
         // Still 4 since the node has been added to the free node queue, but there
         // hasn't been a new generation in the GraphGen yet.
         assert_eq!(graph.num_nodes(), 4);
         graph_node.process(&null_input(), &mut resources);
-        assert_eq!(graph_node.output_buffers()[0][0], 6.0);
+        assert_eq!(graph_node.output_buffers().read(0, 0), 6.0);
+        graph.commit_changes();
+        // With the generation needing to be 2 higher, we have to wait yet
+        // another round for the node to be freed.
+        assert_eq!(graph.num_nodes(), 4);
+        graph_node.process(&null_input(), &mut resources);
+        assert_eq!(graph_node.output_buffers().read(0, 0), 5.0);
         graph.commit_changes();
         assert_eq!(graph.num_nodes(), 3);
         graph_node.process(&null_input(), &mut resources);
-        assert_eq!(graph_node.output_buffers()[0][0], 5.0);
+        assert_eq!(graph_node.output_buffers().read(0, 0), 5.0);
         graph.commit_changes();
         assert_eq!(graph.num_nodes(), 2);
         graph_node.process(&null_input(), &mut resources);
-        assert_eq!(graph_node.output_buffers()[0][0], 5.0);
+        assert_eq!(graph_node.output_buffers().read(0, 0), 0.0);
         graph.commit_changes();
         assert_eq!(graph.num_nodes(), 2);
         graph_node.process(&null_input(), &mut resources);
-        assert_eq!(graph_node.output_buffers()[0][0], 0.0);
         graph.commit_changes();
         assert_eq!(graph.num_nodes(), 1);
         graph_node.process(&null_input(), &mut resources);
@@ -3632,10 +3925,10 @@ mod tests {
             .unwrap();
         graph.update();
         graph_node.process(&null_input(), &mut resources);
-        assert_eq!(graph_node.output_buffers()[0][0], 4.0);
-        assert_eq!(graph_node.output_buffers()[0][1], 4.0);
-        assert_eq!(graph_node.output_buffers()[0][2], 6.0);
-        assert_eq!(graph_node.output_buffers()[0][3], 5.0);
+        assert_eq!(graph_node.output_buffers().read(0, 0), 4.0);
+        assert_eq!(graph_node.output_buffers().read(0, 1), 4.0);
+        assert_eq!(graph_node.output_buffers().read(0, 2), 6.0);
+        assert_eq!(graph_node.output_buffers().read(0, 3), 5.0);
         graph
             .schedule_change(ParameterChange::absolute_samples(node0, 0.0, 5).i(0))
             .unwrap();
@@ -3648,10 +3941,10 @@ mod tests {
         );
         graph.update();
         graph_node.process(&null_input(), &mut resources);
-        assert_eq!(graph_node.output_buffers()[0][0], 5.0);
-        assert_eq!(graph_node.output_buffers()[0][1], 4.0);
-        assert_eq!(graph_node.output_buffers()[0][2], 2.0);
-        assert_eq!(graph_node.output_buffers()[0][3], 12.0);
+        assert_eq!(graph_node.output_buffers().read(0, 0), 5.0);
+        assert_eq!(graph_node.output_buffers().read(0, 1), 4.0);
+        assert_eq!(graph_node.output_buffers().read(0, 2), 2.0);
+        assert_eq!(graph_node.output_buffers().read(0, 3), 12.0);
         // Schedule "now", but this will be a few hundred samples into the
         // future depending on the time it takes to run this test.
         graph
@@ -3665,6 +3958,6 @@ mod tests {
         }
         // If this fails, it may be because the machine is too slow. Try
         // increasing the number of iterations above.
-        assert_eq!(graph_node.output_buffers()[0][0], 1002.0);
+        assert_eq!(graph_node.output_buffers().read(0, 0), 1002.0);
     }
 }
