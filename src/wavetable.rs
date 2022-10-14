@@ -32,6 +32,10 @@ new_key_type! {
 /// Wavetable is a standardised wavetable with a buffer of samples, as well as a
 /// separate buffer with the difference between the current sample and the next.
 /// The wavetable is of size [`TABLE_SIZE`] and can be indexed using a [`Phase`].
+///
+/// It is not safe to modify the wavetable while it is being used on the audio
+/// thread, even if no Node is currently reading from it, because most modifying
+/// operations may allocate.
 #[derive(Debug, Clone)]
 pub struct Wavetable {
     buffer: Vec<Sample>,      // Box<[Sample; 131072]>,
@@ -50,9 +54,14 @@ impl Default for Wavetable {
 }
 
 impl Wavetable {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
+    /// Recalculate the difference between samples in the buffer.
+    ///
+    /// The [`Wavetable`] contains a buffer with the difference between each
+    /// sample of the buffer for efficiency reason.
     pub fn update_diff_buffer(&mut self) {
         let diff_buffer: Vec<f32> = self
             .buffer
@@ -62,17 +71,37 @@ impl Wavetable {
             .collect();
         self.diff_buffer = diff_buffer;
     }
-    pub fn from_buffer(buffer: Vec<Sample>) -> Self {
-        let diff_buffer: Vec<f32> = buffer
-            .iter()
-            .zip(buffer.iter().skip(1).cycle())
-            .map(|(&a, &b)| b - a)
-            .collect();
-        Self {
-            buffer,
-            diff_buffer,
+    /// Create a [`Wavetable`] from an existing buffer.
+    ///
+    /// # Errors
+    /// The buffer has to be of [`TABLE_SIZE`] length, otherwise an error will be returned.
+    pub fn from_buffer(buffer: Vec<Sample>) -> Result<Self, String> {
+        if buffer.len() != TABLE_SIZE {
+            return Err(format!(
+                "Invalid size buffer for a wavetable: {}. Wavetables must be of size {}",
+                buffer.len(),
+                TABLE_SIZE,
+            ));
         }
+        let mut w = Self {
+            buffer,
+            ..Default::default()
+        };
+        w.update_diff_buffer();
+        Ok(w)
     }
+    /// Create a new [`Wavetable`] and populate it using the closure/function provided.
+    #[must_use]
+    pub fn from_closure<F>(f: F) -> Self
+    where
+        F: FnOnce(&mut [Sample]),
+    {
+        let mut w = Self::default();
+        f(&mut w.buffer);
+        w.update_diff_buffer();
+        w
+    }
+    #[must_use]
     pub fn sine() -> Self {
         let wavetable_size = TABLE_SIZE;
         let mut wt = Wavetable::new();
@@ -83,6 +112,7 @@ impl Wavetable {
         wt.update_diff_buffer();
         wt
     }
+    #[must_use]
     pub fn multi_sine(num_harmonics: usize) -> Self {
         let mut wt = Wavetable::new();
         wt.fill_sine(num_harmonics, 1.0);
@@ -91,6 +121,7 @@ impl Wavetable {
         wt.update_diff_buffer();
         wt
     }
+    #[must_use]
     pub fn crazy(seed: u32) -> Self {
         let wavetable_size = TABLE_SIZE;
         let mut wt = Wavetable::new();
@@ -104,6 +135,7 @@ impl Wavetable {
         wt.update_diff_buffer();
         wt
     }
+    #[must_use]
     /// Produces a Hann window
     pub fn hann_window() -> Self {
         let mut wt = Wavetable::new();
@@ -114,6 +146,7 @@ impl Wavetable {
         wt
     }
     /// Produces a Hamming window
+    #[must_use]
     pub fn hamming_window() -> Self {
         let mut wt = Wavetable::new();
         // This approach was heavily influenced by the SuperCollider Signal implementation
@@ -123,6 +156,7 @@ impl Wavetable {
         wt
     }
     /// Produces a Sine window
+    #[must_use]
     pub fn sine_window() -> Self {
         let mut wt = Wavetable::new();
         // This approach was heavily influenced by the SuperCollider Signal implementation
@@ -130,12 +164,17 @@ impl Wavetable {
         wt.update_diff_buffer();
         wt
     }
+    /// Fill the wavetable buffer with some value
     pub fn fill(&mut self, value: Sample) {
         for sample in &mut self.buffer {
             *sample = value;
         }
         self.update_diff_buffer();
     }
+    /// Add a sine wave with the given parameters to the wavetable. Note that
+    /// the frequency is relative to the wavetable. If adding a sine wave of
+    /// frequency 2.0 Hz and then playing the wavetable at frequency 200 Hz that
+    /// sine wave will sound at 400 Hz.
     pub fn add_sine(&mut self, freq: Sample, amplitude: Sample, phase: Sample) {
         let step = (freq * PI * 2.0) / TABLE_SIZE as f32;
         let mut phase = phase;
@@ -145,6 +184,7 @@ impl Wavetable {
         }
         self.update_diff_buffer();
     }
+    /// Add a number of harmonics to the wavetable, starting at frequency `freq`.
     pub fn fill_sine(&mut self, num_harmonics: usize, freq: Sample) {
         for n in 0..num_harmonics {
             let start_phase = 0.0;
@@ -162,6 +202,7 @@ impl Wavetable {
         }
         self.update_diff_buffer();
     }
+    /// Add a naive sawtooth wave to the wavetable.
     pub fn add_saw(&mut self, num_harmonics: usize, amp: Sample) {
         for i in 0..num_harmonics {
             let start_phase = 0.0;
@@ -198,6 +239,7 @@ impl Wavetable {
         }
         self.update_diff_buffer();
     }
+    /// Add noise to the wavetable using [`XOrShift32Rng`], keeping the wavetable within +/- 1.0
     pub fn add_noise(&mut self, probability: f64, seed: u32) {
         let mut xorrng = XOrShift32Rng::new(seed);
         for sample in &mut self.buffer {
@@ -213,12 +255,14 @@ impl Wavetable {
         }
         self.update_diff_buffer();
     }
+    /// Multiply all values of the wavetable by a given amount.
     pub fn multiply(&mut self, mult: Sample) {
         for sample in &mut self.buffer {
             *sample *= mult;
         }
         self.update_diff_buffer();
     }
+    /// Normalize the amplitude of the wavetable to 1.0.
     pub fn normalize(&mut self) {
         // Find highest absolute value
         let mut loudest_sample = 0.0;
@@ -238,6 +282,7 @@ impl Wavetable {
     /// Linearly interpolate between the value in between which the phase points.
     /// The phase is assumed to be 0 <= phase < 1
     #[inline]
+    #[must_use]
     pub fn get_linear_interp(&self, phase: Phase) -> Sample {
         let index = phase.integer_component();
         let mix = phase.fractional_component_f32();
@@ -246,6 +291,7 @@ impl Wavetable {
 
     /// Get the closest sample with no interpolation
     #[inline]
+    #[must_use]
     pub fn get(&self, phase: Phase) -> Sample {
         unsafe { *self.buffer.get_unchecked(phase.integer_component()) }
     }
@@ -270,6 +316,7 @@ impl WavetableOscillatorOwned {
             amp: 1.0,
         }
     }
+    #[must_use]
     pub fn from_freq(wavetable: Wavetable, sample_rate: Sample, freq: Sample, amp: Sample) -> Self {
         let mut osc = Self::new(wavetable);
         osc.amp = amp;
@@ -287,6 +334,7 @@ impl WavetableOscillatorOwned {
     }
 
     #[inline(always)]
+    #[must_use]
     pub fn next_sample(&mut self) -> Sample {
         // Use the phase to index into the wavetable
         // self.wavetable.get_linear_interp(temp_phase) * self.amp
@@ -325,6 +373,7 @@ impl Gen for WavetableOscillatorOwned {
 pub struct Phase(pub u32);
 
 impl Phase {
+    #[must_use]
     #[inline]
     pub fn integer_component(&self) -> usize {
         // This will fill with zeroes unless going above 31 bits of shift, in
@@ -333,12 +382,14 @@ impl Phase {
         ((self.0 >> 16) & TABLE_HIGH_MASK) as usize
     }
     /// Returns the fractional component, but as the lower bits of a u32.
+    #[must_use]
     #[inline]
     pub fn fractional_component(&self) -> u32 {
         const FRACTIONAL_MASK: u32 = u16::MAX as u32;
         self.0 & FRACTIONAL_MASK
     }
     /// Returns the fractional component of the phase.
+    #[must_use]
     #[inline]
     pub fn fractional_component_f32(&self) -> f32 {
         const FRACTIONAL_MASK: u32 = u16::MAX as u32;
@@ -386,6 +437,7 @@ pub struct Oscillator {
 }
 
 impl Oscillator {
+    #[must_use]
     pub fn new(wavetable: WavetableKey) -> Self {
         Oscillator {
             step: 0,
@@ -394,6 +446,7 @@ impl Oscillator {
             amp: 1.0,
         }
     }
+    #[must_use]
     pub fn from_freq(
         wavetable: WavetableKey,
         sample_rate: Sample,
@@ -418,6 +471,7 @@ impl Oscillator {
         self.phase.0 = 0;
     }
     #[inline]
+    #[must_use]
     fn next(&mut self, resources: &mut Resources) -> Sample {
         // Use the phase to index into the wavetable
         let sample = if let Some(wt) = resources.wavetables.get(self.wavetable) {

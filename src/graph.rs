@@ -884,10 +884,15 @@ impl Gen for ClosureGen {
 /// its non constant inputs to its outputs.
 #[derive(Debug, Clone, Copy)]
 pub enum GenState {
+    /// Continue running
     Continue,
+    /// Free the node containing the Gen
     FreeSelf,
+    /// Free the node containing the Gen, bridging its input node(s) to its output node(s).
     FreeSelfMendConnections,
+    /// Free the graph containing the node containing the Gen.
     FreeGraph(usize),
+    /// Free the graph containing the node containing the Gen, bridging its input node(s) to its output node(s).
     FreeGraphMendConnections(usize),
 }
 
@@ -2643,10 +2648,11 @@ impl Gen for GraphGen {
 /// This gets placed as a dyn Gen in a Node in a Graph. It's how the Graph gets
 /// run. The Graph communicates with the GraphGen in a thread safe way.
 ///
-/// Safety: Using this struct is safe only if used in conjunction with the
+/// # Safety
+/// Using this struct is safe only if used in conjunction with the
 /// Graph. The Graph owns nodes and gives its corresponding GraphGen raw
 /// pointers to them through Tasks, but it never accesses or deallocates a node
-/// while it can be accessed by the GraphGen through a Task. The GraphGen
+/// while it can be accessed by the [`GraphGen`] through a Task. The [`GraphGen`]
 /// mustn't use the _arc_nodes field; it is only there to make sure the nodes
 /// don't get dropped.
 struct GraphGen {
@@ -2922,7 +2928,7 @@ impl GraphGenCommunicator {
 /// - init must not be called after the Node has started being used on the audio thread.
 /// - the number of inputs/outputs of the Gen must not change.
 struct Node {
-    name: &'static str,
+    // name: &'static str,
     /// index by input_channel
     input_constants: *mut [Sample],
     /// index by `output_channel * block_size + sample_index`
@@ -2936,7 +2942,7 @@ struct Node {
 unsafe impl Send for Node {}
 
 impl Node {
-    pub fn new(name: &'static str, gen: Box<dyn Gen + Send>) -> Self {
+    pub fn new(_name: &'static str, gen: Box<dyn Gen + Send>) -> Self {
         let num_outputs = gen.num_outputs();
         let block_size = 0;
         let output_buffers =
@@ -2945,7 +2951,7 @@ impl Node {
         let output_buffers_first_ptr = std::ptr::null_mut();
 
         Node {
-            name,
+            // name,
             input_constants: Box::into_raw(
                 vec![0.0 as Sample; gen.num_inputs()].into_boxed_slice(),
             ),
@@ -2956,9 +2962,9 @@ impl Node {
             block_size,
         }
     }
-    pub fn name(&self) -> &'static str {
-        self.name
-    }
+    // pub fn name(&self) -> &'static str {
+    //     self.name
+    // }
     /// *Allocates memory*
     /// Allocates enough memory for the given block size
     pub fn init(&mut self, block_size: usize, sample_rate: Sample) {
