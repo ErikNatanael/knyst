@@ -2962,6 +2962,10 @@ impl Node {
     /// *Allocates memory*
     /// Allocates enough memory for the given block size
     pub fn init(&mut self, block_size: usize, sample_rate: Sample) {
+        // Free the previous buffer
+        unsafe {
+            drop(Box::from_raw(self.output_buffers));
+        }
         self.output_buffers =
             Box::<[Sample]>::into_raw(vec![0.0; self.num_outputs * block_size].into_boxed_slice());
         self.output_buffers_first_ptr = if block_size * self.num_outputs > 0 {
@@ -3034,6 +3038,7 @@ impl Drop for Node {
     fn drop(&mut self) {
         drop(unsafe { Box::from_raw(self.output_buffers) });
         drop(unsafe { Box::from_raw(self.input_constants) });
+        drop(unsafe { Box::from_raw(self.gen) });
     }
 }
 
@@ -3463,7 +3468,7 @@ mod tests {
     fn test_resources_settings() -> ResourcesSettings {
         ResourcesSettings::default()
     }
-    /*
+
     #[test]
     fn create_graph() {
         let mut graph: Graph = Graph::new(GraphSettings::default());
@@ -3712,7 +3717,7 @@ mod tests {
         graph_node.process(&null_input(), &mut resources);
         assert_eq!(graph_node.output_buffers().read(0, 0), 1.0);
         assert_eq!(graph.free_node(nodes[4]), Err(FreeError::NodeNotFound));
-    }*/
+    }
 
     #[test]
     fn parallel_mutation() {
@@ -3813,8 +3818,8 @@ mod tests {
             1
         }
     }
-    #[test]
 
+    #[test]
     fn self_freeing_nodes() {
         const BLOCK: usize = 1;
         let mut graph: Graph = Graph::new(GraphSettings {
