@@ -1,5 +1,8 @@
-// license: Public Domain
-// https://github.com/BillyDM/Fast-DSP-Approximations/blob/main/rng_and_noise.md
+//! Simple pseudorandom number generator
+//!
+//! license: Public Domain
+//!
+//! [https://github.com/BillyDM/Fast-DSP-Approximations/blob/main/rng_and_noise.md](https://github.com/BillyDM/Fast-DSP-Approximations/blob/main/rng_and_noise.md)
 
 #[derive(Clone, Copy)]
 pub struct XOrShift32Rng {

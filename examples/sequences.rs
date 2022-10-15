@@ -246,7 +246,7 @@ fn sine_tone_graph(
         stop_action: StopAction::FreeGraph,
         ..Default::default()
     };
-    let mut env = env.to_gen();
+    let env = env.to_gen();
     let env = g.push_gen(env);
     let mult = g.push_gen(Mult);
     g.connect(sin.to(mult))?;

@@ -7,12 +7,16 @@
 //! To use an [`AudioBackend`], first create it to get the parameters of the
 //! system. When you have created your main graph, call
 //! [`AudioBackend::start_processing`]. This will do something similar to
-//! calling [`Graph::to_node`] and populating the backend output buffer with the
-//! output of the [`Graph`]. From this point, the [`Graph`] is considered to be
-//! running, meaning changes to the [`Graph`] may take longer to perform since
-//! they involve the audio thread.
+//! creating a [`RunGraph`] from a `&mut Graph` and a `Resources` and populating
+//! the backend output buffer with the output of the [`Graph`]. From this point,
+//! the [`Graph`] is considered to be running, meaning changes to the [`Graph`]
+//! may take longer to perform since they involve the audio thread.
 
-use crate::{graph::Graph, Resources};
+#[allow(unused)]
+use crate::{
+    graph::{Graph, RunGraph},
+    Resources,
+};
 
 #[cfg(feature = "cpal")]
 pub use cpal_backend::{CpalBackend, CpalBackendOptions};
@@ -64,7 +68,7 @@ pub enum AudioBackendError {
 mod jack_backend {
     use crate::audio_backend::{AudioBackend, AudioBackendError};
     use crate::graph::RunGraph;
-    use crate::{graph::Graph, Resources, Sample};
+    use crate::{graph::Graph, Resources};
     enum JackClient {
         Passive(jack::Client),
         Active(jack::AsyncClient<JackNotifications, JackProcess>),

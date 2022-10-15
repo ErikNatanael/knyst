@@ -22,29 +22,32 @@
 //! ## Architecture
 //!
 //! The core of Knyst is the [`Graph`] struct and the [`Gen`] trait. [`Graph`]s
-//! can have [`Node`]s containing anything that implements [`Gen`]. [`Graph`]s
-//! can also themselves be added as a [`Node`].
+//! can have nodes containing anything that implements [`Gen`]. [`Graph`]s
+//! can also themselves be added as a node.
 //!
-//! [`Node`]s in a running [`Graph`] can be freed or signal to the [`Graph`]
+//! Nodes in a running [`Graph`] can be freed or signal to the [`Graph`]
 //! that they or the entire [`Graph`] should be freed. [`Connection`]s between
-//! [`Node`]s and the inputs and outputs of a [`Graph`] can also be changed
+//! Nodes and the inputs and outputs of a [`Graph`] can also be changed
 //! while the [`Graph`] is running. This way, Knyst acheives a similar
 //! flexibility to SuperCollider.
 //!
 //! It is easy to get things wrong when using a [`Graph`] as a [`Gen`] directly
 //! so that functionality is encapsulated. For the highest level [`Graph`] of
-//! your program you may want to use [`Graph::to_node`] to get a [`Node`] which
+//! your program you may want to use [`RunGraph`] to get a node which
 //! you can run in a real time thread or non real time to generate samples.
 //! Using the [`audio_backend`]s this process is automated for you.
 //!
 
+#![deny(rustdoc::broken_intra_doc_links)] // error if there are broken intra-doc links
+
+#[warn(missing_docs)]
 use buffer::{Buffer, BufferKey};
 use core::fmt::Debug;
 use downcast_rs::{impl_downcast, Downcast};
 use graph::GenState;
 // Import these for docs
 #[allow(unused_imports)]
-use graph::{Connection, Gen, Graph};
+use graph::{Connection, Gen, Graph, RunGraph};
 use slotmap::SlotMap;
 use std::collections::HashMap;
 use wavetable::{Wavetable, WavetableKey};

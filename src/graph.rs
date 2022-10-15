@@ -1,4 +1,4 @@
-//! [`Graph`] is the audio graph, the core of Knyst.
+//! [`Graph`] is the audio graph, the core of Knyst. Implement [`Gen`] and you can be a `Node`.
 //!
 //! To build an audio graph, add generators (anything implementing the [`Gen`]
 //! trait) to a graph and add connections between them.
@@ -23,7 +23,7 @@
 //! ```
 //! To produce an output from the [`Graph`] we need to turn it into a node. If
 //! you want to listen to the graph output the easiest way is to use and audio
-//! backend. Have a look at [`Graph::to_node`] if you want to do non-realtime
+//! backend. Have a look at [`RunGraph`] if you want to do non-realtime
 //! synthesis or implement your own backend.
 
 use std::cell::UnsafeCell;
@@ -646,6 +646,7 @@ pub enum ScheduleError {
     SchedulerNotCreated,
 }
 
+/// If it implements Gen, it can be a `Node` in a [`Graph`].
 pub trait Gen {
     /// The input and output buffers are both indexed using \[in/out_index\]\[sample_index\].
     ///
@@ -656,31 +657,40 @@ pub trait Gen {
     /// will not be zeroed. If the output should be zero, the Gen needs to write zeroes into the output
     /// buffer. This buffer will be correctly sized to hold the number of outputs that the Gen requires.
     fn process(&mut self, ctx: GenContext, resources: &mut Resources) -> GenState;
+    /// The number of inputs this `Gen` takes. Determines how big the input buffer is.
     fn num_inputs(&self) -> usize;
+    /// The number of outputs this `Gen` produces. Determines how big the output buffer is.
     fn num_outputs(&self) -> usize;
     /// Initialize buffers etc.
-    /// Default: nop
+    /// Default: noop
     fn init(&mut self, _sample_rate: Sample) {}
+    /// Return a label for a given input channel index. This sets the label in the [`Connection`] API.
     fn input_desc(&self, _input: usize) -> &'static str {
         ""
     }
+    /// Return a label for a given output channel index. This sets the label in the [`Connection`] API.
     fn output_desc(&self, _output: usize) -> &'static str {
         ""
     }
+    /// A name identifying this `Gen`.
     fn name(&self) -> &'static str {
         "no_name"
     }
 }
 
-/// Wrapper around a buffer of output samples. The NodeBuffer does not own the
-/// data it points to, it is just a wrapper around a pointer to the buffer to
-/// make accessing it more convenient.
+/// Wrapper around a buffer of output samples. Panics at improper usage.
+///
+/// The number of channels corresponds to the number of inputs/outputs specified
+/// for the [`Gen`] this is given to. Trying to access channels outside of what
+/// has been declared will result in a panic at runtime.
+///
+/// The NodeBuffer does not own the data it points to, it is just a wrapper
+/// around a pointer to the buffer to make accessing it more convenient.
 ///
 /// The samples are stored in a `*mut [Sample]` layout out one channel after the
 /// other as if it was a `*mut[*mut [Sample]]`. In benchmarks this was as fast as
 /// iterating over multiple `&mut[Sample]`
 ///
-/// TODO: Change the way we read and write values
 pub struct NodeBufferRef {
     buf: *mut Sample,
     num_channels: usize,
@@ -790,11 +800,13 @@ impl NodeBufferRef {
     }
 }
 
+/// Gives access to the inputs and outputs buffers of a node for processing.
 pub struct GenContext<'a, 'b> {
     pub inputs: &'a NodeBufferRef,
     pub outputs: &'b mut NodeBufferRef,
 }
 impl<'a, 'b> GenContext<'a, 'b> {
+    /// Returns the current block size
     pub fn block_size(&self) -> usize {
         self.outputs.block_size
     }
@@ -802,12 +814,44 @@ impl<'a, 'b> GenContext<'a, 'b> {
 
 type ProcessFn = Box<dyn FnMut(GenContext, &mut Resources) -> GenState + Send>;
 
+/// Convenience struct to create a [`Gen`] from a closure.
+///
+/// Inputs and outputs are declared by chaining calls to the
+/// [`ClosureGen::input`] and [`ClosureGen::output`] methods in the order the
+/// inputs should be.
+///
+/// # Example
+/// ```
+/// use knyst::prelude::*;
+/// use fastapprox::fast::tanh;
+/// let closure_gen = gen(move |ctx, _resources| {
+///     let out0 = ctx.outputs.get_channel_mut(0);
+///     let out1 = ctx.outputs.get_channel_mut(1);
+///     for ((((o0, o1), i0), i1), dist) in out0
+///         .iter_mut()
+///         .zip(out1.iter_mut())
+///         .zip(ctx.inputs.get_channel(0).iter())
+///         .zip(ctx.inputs.get_channel(1).iter())
+///         .zip(ctx.inputs.get_channel(2).iter())
+///     {
+///         *o0 = tanh(*i0 * dist.max(1.0)) * 0.5;
+///         *o1 = tanh(*i1 * dist.max(1.0)) * 0.5;
+///     }
+///     GenState::Continue
+/// })
+/// .output("out0")
+/// .output("out1")
+/// .input("in0")
+/// .input("in1")
+/// .input("distortion");
+/// ```
 pub struct ClosureGen {
     process_fn: ProcessFn,
     outputs: Vec<&'static str>,
     inputs: Vec<&'static str>,
     name: &'static str,
 }
+/// Alias for [`ClosureGen::new`]. See [`ClosureGen`] for more information.
 pub fn gen(
     process: impl FnMut(GenContext, &mut Resources) -> GenState + 'static + Send,
 ) -> ClosureGen {
@@ -817,6 +861,13 @@ pub fn gen(
     }
 }
 impl ClosureGen {
+    /// Create a [`ClosureGen`] with the given closure, 0 outputs and 0 inputs.
+    /// Add inputs/outputs with the respective functions.
+    pub fn new(
+        process: impl FnMut(GenContext, &mut Resources) -> GenState + 'static + Send,
+    ) -> Self {
+        gen(process)
+    }
     /// Adds an output. The order of outputs depends on the order they are added.
     pub fn output(mut self, output_name: &'static str) -> Self {
         self.outputs.push(output_name);
@@ -949,6 +1000,63 @@ impl Drop for OwnedRawBuffer {
     }
 }
 
+/// A [`Graph`] contains nodes, which are wrappers around a dyn [`Gen`], and
+/// connections between those nodes. Connections can eiterh be normal/forward
+/// connections or feedback connections. Graphs can themselves be used as
+/// [`Gen`]s in a different [`Graph`], but have to be added through the
+/// [`Graph::push_graph`] method rather than the [`Graph::push_gen`] method.
+///
+/// To run a [`Graph`] it has to be split so that parts of it are mirrored in a
+/// `GraphGen` (private). This is done internally when calling [`Graph::push_graph`].
+/// You can also do it yourself using a [`RunGraph`]. The [`Graph`] behaves
+/// slightly differently when split:
+///
+/// - changes to constants are always scheduled to be performed by the
+/// `GraphGen` instead of applied directly
+/// - adding/freeing nodes/connections are scheduled to be done as soon as possible when it is safe to do so and [`Graph::commit_changes`] is called
+///
+/// # Manipulating the [`Graph`]
+/// - [`Graph::push_gen`] and [`Graph::push_graph`] create a node, returning a [`NodeAddress`] which is a handle to that node.
+/// - [`Graph::connect`] uses [`Connection`] to add or clear connections between nodes and the [`Graph`] they are in. You can also connect a constant value to a node input.
+/// - [`Graph::commit_changes`] recalculates node order and applies changes to connections and nodes to the running `GraphGen` from the next time it is called. It also tries to free any resources it can that have been previously removed.
+/// - [`Graph::schedule_change`] adds a parameter/input constant change to the scheduler.
+/// - [`Graph::update`] updates the internal scheduler so that it sends scheduled updates that are soon due on to the `GraphGen`. This has to be called regularly if you are scheduling changes. Changes are only sent on to the GraphGen when they are soon due for performance reasons.
+///
+/// When a node has been added, it cannot be retreived from the [`Graph`]. You can, however, send any data you want out from the [`Gen::process`] trait method using your own synchronisation method e.g. a channel.
+///
+/// # Example
+/// ```
+/// use knyst::prelude::*;
+/// use knyst::wavetable::*;
+/// use knyst::graph::RunGraph;
+/// let graph_settings = GraphSettings {
+///     block_size: 64,
+///     sample_rate: 44100.,
+///     num_outputs: 2,
+///     ..Default::default()
+/// };
+/// let mut graph = Graph::new(graph_settings);
+/// let resources = Resources::new(ResourcesSettings {
+///     sample_rate: 44100.,
+///     ..Default::default()
+/// });
+/// let mut run_graph = RunGraph::new(&mut graph, resources)?;
+/// // Adding a node gives you an address to that node
+/// let sine_node_address = graph.push_gen(WavetableOscillatorOwned::new(Wavetable::sine()));
+/// // Connecting the node to the graph output
+/// graph.connect(sine_node_address.to_graph_out())?;
+/// // Set the frequency of the oscillator to 220 Hz. This will
+/// // be converted to a scheduled change because the graph is running.
+/// graph.connect(constant(220.0).to(sine_node_address).to_label("freq"))?;
+/// // You need to commit changes if the graph is running.
+/// graph.commit_changes();
+/// // You also need to update to
+/// graph.update();
+/// // Process one block of audio data. If you are using an
+/// // [`crate::AudioBackend`] you don't need to worry about this step.
+/// run_graph.process_block();
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 pub struct Graph {
     id: GraphId,
     nodes: Arc<UnsafeCell<SlotMap<NodeKey, Node>>>,
@@ -2921,12 +3029,15 @@ impl GraphGenCommunicator {
     }
 }
 
-/// The Node is a very unsafe struct. Be very careful when changing it.
+/// Node is a very unsafe struct. Be very careful when changing it.
 ///
 /// - The Gen is not allowed to be replaced.
 /// - The input_constants buffer mustn't be deallocated until the Node is dropped.
 /// - init must not be called after the Node has started being used on the audio thread.
 /// - the number of inputs/outputs of the Gen must not change.
+///
+/// It also must not be dropped while a Task exists with pointers to the buffers
+/// of the Node. Graph has a mechanism to ensure this.
 struct Node {
     // name: &'static str,
     /// index by input_channel
@@ -3054,7 +3165,7 @@ pub enum RunGraphError {
     CouldNodeCreateNode(String),
 }
 
-/// Wrapper around a [`Graph`] [`Node`] with convenience methods to run the
+/// Wrapper around a [`Graph`] `Node` with convenience methods to run the
 /// Graph, either from an audio thread or for non-real time purposes.
 pub struct RunGraph {
     graph_node: Node,
@@ -3209,6 +3320,7 @@ struct FeedbackEdge {
     feedback_destination: NodeKey,
 }
 
+/// When input 0 changes, move smoothly to the new value over the time in seconds given by input 1.
 #[derive(Default)]
 pub struct Ramp {
     // Compare with the current value. If there is change, recalculate the step.
@@ -3284,6 +3396,7 @@ impl Gen for Ramp {
         "Ramp"
     }
 }
+/// Multiply two inputs together and produce one output.
 pub struct Mult;
 impl Gen for Mult {
     fn process(&mut self, ctx: GenContext, _resources: &mut Resources) -> GenState {
@@ -3318,14 +3431,67 @@ impl Gen for Mult {
         "Mult"
     }
 }
-/// Pan a mono signal to stereo using the cos/sine pan law. Pan value should be between 0 and 1, 0.5 being in the center
-/// TODO: Implement multiple different pan laws, maybe as a generic.
+/// Pan a mono signal to stereo using the cos/sine pan law. Pan value should be
+/// between -1 and 1, 0 being in the center.
+///
+/// ```rust
+/// use knyst::prelude::*;
+/// use knyst::graph::RunGraph;
+/// fn main() -> Result<(), Box<dyn std::error::Error>> {
+///     let sample_rate = 44100.;
+///     let block_size = 8;
+///     let resources = Resources::new(ResourcesSettings {
+///         sample_rate,
+///         ..Default::default()
+///     });
+///     let graph_settings = GraphSettings {
+///         block_size,
+///         sample_rate,
+///         num_outputs: 2,
+///         ..Default::default()
+///     };
+///     let mut graph: Graph = Graph::new(graph_settings);
+///     let pan = graph.push_gen(PanMonoToStereo);
+///     // The signal is a constant 1.0
+///     graph.connect(constant(1.).to(pan).to_label("signal"))?;
+///     // Pan to the left
+///     graph.connect(constant(-1.).to(pan).to_label("pan"))?;
+///     graph.connect(pan.to_graph_out().channels(2))?;
+///     graph.commit_changes();
+///     graph.update();
+///     let mut run_graph = RunGraph::new(&mut graph, resources)?;
+///     run_graph.process_block();
+///     assert!(run_graph.graph_output_buffers().read(0, 0) > 0.9999);
+///     assert!(run_graph.graph_output_buffers().read(1, 0) < 0.0001);
+///     // Pan to the right
+///     graph.connect(constant(1.).to(pan).to_label("pan"))?;
+///     graph.commit_changes();
+///     graph.update();
+///     run_graph.process_block();
+///     assert!(run_graph.graph_output_buffers().read(0, 0) < 0.0001);
+///     assert!(run_graph.graph_output_buffers().read(1, 0) > 0.9999);
+///     // Pan to center
+///     graph.connect(constant(0.).to(pan).to_label("pan"))?;
+///     graph.commit_changes();
+///     graph.update();
+///     run_graph.process_block();
+///     assert_eq!(run_graph.graph_output_buffers().read(0, 0), 0.7070929);
+///     assert_eq!(run_graph.graph_output_buffers().read(1, 0), 0.7070929);
+///     assert_eq!(
+///         run_graph.graph_output_buffers().read(0, 0),
+///         run_graph.graph_output_buffers().read(1, 0)
+///     );
+///     Ok(())
+/// }
+/// ```
+// TODO: Implement multiple different pan laws, maybe as a generic.
 pub struct PanMonoToStereo;
 impl Gen for PanMonoToStereo {
     fn process(&mut self, ctx: GenContext, _resources: &mut Resources) -> GenState {
         for i in 0..ctx.block_size() {
             let signal = ctx.inputs.read(0, i);
-            let pan = ctx.inputs.read(1, i);
+            // The equation needs pan to be in the range [0, 1]
+            let pan = ctx.inputs.read(1, i) * 0.5 + 0.5;
             let pan_pos_radians = pan * std::f32::consts::FRAC_PI_2;
             let left_gain = fastapprox::fast::cos(pan_pos_radians);
             let right_gain = fastapprox::fast::sin(pan_pos_radians);

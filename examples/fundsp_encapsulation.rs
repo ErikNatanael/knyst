@@ -8,15 +8,13 @@
 
 use std::time::Duration;
 
-use fastapprox::fast::tanh;
 use knyst::{
     audio_backend::{CpalBackend, CpalBackendOptions},
-    envelope::{Curve, Envelope},
-    graph::{Gen, GenState, Mult, NodeAddress, Ramp},
+    graph::{Mult, Ramp},
     prelude::*,
     wavetable::{Wavetable, WavetableOscillatorOwned},
 };
-use rand::{prelude::SliceRandom, thread_rng, Rng};
+use rand::{thread_rng, Rng};
 
 fn main() -> anyhow::Result<()> {
     // Create the backend to get the backend settings needed to create a Graph with the correct block size and sample rate etc.
@@ -52,7 +50,6 @@ fn main() -> anyhow::Result<()> {
 
     let mut fundsp_graph = {
         use fundsp::hacker::*;
-        let channels = backend.num_outputs();
         let sample_rate = sample_rate as f64;
 
         // The following code is an excerpt from the beep.rs example for fundsp:
@@ -123,8 +120,6 @@ fn main() -> anyhow::Result<()> {
     graph.update();
 
     let mut rng = thread_rng();
-    let chord = vec![1.0, 5. / 4., 3. / 2., 7. / 4., 2.0, 17. / 8.];
-    let mut fundamental = 440.0;
     loop {
         // Change the distortion value offset to a random value. Note that we're setting
         // the input value of the Ramp which is connected to the distortion
