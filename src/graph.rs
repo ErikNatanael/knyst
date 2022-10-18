@@ -1396,6 +1396,7 @@ impl Graph {
             if !self.get_nodes_mut().contains_key(node.key) {
                 return Err(FreeError::NodeNotFound);
             }
+            self.get_nodes_mut()[node.key].freed = true;
             // Remove all edges leading to the node
             self.node_input_edges.remove(node.key);
             self.graph_input_edges.remove(node.key);
@@ -2365,6 +2366,9 @@ impl Graph {
         let nodes = unsafe { &mut *self.nodes.get() };
         let first_sample = self.inputs_buffers_ptr.ptr.cast::<f32>();
         for &node_key in &self.node_order {
+            if nodes[node_key].freed {
+                panic!("A freed node is in the node order");
+            }
             let num_inputs = nodes[node_key].num_inputs();
             let mut input_buffers = NodeBufferRef {
                 buf: first_sample,
@@ -2381,6 +2385,9 @@ impl Graph {
 
             for input_edge in input_edges {
                 let source = &nodes[input_edge.source];
+                if source.freed {
+                    panic!("A freed node is an input to a different node");
+                }
                 let mut output_values = source.output_buffers();
                 for sample_index in 0..self.block_size {
                     let channel = input_edge.from_output_index;
@@ -2396,6 +2403,9 @@ impl Graph {
             }
             for feedback_edge in feedback_input_edges {
                 let source = &nodes[feedback_edge.source];
+                if source.freed {
+                    panic!("There is a feedback edge from a freed node");
+                }
                 let mut output_values = source.output_buffers();
                 for i in 0..self.block_size {
                     inputs_to_copy.push((
@@ -2423,6 +2433,9 @@ impl Graph {
         let mut output_tasks = vec![];
         for output_edge in &self.output_edges {
             let source = &self.get_nodes()[output_edge.source];
+            if source.freed {
+                panic!("A freed node is taken as an output node of a Graph");
+            }
             let graph_output_index = output_edge.to_input_index;
             output_tasks.push(OutputTask {
                 input_buffers: source.output_buffers(),
@@ -2603,7 +2616,6 @@ impl Gen for GraphGen {
                 if num_new_task_data > 0 {
                     if let Ok(td_chunk) = self.new_task_data_consumer.read_chunk(num_new_task_data)
                     {
-                        self.generation.fetch_add(1, Ordering::SeqCst);
                         for td in td_chunk {
                             let old_td = std::mem::replace(&mut self.current_task_data, td);
                             match self.task_data_to_be_dropped_producer.push(old_td) {
@@ -2611,6 +2623,7 @@ impl Gen for GraphGen {
                             Err(e) => eprintln!("RingBuffer for TaskData to be dropped was full. Please increase the size of the RingBuffer. The GraphGen will drop the TaskData here instead. e: {e}"),
                         }
                         }
+                        self.generation.fetch_add(1, Ordering::SeqCst);
                     }
                 }
 
@@ -2986,7 +2999,7 @@ impl GraphGenCommunicator {
         let generation = self.generation.load(Ordering::SeqCst);
         // Happy path
         if generation == cmp + 1 {
-            false
+            true
         } else if generation == cmp + 2 {
             true
         } else if generation == cmp {
@@ -3048,6 +3061,9 @@ struct Node {
     block_size: usize,
     num_outputs: usize,
     gen: *mut (dyn Gen + Send),
+    // Use for testing that the node is not used after it has been freed, but
+    // before it has been able to be removed and dropped.
+    freed: bool,
 }
 
 unsafe impl Send for Node {}
@@ -3071,6 +3087,7 @@ impl Node {
             output_buffers_first_ptr,
             num_outputs,
             block_size,
+            freed: false,
         }
     }
     // pub fn name(&self) -> &'static str {
@@ -3153,9 +3170,9 @@ impl Node {
 }
 impl Drop for Node {
     fn drop(&mut self) {
-        drop(unsafe { Box::from_raw(self.output_buffers) });
-        drop(unsafe { Box::from_raw(self.input_constants) });
         drop(unsafe { Box::from_raw(self.gen) });
+        drop(unsafe { Box::from_raw(self.input_constants) });
+        drop(unsafe { Box::from_raw(self.output_buffers) });
     }
 }
 
@@ -3891,6 +3908,8 @@ mod tests {
         assert_eq!(graph.free_node(nodes[4]), Err(FreeError::NodeNotFound));
     }
 
+    fn run_graph_for_x_millis() {}
+
     #[test]
     fn parallel_mutation() {
         // Here we just want to check that the program doesn't crash/segfault when changing the graph while running the GraphGen.
@@ -3899,14 +3918,13 @@ mod tests {
             block_size: BLOCK,
             ..Default::default()
         });
-        let mut graph_node = graph_node(&mut graph);
-        let mut resources = Resources::new(test_resources_settings());
+        let resources = Resources::new(test_resources_settings());
+        let mut run_graph = RunGraph::new(&mut graph, resources).unwrap();
         let mut nodes = vec![];
         let mut last_node = None;
         let audio_thread = std::thread::spawn(move || {
-            let null_input = null_input();
             for _ in 0..100 {
-                graph_node.process(&null_input, &mut resources);
+                run_graph.process_block();
                 std::thread::sleep(std::time::Duration::from_millis(1));
             }
         });
@@ -3947,7 +3965,8 @@ mod tests {
         for node in nodes.into_iter() {
             graph.free_node(node).unwrap();
             graph.commit_changes();
-            std::thread::sleep(std::time::Duration::from_millis(3));
+            graph.update();
+            std::thread::sleep(std::time::Duration::from_millis(1));
         }
         drop(graph);
         audio_thread.join().unwrap();
@@ -4036,22 +4055,17 @@ mod tests {
         graph_node.process(&null_input(), &mut resources);
         assert_eq!(graph_node.output_buffers().read(0, 0), 6.0);
         graph.commit_changes();
-        // With the generation needing to be 2 higher, we have to wait yet
-        // another round for the node to be freed.
-        assert_eq!(graph.num_nodes(), 4);
-        graph_node.process(&null_input(), &mut resources);
-        assert_eq!(graph_node.output_buffers().read(0, 0), 5.0);
-        graph.commit_changes();
         assert_eq!(graph.num_nodes(), 3);
         graph_node.process(&null_input(), &mut resources);
         assert_eq!(graph_node.output_buffers().read(0, 0), 5.0);
         graph.commit_changes();
         assert_eq!(graph.num_nodes(), 2);
         graph_node.process(&null_input(), &mut resources);
-        assert_eq!(graph_node.output_buffers().read(0, 0), 0.0);
+        assert_eq!(graph_node.output_buffers().read(0, 0), 5.0);
         graph.commit_changes();
         assert_eq!(graph.num_nodes(), 2);
         graph_node.process(&null_input(), &mut resources);
+        assert_eq!(graph_node.output_buffers().read(0, 0), 0.0);
         graph.commit_changes();
         assert_eq!(graph.num_nodes(), 1);
         graph_node.process(&null_input(), &mut resources);
