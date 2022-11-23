@@ -1031,8 +1031,7 @@ impl Drop for OwnedRawBuffer {
 /// A [`Graph`] contains nodes, which are wrappers around a dyn [`Gen`], and
 /// connections between those nodes. Connections can eiterh be normal/forward
 /// connections or feedback connections. Graphs can themselves be used as
-/// [`Gen`]s in a different [`Graph`], but have to be added through the
-/// [`Graph::push_graph`] method rather than the [`Graph::push_gen`] method.
+/// [`Gen`]s in a different [`Graph`].
 ///
 /// To run a [`Graph`] it has to be split so that parts of it are mirrored in a
 /// `GraphGen` (private). This is done internally when calling [`Graph::push_graph`].
@@ -1044,7 +1043,7 @@ impl Drop for OwnedRawBuffer {
 /// - adding/freeing nodes/connections are scheduled to be done as soon as possible when it is safe to do so and [`Graph::commit_changes`] is called
 ///
 /// # Manipulating the [`Graph`]
-/// - [`Graph::push_gen`] and [`Graph::push_graph`] create a node, returning a [`NodeAddress`] which is a handle to that node.
+/// - [`Graph::push`] creates a node from a [`Gen`] or a [`Graph`], returning a [`NodeAddress`] which is a handle to that node.
 /// - [`Graph::connect`] uses [`Connection`] to add or clear connections between nodes and the [`Graph`] they are in. You can also connect a constant value to a node input.
 /// - [`Graph::commit_changes`] recalculates node order and applies changes to connections and nodes to the running `GraphGen` from the next time it is called. It also tries to free any resources it can that have been previously removed.
 /// - [`Graph::schedule_change`] adds a parameter/input constant change to the scheduler.
@@ -1213,6 +1212,7 @@ impl Graph {
         address
     }
     /// Add a graph as a node in this graph. This will allow you to change the Graph you added later on as needed.
+    #[deprecated(since = "0.3.1", note = "please use `push` instead")]
     pub fn push_graph(&mut self, mut graph: Graph) -> NodeAddress {
         if graph.block_size() != self.block_size() {
             panic!("Warning: You are pushing a graph with a different block size. The library is not currently equipped to handle this. In a future version this will work seamlesly.")
@@ -1229,6 +1229,7 @@ impl Graph {
         address
     }
     /// Add anything that implements Gen to this Graph as a node.
+    #[deprecated(since = "0.3.1", note = "please use `push` instead")]
     pub fn push_gen<G: Gen + Send + 'static>(&mut self, gen: G) -> NodeAddress {
         self.push_node(Node::new(gen.name(), Box::new(gen)))
     }
