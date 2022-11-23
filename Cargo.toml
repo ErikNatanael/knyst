@@ -1,6 +1,6 @@
 [package]
 name = "knyst"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 description = "Real time dynamic audio graph and synthesis library"
@@ -41,7 +41,6 @@ criterion = "0.3"
 anyhow = "1.0"
 dialog = "0.3"
 fundsp = { version = "0.9" }
-
 
 
 [[bench]]
