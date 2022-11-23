@@ -646,6 +646,34 @@ pub enum ScheduleError {
     SchedulerNotCreated,
 }
 
+/// This trait is not meant to be implemented by users. In almost all situations
+/// you instead want to implement the [`Gen`] trait.
+///
+/// ToNode allows us to generically push either something that implements Gen or
+/// a Graph using the same API.
+pub trait GenOrGraph {
+    fn components(self) -> (Option<Graph>, Box<dyn Gen + Send>);
+}
+
+impl<T: Gen + Send + 'static> GenOrGraph for T {
+    fn components(self) -> (Option<Graph>, Box<dyn Gen + Send>) {
+        (None, Box::new(self))
+    }
+}
+impl GenOrGraph for Graph {
+    fn components(mut self) -> (Option<Graph>, Box<dyn Gen + Send>) {
+        if self.block_size() != self.block_size() {
+            panic!("Warning: You are pushing a graph with a different block size. The library is not currently equipped to handle this. In a future version this will work seamlesly.")
+        }
+        if self.sample_rate != self.sample_rate {
+            eprintln!("Warning: You are pushing a graph with a different sample rate. This is currently allowed, but expect bugs unless you deal with resampling manually.")
+        }
+        // Create the GraphGen from the new Graph
+        let gen = self.create_graph_gen().unwrap();
+        (Some(self), Box::new(gen))
+    }
+}
+
 /// If it implements Gen, it can be a `Node` in a [`Graph`].
 pub trait Gen {
     /// The input and output buffers are both indexed using \[in/out_index\]\[sample_index\].
@@ -1175,6 +1203,14 @@ impl Graph {
     /// Returns a number including both active nodes and nodes waiting to be safely freed
     pub fn num_stored_nodes(&self) -> usize {
         self.get_nodes().len()
+    }
+    pub fn push(&mut self, to_node: impl GenOrGraph) -> NodeAddress {
+        let (graph, gen) = to_node.components();
+        let address = self.push_node(Node::new(gen.name(), gen));
+        if let Some(graph) = graph {
+            self.graphs_per_node.insert(address.key, graph);
+        }
+        address
     }
     /// Add a graph as a node in this graph. This will allow you to change the Graph you added later on as needed.
     pub fn push_graph(&mut self, mut graph: Graph) -> NodeAddress {
@@ -3743,7 +3779,7 @@ mod tests {
             block_size: BLOCK,
             ..Default::default()
         });
-        let inner_graph_node_id = graph.push_graph(inner_graph);
+        let inner_graph_node_id = graph.push(inner_graph);
         graph
             .connect(Connection::graph_output(inner_graph_node_id).channels(2))
             .unwrap();
@@ -3895,7 +3931,7 @@ mod tests {
         let mut nodes = vec![];
         let mut last_node = None;
         for _ in 0..10 {
-            let node = graph.push_gen(OneGen {});
+            let node = graph.push(OneGen {});
             if let Some(last) = last_node.take() {
                 graph.connect(node.to(last)).unwrap();
             } else {
@@ -3948,7 +3984,7 @@ mod tests {
             }
         });
         for _ in 0..10 {
-            let node = graph.push_gen(OneGen {});
+            let node = graph.push(OneGen {});
             if let Some(last) = last_node.take() {
                 graph.connect(node.to(last)).unwrap();
             } else {
@@ -3967,7 +4003,7 @@ mod tests {
         let mut nodes = vec![];
         last_node = None;
         for _ in 0..10 {
-            let node = graph.push_gen(DummyGen { counter: 0. });
+            let node = graph.push(DummyGen { counter: 0. });
             if let Some(last) = last_node.take() {
                 graph.connect(node.to(last)).unwrap();
             } else {
@@ -4037,22 +4073,22 @@ mod tests {
         });
         let mut graph_node = graph_node(&mut graph);
         let mut resources = Resources::new(test_resources_settings());
-        let n0 = graph.push_gen(SelfFreeing {
+        let n0 = graph.push(SelfFreeing {
             samples_countdown: 2,
             value: 1.,
             mend: true,
         });
-        let n1 = graph.push_gen(SelfFreeing {
+        let n1 = graph.push(SelfFreeing {
             samples_countdown: 1,
             value: 1.,
             mend: true,
         });
-        let n2 = graph.push_gen(SelfFreeing {
+        let n2 = graph.push(SelfFreeing {
             samples_countdown: 4,
             value: 2.,
             mend: false,
         });
-        let n3 = graph.push_gen(SelfFreeing {
+        let n3 = graph.push(SelfFreeing {
             samples_countdown: 5,
             value: 3.,
             mend: false,
@@ -4105,8 +4141,8 @@ mod tests {
         });
         let mut graph_node = graph_node(&mut graph);
         let mut resources = Resources::new(test_resources_settings());
-        let node0 = graph.push_gen(OneGen {});
-        let node1 = graph.push_gen(OneGen {});
+        let node0 = graph.push(OneGen {});
+        let node1 = graph.push(OneGen {});
         graph.connect(Connection::graph_output(node0)).unwrap();
         graph.connect(node1.to(node0)).unwrap();
         graph.connect(constant(2.).to(node1)).unwrap();
@@ -4177,8 +4213,8 @@ mod tests {
             ..Default::default()
         });
         let mut run_graph = RunGraph::new(&mut graph, resources).unwrap();
-        let mult = graph.push_gen(Mult);
-        let five = graph.push_gen(
+        let mult = graph.push(Mult);
+        let five = graph.push(
             gen(move |ctx, _resources| {
                 for o0 in ctx.outputs.get_channel_mut(0) {
                     *o0 = 5.;
@@ -4187,7 +4223,7 @@ mod tests {
             })
             .output("o"),
         );
-        let nine = graph.push_gen(
+        let nine = graph.push(
             gen(move |ctx, _resources| {
                 for o0 in ctx.outputs.get_channel_mut(0) {
                     *o0 = 9.;
@@ -4221,7 +4257,7 @@ mod tests {
             ..Default::default()
         });
         let mut run_graph = RunGraph::new(&mut graph, resources).unwrap();
-        let multiplier = graph.push_gen(
+        let multiplier = graph.push(
             gen(move |ctx, _resources| {
                 for i in 0..ctx.block_size() {
                     let i0 = ctx.inputs.read(0, i) * 1.;
@@ -4248,7 +4284,7 @@ mod tests {
             .input("i4")
             .input("i5"),
         );
-        let five = graph.push_gen(
+        let five = graph.push(
             gen(move |ctx, _resources| {
                 for o0 in ctx.outputs.get_channel_mut(0) {
                     *o0 = 5.;
@@ -4257,7 +4293,7 @@ mod tests {
             })
             .output("o"),
         );
-        let nine = graph.push_gen(
+        let nine = graph.push(
             gen(move |ctx, _resources| {
                 for o0 in ctx.outputs.get_channel_mut(0) {
                     *o0 = 9.;
@@ -4266,7 +4302,7 @@ mod tests {
             })
             .output("o"),
         );
-        let numberer = graph.push_gen(
+        let numberer = graph.push(
             gen(move |ctx, _resources| {
                 for i in 0..ctx.block_size() {
                     ctx.outputs.write(0.0, 0, i);
