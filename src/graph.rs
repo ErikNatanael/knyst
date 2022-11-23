@@ -1172,6 +1172,10 @@ impl Graph {
     pub fn num_outputs(&self) -> usize {
         self.num_outputs
     }
+    /// Returns a number including both active nodes and nodes waiting to be safely freed
+    pub fn num_stored_nodes(&self) -> usize {
+        self.get_nodes().len()
+    }
     /// Add a graph as a node in this graph. This will allow you to change the Graph you added later on as needed.
     pub fn push_graph(&mut self, mut graph: Graph) -> NodeAddress {
         if graph.block_size() != self.block_size() {
@@ -2040,7 +2044,6 @@ impl Graph {
                     }
                 } else if from_label.is_some() {
                     if let Some(label) = from_label {
-                        // unwrap() is okay because the hashmap is generated for every node when it is inserted
                         if let Some(index) = self.output_index_from_label(source.key, label) {
                             index
                         } else {
@@ -2165,26 +2168,24 @@ impl Graph {
                 }
                 if output_nodes {
                     for (_key, edges) in &mut self.node_input_edges {
-                        let mut edge_indices = vec![];
-                        for (i, edge) in edges.iter().enumerate() {
-                            if edge.source == node.key {
-                                edge_indices.push(i);
+                        let mut i = 0;
+                        while i < edges.len() {
+                            if edges[i].source == node.key {
+                                edges.remove(i);
+                            } else {
+                                i += 1;
                             }
-                        }
-                        for i in edge_indices {
-                            edges.swap_remove(i);
                         }
                     }
                 }
                 if graph_outputs {
-                    let mut edge_indices = vec![];
-                    for (i, edge) in self.output_edges.iter().enumerate() {
-                        if edge.source == node.key {
-                            edge_indices.push(i);
+                    let mut i = 0;
+                    while i < self.output_edges.len() {
+                        if self.output_edges[i].source == node.key {
+                            self.output_edges.remove(i);
+                        } else {
+                            i += 1;
                         }
-                    }
-                    for i in edge_indices {
-                        self.output_edges.swap_remove(i);
                     }
                 }
             }
@@ -2383,10 +2384,11 @@ impl Graph {
                 let source = &nodes[input_edge.source];
                 let mut output_values = source.output_buffers();
                 for sample_index in 0..self.block_size {
-                    let channel = input_edge.from_output_index;
+                    let from_channel = input_edge.from_output_index;
+                    let to_channel = input_edge.to_input_index;
                     inputs_to_copy.push((
-                        output_values.ptr_to_sample(channel, sample_index),
-                        input_buffers.ptr_to_sample(channel, sample_index),
+                        output_values.ptr_to_sample(from_channel, sample_index),
+                        input_buffers.ptr_to_sample(to_channel, sample_index),
                     ));
                 }
             }
@@ -2723,6 +2725,7 @@ impl Gen for GraphGen {
                 }
                 self.sample_counter += self.block_size as u64;
                 self.timestamp.store(self.sample_counter, Ordering::SeqCst);
+                // println!("output0: {:?}", ctx.outputs.get_channel(0));
             }
             GenState::FreeSelf => {
                 ctx.outputs.fill(0.0);
@@ -3397,6 +3400,37 @@ impl Gen for Ramp {
     }
 }
 /// Multiply two inputs together and produce one output.
+///
+/// # Example
+/// ```
+/// use knyst::prelude::*;
+/// use knyst::wavetable::*;
+/// use knyst::graph::RunGraph;
+/// let graph_settings = GraphSettings {
+///     block_size: 64,
+///     sample_rate: 44100.,
+///     num_outputs: 2,
+///     ..Default::default()
+/// };
+/// let mut graph = Graph::new(graph_settings);
+/// let resources = Resources::new(ResourcesSettings {
+///     sample_rate: 44100.,
+///     ..Default::default()
+/// });
+/// let mut run_graph = RunGraph::new(&mut graph, resources)?;
+/// let mult = graph.push_gen(Mult);
+/// // Connecting the node to the graph output
+/// graph.connect(mult.to_graph_out())?;
+/// // Multiply 5 by 9
+/// graph.connect(constant(5.).to(mult).to_index(0))?;
+/// graph.connect(constant(9.).to(mult).to_index(1))?;
+/// // You need to commit changes and update if the graph is running.
+/// graph.commit_changes();
+/// graph.update();
+/// run_graph.process_block();
+/// assert_eq!(run_graph.graph_output_buffers().read(0, 0), 45.0);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 pub struct Mult;
 impl Gen for Mult {
     fn process(&mut self, ctx: GenContext, _resources: &mut Resources) -> GenState {
@@ -3423,8 +3457,11 @@ impl Gen for Mult {
         }
     }
 
-    fn output_desc(&self, _output: usize) -> &'static str {
-        "product"
+    fn output_desc(&self, output: usize) -> &'static str {
+        match output {
+            0 => "product",
+            _ => "",
+        }
     }
 
     fn name(&self) -> &'static str {
@@ -4125,5 +4162,177 @@ mod tests {
         // If this fails, it may be because the machine is too slow. Try
         // increasing the number of iterations above.
         assert_eq!(graph_node.output_buffers().read(0, 0), 1002.0);
+    }
+    #[test]
+    fn index_routing() {
+        let graph_settings = GraphSettings {
+            block_size: 4,
+            sample_rate: 44100.,
+            num_outputs: 2,
+            ..Default::default()
+        };
+        let mut graph = Graph::new(graph_settings);
+        let resources = Resources::new(ResourcesSettings {
+            sample_rate: 44100.,
+            ..Default::default()
+        });
+        let mut run_graph = RunGraph::new(&mut graph, resources).unwrap();
+        let mult = graph.push_gen(Mult);
+        let five = graph.push_gen(
+            gen(move |ctx, _resources| {
+                for o0 in ctx.outputs.get_channel_mut(0) {
+                    *o0 = 5.;
+                }
+                GenState::Continue
+            })
+            .output("o"),
+        );
+        let nine = graph.push_gen(
+            gen(move |ctx, _resources| {
+                for o0 in ctx.outputs.get_channel_mut(0) {
+                    *o0 = 9.;
+                }
+                GenState::Continue
+            })
+            .output("o"),
+        );
+        // Connecting the node to the graph output
+        graph.connect(mult.to_graph_out()).unwrap();
+        // Multiply 5 by 9
+        graph.connect(five.to(mult).to_index(0)).unwrap();
+        graph.connect(nine.to(mult).to_index(1)).unwrap();
+        // You need to commit changes and update if the graph is running.
+        graph.commit_changes();
+        graph.update();
+        run_graph.process_block();
+        assert_eq!(run_graph.graph_output_buffers().read(0, 0), 45.0);
+    }
+    #[test]
+    fn index_routing_advanced() {
+        let graph_settings = GraphSettings {
+            block_size: 4,
+            sample_rate: 44100.,
+            num_outputs: 2,
+            ..Default::default()
+        };
+        let mut graph = Graph::new(graph_settings);
+        let resources = Resources::new(ResourcesSettings {
+            sample_rate: 44100.,
+            ..Default::default()
+        });
+        let mut run_graph = RunGraph::new(&mut graph, resources).unwrap();
+        let multiplier = graph.push_gen(
+            gen(move |ctx, _resources| {
+                for i in 0..ctx.block_size() {
+                    let i0 = ctx.inputs.read(0, i) * 1.;
+                    let i1 = ctx.inputs.read(1, i) * 2.;
+                    let i2 = ctx.inputs.read(2, i) * 3.;
+                    let i3 = ctx.inputs.read(3, i) * 4.;
+                    let i4 = ctx.inputs.read(4, i) * 5.;
+                    let i5 = ctx.inputs.read(5, i) * 6.;
+                    let mut value = i0;
+                    for i in [i1, i2, i3, i4, i5] {
+                        if i != 0.0 {
+                            value *= i;
+                        }
+                    }
+                    ctx.outputs.write(value, 0, i);
+                }
+                GenState::Continue
+            })
+            .output("o")
+            .input("i0")
+            .input("i1")
+            .input("i2")
+            .input("i3")
+            .input("i4")
+            .input("i5"),
+        );
+        let five = graph.push_gen(
+            gen(move |ctx, _resources| {
+                for o0 in ctx.outputs.get_channel_mut(0) {
+                    *o0 = 5.;
+                }
+                GenState::Continue
+            })
+            .output("o"),
+        );
+        let nine = graph.push_gen(
+            gen(move |ctx, _resources| {
+                for o0 in ctx.outputs.get_channel_mut(0) {
+                    *o0 = 9.;
+                }
+                GenState::Continue
+            })
+            .output("o"),
+        );
+        let numberer = graph.push_gen(
+            gen(move |ctx, _resources| {
+                for i in 0..ctx.block_size() {
+                    ctx.outputs.write(0.0, 0, i);
+                    ctx.outputs.write(1.0, 1, i);
+                    ctx.outputs.write(2.0, 2, i);
+                    ctx.outputs.write(3.0, 3, i);
+                    ctx.outputs.write(4.0, 4, i);
+                    ctx.outputs.write(5.0, 5, i);
+                    ctx.outputs.write(6.0, 6, i);
+                    ctx.outputs.write(7.0, 7, i);
+                    ctx.outputs.write(8.0, 8, i);
+                    ctx.outputs.write(9.0, 9, i);
+                }
+                GenState::Continue
+            })
+            .output("o0")
+            .output("o1")
+            .output("o2")
+            .output("o3")
+            .output("o4")
+            .output("o5")
+            .output("o6")
+            .output("o7")
+            .output("o8")
+            .output("o9"),
+        );
+        // Connecting the node to the graph output
+        graph.connect(multiplier.to_graph_out()).unwrap();
+        // Multiply 5 by 9
+        graph.connect(nine.to(multiplier).to_index(0)).unwrap();
+        graph.connect(five.to(multiplier).to_index(1)).unwrap();
+        // You need to commit changes and update if the graph is running.
+        graph.commit_changes();
+        graph.update();
+        run_graph.process_block();
+        assert_eq!(run_graph.graph_output_buffers().read(0, 0), 90.0);
+
+        graph.disconnect(five.to(multiplier).to_index(1)).unwrap();
+        graph.connect(five.to(multiplier).to_index(3)).unwrap();
+        graph.commit_changes();
+        graph.update();
+        run_graph.process_block();
+        assert_eq!(run_graph.graph_output_buffers().read(0, 0), 180.0);
+
+        graph.connect(five.to(multiplier).to_index(4)).unwrap();
+        graph.connect(five.to(multiplier).to_label("i5")).unwrap();
+        graph.commit_changes();
+        graph.update();
+        run_graph.process_block();
+        assert_eq!(run_graph.graph_output_buffers().read(0, 0), 135000.0);
+
+        graph.connect(Connection::clear_node_outputs(five)).unwrap();
+        graph.commit_changes();
+        graph.update();
+        run_graph.process_block();
+        assert_eq!(run_graph.graph_output_buffers().read(0, 0), 9.0);
+
+        graph
+            .connect(numberer.to(multiplier).from_index(2).to_index(4))
+            .unwrap();
+        graph
+            .connect(numberer.to(multiplier).from_index(7).to_index(2))
+            .unwrap();
+        graph.commit_changes();
+        graph.update();
+        run_graph.process_block();
+        assert_eq!(run_graph.graph_output_buffers().read(0, 0), 1890.0);
     }
 }
