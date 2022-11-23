@@ -46,7 +46,7 @@ fn main() -> anyhow::Result<()> {
 
     g.commit_changes();
     g.update();
-    println!("Playng back sound for 10 seconds");
+    println!("Playing back sound for 10 seconds");
     std::thread::sleep(Duration::from_millis(10000));
     Ok(())
 }

@@ -1050,7 +1050,7 @@ impl Drop for OwnedRawBuffer {
 /// graph.connect(constant(220.0).to(sine_node_address).to_label("freq"))?;
 /// // You need to commit changes if the graph is running.
 /// graph.commit_changes();
-/// // You also need to update to
+/// // You also need to update the scheduler to send messages to the audio thread.
 /// graph.update();
 /// // Process one block of audio data. If you are using an
 /// // [`crate::AudioBackend`] you don't need to worry about this step.
