@@ -646,6 +646,34 @@ pub enum ScheduleError {
     SchedulerNotCreated,
 }
 
+/// This trait is not meant to be implemented by users. In almost all situations
+/// you instead want to implement the [`Gen`] trait.
+///
+/// ToNode allows us to generically push either something that implements Gen or
+/// a Graph using the same API.
+pub trait GenOrGraph {
+    fn components(self) -> (Option<Graph>, Box<dyn Gen + Send>);
+}
+
+impl<T: Gen + Send + 'static> GenOrGraph for T {
+    fn components(self) -> (Option<Graph>, Box<dyn Gen + Send>) {
+        (None, Box::new(self))
+    }
+}
+impl GenOrGraph for Graph {
+    fn components(mut self) -> (Option<Graph>, Box<dyn Gen + Send>) {
+        if self.block_size() != self.block_size() {
+            panic!("Warning: You are pushing a graph with a different block size. The library is not currently equipped to handle this. In a future version this will work seamlesly.")
+        }
+        if self.sample_rate != self.sample_rate {
+            eprintln!("Warning: You are pushing a graph with a different sample rate. This is currently allowed, but expect bugs unless you deal with resampling manually.")
+        }
+        // Create the GraphGen from the new Graph
+        let gen = self.create_graph_gen().unwrap();
+        (Some(self), Box::new(gen))
+    }
+}
+
 /// If it implements Gen, it can be a `Node` in a [`Graph`].
 pub trait Gen {
     /// The input and output buffers are both indexed using \[in/out_index\]\[sample_index\].
@@ -1003,8 +1031,7 @@ impl Drop for OwnedRawBuffer {
 /// A [`Graph`] contains nodes, which are wrappers around a dyn [`Gen`], and
 /// connections between those nodes. Connections can eiterh be normal/forward
 /// connections or feedback connections. Graphs can themselves be used as
-/// [`Gen`]s in a different [`Graph`], but have to be added through the
-/// [`Graph::push_graph`] method rather than the [`Graph::push_gen`] method.
+/// [`Gen`]s in a different [`Graph`].
 ///
 /// To run a [`Graph`] it has to be split so that parts of it are mirrored in a
 /// `GraphGen` (private). This is done internally when calling [`Graph::push_graph`].
@@ -1016,7 +1043,7 @@ impl Drop for OwnedRawBuffer {
 /// - adding/freeing nodes/connections are scheduled to be done as soon as possible when it is safe to do so and [`Graph::commit_changes`] is called
 ///
 /// # Manipulating the [`Graph`]
-/// - [`Graph::push_gen`] and [`Graph::push_graph`] create a node, returning a [`NodeAddress`] which is a handle to that node.
+/// - [`Graph::push`] creates a node from a [`Gen`] or a [`Graph`], returning a [`NodeAddress`] which is a handle to that node.
 /// - [`Graph::connect`] uses [`Connection`] to add or clear connections between nodes and the [`Graph`] they are in. You can also connect a constant value to a node input.
 /// - [`Graph::commit_changes`] recalculates node order and applies changes to connections and nodes to the running `GraphGen` from the next time it is called. It also tries to free any resources it can that have been previously removed.
 /// - [`Graph::schedule_change`] adds a parameter/input constant change to the scheduler.
@@ -1050,7 +1077,7 @@ impl Drop for OwnedRawBuffer {
 /// graph.connect(constant(220.0).to(sine_node_address).to_label("freq"))?;
 /// // You need to commit changes if the graph is running.
 /// graph.commit_changes();
-/// // You also need to update to
+/// // You also need to update the scheduler to send messages to the audio thread.
 /// graph.update();
 /// // Process one block of audio data. If you are using an
 /// // [`crate::AudioBackend`] you don't need to worry about this step.
@@ -1172,7 +1199,20 @@ impl Graph {
     pub fn num_outputs(&self) -> usize {
         self.num_outputs
     }
+    /// Returns a number including both active nodes and nodes waiting to be safely freed
+    pub fn num_stored_nodes(&self) -> usize {
+        self.get_nodes().len()
+    }
+    pub fn push(&mut self, to_node: impl GenOrGraph) -> NodeAddress {
+        let (graph, gen) = to_node.components();
+        let address = self.push_node(Node::new(gen.name(), gen));
+        if let Some(graph) = graph {
+            self.graphs_per_node.insert(address.key, graph);
+        }
+        address
+    }
     /// Add a graph as a node in this graph. This will allow you to change the Graph you added later on as needed.
+    #[deprecated(since = "0.3.1", note = "please use `push` instead")]
     pub fn push_graph(&mut self, mut graph: Graph) -> NodeAddress {
         if graph.block_size() != self.block_size() {
             panic!("Warning: You are pushing a graph with a different block size. The library is not currently equipped to handle this. In a future version this will work seamlesly.")
@@ -1189,6 +1229,7 @@ impl Graph {
         address
     }
     /// Add anything that implements Gen to this Graph as a node.
+    #[deprecated(since = "0.3.1", note = "please use `push` instead")]
     pub fn push_gen<G: Gen + Send + 'static>(&mut self, gen: G) -> NodeAddress {
         self.push_node(Node::new(gen.name(), Box::new(gen)))
     }
@@ -2041,7 +2082,6 @@ impl Graph {
                     }
                 } else if from_label.is_some() {
                     if let Some(label) = from_label {
-                        // unwrap() is okay because the hashmap is generated for every node when it is inserted
                         if let Some(index) = self.output_index_from_label(source.key, label) {
                             index
                         } else {
@@ -2166,26 +2206,24 @@ impl Graph {
                 }
                 if output_nodes {
                     for (_key, edges) in &mut self.node_input_edges {
-                        let mut edge_indices = vec![];
-                        for (i, edge) in edges.iter().enumerate() {
-                            if edge.source == node.key {
-                                edge_indices.push(i);
+                        let mut i = 0;
+                        while i < edges.len() {
+                            if edges[i].source == node.key {
+                                edges.remove(i);
+                            } else {
+                                i += 1;
                             }
-                        }
-                        for i in edge_indices {
-                            edges.swap_remove(i);
                         }
                     }
                 }
                 if graph_outputs {
-                    let mut edge_indices = vec![];
-                    for (i, edge) in self.output_edges.iter().enumerate() {
-                        if edge.source == node.key {
-                            edge_indices.push(i);
+                    let mut i = 0;
+                    while i < self.output_edges.len() {
+                        if self.output_edges[i].source == node.key {
+                            self.output_edges.remove(i);
+                        } else {
+                            i += 1;
                         }
-                    }
-                    for i in edge_indices {
-                        self.output_edges.swap_remove(i);
                     }
                 }
             }
@@ -2390,10 +2428,11 @@ impl Graph {
                 }
                 let mut output_values = source.output_buffers();
                 for sample_index in 0..self.block_size {
-                    let channel = input_edge.from_output_index;
+                    let from_channel = input_edge.from_output_index;
+                    let to_channel = input_edge.to_input_index;
                     inputs_to_copy.push((
-                        output_values.ptr_to_sample(channel, sample_index),
-                        input_buffers.ptr_to_sample(channel, sample_index),
+                        output_values.ptr_to_sample(from_channel, sample_index),
+                        input_buffers.ptr_to_sample(to_channel, sample_index),
                     ));
                 }
             }
@@ -2736,6 +2775,7 @@ impl Gen for GraphGen {
                 }
                 self.sample_counter += self.block_size as u64;
                 self.timestamp.store(self.sample_counter, Ordering::SeqCst);
+                // println!("output0: {:?}", ctx.outputs.get_channel(0));
             }
             GenState::FreeSelf => {
                 ctx.outputs.fill(0.0);
@@ -3414,6 +3454,37 @@ impl Gen for Ramp {
     }
 }
 /// Multiply two inputs together and produce one output.
+///
+/// # Example
+/// ```
+/// use knyst::prelude::*;
+/// use knyst::wavetable::*;
+/// use knyst::graph::RunGraph;
+/// let graph_settings = GraphSettings {
+///     block_size: 64,
+///     sample_rate: 44100.,
+///     num_outputs: 2,
+///     ..Default::default()
+/// };
+/// let mut graph = Graph::new(graph_settings);
+/// let resources = Resources::new(ResourcesSettings {
+///     sample_rate: 44100.,
+///     ..Default::default()
+/// });
+/// let mut run_graph = RunGraph::new(&mut graph, resources)?;
+/// let mult = graph.push_gen(Mult);
+/// // Connecting the node to the graph output
+/// graph.connect(mult.to_graph_out())?;
+/// // Multiply 5 by 9
+/// graph.connect(constant(5.).to(mult).to_index(0))?;
+/// graph.connect(constant(9.).to(mult).to_index(1))?;
+/// // You need to commit changes and update if the graph is running.
+/// graph.commit_changes();
+/// graph.update();
+/// run_graph.process_block();
+/// assert_eq!(run_graph.graph_output_buffers().read(0, 0), 45.0);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 pub struct Mult;
 impl Gen for Mult {
     fn process(&mut self, ctx: GenContext, _resources: &mut Resources) -> GenState {
@@ -3440,8 +3511,11 @@ impl Gen for Mult {
         }
     }
 
-    fn output_desc(&self, _output: usize) -> &'static str {
-        "product"
+    fn output_desc(&self, output: usize) -> &'static str {
+        match output {
+            0 => "product",
+            _ => "",
+        }
     }
 
     fn name(&self) -> &'static str {
@@ -3723,7 +3797,7 @@ mod tests {
             block_size: BLOCK,
             ..Default::default()
         });
-        let inner_graph_node_id = graph.push_graph(inner_graph);
+        let inner_graph_node_id = graph.push(inner_graph);
         graph
             .connect(Connection::graph_output(inner_graph_node_id).channels(2))
             .unwrap();
@@ -3875,7 +3949,7 @@ mod tests {
         let mut nodes = vec![];
         let mut last_node = None;
         for _ in 0..10 {
-            let node = graph.push_gen(OneGen {});
+            let node = graph.push(OneGen {});
             if let Some(last) = last_node.take() {
                 graph.connect(node.to(last)).unwrap();
             } else {
@@ -3929,7 +4003,7 @@ mod tests {
             }
         });
         for _ in 0..10 {
-            let node = graph.push_gen(OneGen {});
+            let node = graph.push(OneGen {});
             if let Some(last) = last_node.take() {
                 graph.connect(node.to(last)).unwrap();
             } else {
@@ -3948,7 +4022,7 @@ mod tests {
         let mut nodes = vec![];
         last_node = None;
         for _ in 0..10 {
-            let node = graph.push_gen(DummyGen { counter: 0. });
+            let node = graph.push(DummyGen { counter: 0. });
             if let Some(last) = last_node.take() {
                 graph.connect(node.to(last)).unwrap();
             } else {
@@ -4019,22 +4093,22 @@ mod tests {
         });
         let mut graph_node = graph_node(&mut graph);
         let mut resources = Resources::new(test_resources_settings());
-        let n0 = graph.push_gen(SelfFreeing {
+        let n0 = graph.push(SelfFreeing {
             samples_countdown: 2,
             value: 1.,
             mend: true,
         });
-        let n1 = graph.push_gen(SelfFreeing {
+        let n1 = graph.push(SelfFreeing {
             samples_countdown: 1,
             value: 1.,
             mend: true,
         });
-        let n2 = graph.push_gen(SelfFreeing {
+        let n2 = graph.push(SelfFreeing {
             samples_countdown: 4,
             value: 2.,
             mend: false,
         });
-        let n3 = graph.push_gen(SelfFreeing {
+        let n3 = graph.push(SelfFreeing {
             samples_countdown: 5,
             value: 3.,
             mend: false,
@@ -4082,8 +4156,8 @@ mod tests {
         });
         let mut graph_node = graph_node(&mut graph);
         let mut resources = Resources::new(test_resources_settings());
-        let node0 = graph.push_gen(OneGen {});
-        let node1 = graph.push_gen(OneGen {});
+        let node0 = graph.push(OneGen {});
+        let node1 = graph.push(OneGen {});
         graph.connect(Connection::graph_output(node0)).unwrap();
         graph.connect(node1.to(node0)).unwrap();
         graph.connect(constant(2.).to(node1)).unwrap();
@@ -4139,5 +4213,177 @@ mod tests {
         // If this fails, it may be because the machine is too slow. Try
         // increasing the number of iterations above.
         assert_eq!(graph_node.output_buffers().read(0, 0), 1002.0);
+    }
+    #[test]
+    fn index_routing() {
+        let graph_settings = GraphSettings {
+            block_size: 4,
+            sample_rate: 44100.,
+            num_outputs: 2,
+            ..Default::default()
+        };
+        let mut graph = Graph::new(graph_settings);
+        let resources = Resources::new(ResourcesSettings {
+            sample_rate: 44100.,
+            ..Default::default()
+        });
+        let mut run_graph = RunGraph::new(&mut graph, resources).unwrap();
+        let mult = graph.push(Mult);
+        let five = graph.push(
+            gen(move |ctx, _resources| {
+                for o0 in ctx.outputs.get_channel_mut(0) {
+                    *o0 = 5.;
+                }
+                GenState::Continue
+            })
+            .output("o"),
+        );
+        let nine = graph.push(
+            gen(move |ctx, _resources| {
+                for o0 in ctx.outputs.get_channel_mut(0) {
+                    *o0 = 9.;
+                }
+                GenState::Continue
+            })
+            .output("o"),
+        );
+        // Connecting the node to the graph output
+        graph.connect(mult.to_graph_out()).unwrap();
+        // Multiply 5 by 9
+        graph.connect(five.to(mult).to_index(0)).unwrap();
+        graph.connect(nine.to(mult).to_index(1)).unwrap();
+        // You need to commit changes and update if the graph is running.
+        graph.commit_changes();
+        graph.update();
+        run_graph.process_block();
+        assert_eq!(run_graph.graph_output_buffers().read(0, 0), 45.0);
+    }
+    #[test]
+    fn index_routing_advanced() {
+        let graph_settings = GraphSettings {
+            block_size: 4,
+            sample_rate: 44100.,
+            num_outputs: 2,
+            ..Default::default()
+        };
+        let mut graph = Graph::new(graph_settings);
+        let resources = Resources::new(ResourcesSettings {
+            sample_rate: 44100.,
+            ..Default::default()
+        });
+        let mut run_graph = RunGraph::new(&mut graph, resources).unwrap();
+        let multiplier = graph.push(
+            gen(move |ctx, _resources| {
+                for i in 0..ctx.block_size() {
+                    let i0 = ctx.inputs.read(0, i) * 1.;
+                    let i1 = ctx.inputs.read(1, i) * 2.;
+                    let i2 = ctx.inputs.read(2, i) * 3.;
+                    let i3 = ctx.inputs.read(3, i) * 4.;
+                    let i4 = ctx.inputs.read(4, i) * 5.;
+                    let i5 = ctx.inputs.read(5, i) * 6.;
+                    let mut value = i0;
+                    for i in [i1, i2, i3, i4, i5] {
+                        if i != 0.0 {
+                            value *= i;
+                        }
+                    }
+                    ctx.outputs.write(value, 0, i);
+                }
+                GenState::Continue
+            })
+            .output("o")
+            .input("i0")
+            .input("i1")
+            .input("i2")
+            .input("i3")
+            .input("i4")
+            .input("i5"),
+        );
+        let five = graph.push(
+            gen(move |ctx, _resources| {
+                for o0 in ctx.outputs.get_channel_mut(0) {
+                    *o0 = 5.;
+                }
+                GenState::Continue
+            })
+            .output("o"),
+        );
+        let nine = graph.push(
+            gen(move |ctx, _resources| {
+                for o0 in ctx.outputs.get_channel_mut(0) {
+                    *o0 = 9.;
+                }
+                GenState::Continue
+            })
+            .output("o"),
+        );
+        let numberer = graph.push(
+            gen(move |ctx, _resources| {
+                for i in 0..ctx.block_size() {
+                    ctx.outputs.write(0.0, 0, i);
+                    ctx.outputs.write(1.0, 1, i);
+                    ctx.outputs.write(2.0, 2, i);
+                    ctx.outputs.write(3.0, 3, i);
+                    ctx.outputs.write(4.0, 4, i);
+                    ctx.outputs.write(5.0, 5, i);
+                    ctx.outputs.write(6.0, 6, i);
+                    ctx.outputs.write(7.0, 7, i);
+                    ctx.outputs.write(8.0, 8, i);
+                    ctx.outputs.write(9.0, 9, i);
+                }
+                GenState::Continue
+            })
+            .output("o0")
+            .output("o1")
+            .output("o2")
+            .output("o3")
+            .output("o4")
+            .output("o5")
+            .output("o6")
+            .output("o7")
+            .output("o8")
+            .output("o9"),
+        );
+        // Connecting the node to the graph output
+        graph.connect(multiplier.to_graph_out()).unwrap();
+        // Multiply 5 by 9
+        graph.connect(nine.to(multiplier).to_index(0)).unwrap();
+        graph.connect(five.to(multiplier).to_index(1)).unwrap();
+        // You need to commit changes and update if the graph is running.
+        graph.commit_changes();
+        graph.update();
+        run_graph.process_block();
+        assert_eq!(run_graph.graph_output_buffers().read(0, 0), 90.0);
+
+        graph.disconnect(five.to(multiplier).to_index(1)).unwrap();
+        graph.connect(five.to(multiplier).to_index(3)).unwrap();
+        graph.commit_changes();
+        graph.update();
+        run_graph.process_block();
+        assert_eq!(run_graph.graph_output_buffers().read(0, 0), 180.0);
+
+        graph.connect(five.to(multiplier).to_index(4)).unwrap();
+        graph.connect(five.to(multiplier).to_label("i5")).unwrap();
+        graph.commit_changes();
+        graph.update();
+        run_graph.process_block();
+        assert_eq!(run_graph.graph_output_buffers().read(0, 0), 135000.0);
+
+        graph.connect(Connection::clear_node_outputs(five)).unwrap();
+        graph.commit_changes();
+        graph.update();
+        run_graph.process_block();
+        assert_eq!(run_graph.graph_output_buffers().read(0, 0), 9.0);
+
+        graph
+            .connect(numberer.to(multiplier).from_index(2).to_index(4))
+            .unwrap();
+        graph
+            .connect(numberer.to(multiplier).from_index(7).to_index(2))
+            .unwrap();
+        graph.commit_changes();
+        graph.update();
+        run_graph.process_block();
+        assert_eq!(run_graph.graph_output_buffers().read(0, 0), 1890.0);
     }
 }

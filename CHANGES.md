@@ -1,5 +1,10 @@
 # Change Log
 
+## 0.3.0
+
+- Fixed serious bug in signal routing due to the incorrect index being set when generating Tasks (i.e. the graph representation running on the audio thread).
+- Introduces a unified way of pushing both `Gen`s and `Graph`s to the `Graph` using the `Graph::push` method, which relies on the `GenOrGraph` trait.
+
 ## 0.2.0
 
 "if some code contains UB but also plays a sine wave, is that code then sound?" - orlp

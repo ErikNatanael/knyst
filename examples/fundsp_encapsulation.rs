@@ -40,10 +40,10 @@ fn main() -> anyhow::Result<()> {
     backend.start_processing(&mut graph, resources)?;
 
     // Create a sine Gen to modulate the distortion parameter of the output_node below.
-    let dist_sine = graph.push_gen(WavetableOscillatorOwned::new(Wavetable::sine()));
+    let dist_sine = graph.push(WavetableOscillatorOwned::new(Wavetable::sine()));
     // Connect the constant 0.03 to the input names "freq" on the node "dist_sine"
     graph.connect(constant(0.03).to(dist_sine).to_label("freq"))?;
-    let dist_sine_mul = graph.push_gen(Mult);
+    let dist_sine_mul = graph.push(Mult);
     // Multiply the dist_sine by 5.0, giving it the range of +- 5.0 at 0.3 Hz
     graph.connect(dist_sine.to(dist_sine_mul))?;
     graph.connect(constant(1.5).to(dist_sine_mul).to_index(1))?;
@@ -88,7 +88,7 @@ fn main() -> anyhow::Result<()> {
     // Make a custom Gen that adds some distortion to the output with stereo
     // inputs and outputs. You could also implement the Gen trait for your own
     // struct.
-    let output_node = graph.push_gen(
+    let output_node = graph.push(
         gen(move |ctx, _resources| {
             let out0 = ctx.outputs.get_channel_mut(0);
             let out1 = ctx.outputs.get_channel_mut(1);
@@ -110,7 +110,7 @@ fn main() -> anyhow::Result<()> {
         .input("distortion"),
     );
     // Create a Ramp for smooth transitions between distortion values.
-    let dist_ramp = graph.push_gen(Ramp::new());
+    let dist_ramp = graph.push(Ramp::new());
     graph.connect(dist_ramp.to(output_node).to_label("distortion"))?;
     graph.connect(dist_sine_mul.to(dist_ramp).to_label("value"))?;
     graph.connect(constant(1.5).to(dist_ramp).to_label("value"))?;

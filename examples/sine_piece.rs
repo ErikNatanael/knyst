@@ -34,10 +34,10 @@ fn main() -> anyhow::Result<()> {
     backend.start_processing(&mut graph, resources)?;
 
     // Create a sine Gen to modulate the distortion parameter of the output_node below.
-    let dist_sine = graph.push_gen(WavetableOscillatorOwned::new(Wavetable::sine()));
+    let dist_sine = graph.push(WavetableOscillatorOwned::new(Wavetable::sine()));
     // Connect the constant 0.03 to the input names "freq" on the node "dist_sine"
     graph.connect(constant(0.03).to(dist_sine).to_label("freq"))?;
-    let dist_sine_mul = graph.push_gen(Mult);
+    let dist_sine_mul = graph.push(Mult);
     // Multiply the dist_sine by 5.0, giving it the range of +- 5.0 at 0.3 Hz
     graph.connect(dist_sine.to(dist_sine_mul))?;
     graph.connect(constant(1.5).to(dist_sine_mul).to_index(1))?;
@@ -45,7 +45,7 @@ fn main() -> anyhow::Result<()> {
     // Make a custom Gen that adds some distortion to the output with stereo
     // inputs and outputs. You could also implement the Gen trait for your own
     // struct.
-    let output_node = graph.push_gen(
+    let output_node = graph.push(
         gen(move |ctx, _resources| {
             let out0 = ctx.outputs.get_channel_mut(0);
             let out1 = ctx.outputs.get_channel_mut(1);
@@ -68,7 +68,7 @@ fn main() -> anyhow::Result<()> {
         .input("distortion"),
     );
     // Create a Ramp for smooth transitions between distortion values.
-    let dist_ramp = graph.push_gen(Ramp::new());
+    let dist_ramp = graph.push(Ramp::new());
     graph.connect(dist_ramp.to(output_node).to_label("distortion"))?;
     graph.connect(dist_sine_mul.to(dist_ramp).to_label("value"))?;
     graph.connect(constant(1.5).to(dist_ramp).to_label("value"))?;
@@ -159,7 +159,7 @@ fn sine_tone_graph(
     graph_settings: GraphSettings,
 ) -> anyhow::Result<Graph> {
     let mut g = Graph::new(graph_settings);
-    let sin = g.push_gen(WavetableOscillatorOwned::new(Wavetable::sine()));
+    let sin = g.push(WavetableOscillatorOwned::new(Wavetable::sine()));
     g.connect(constant(freq).to(sin).to_label("freq"))?;
     let env = Envelope {
         points: vec![(amp, attack), (0.0, duration_secs)],
@@ -168,8 +168,8 @@ fn sine_tone_graph(
         ..Default::default()
     };
     let env = env.to_gen();
-    let env = g.push_gen(env);
-    let mult = g.push_gen(Mult);
+    let env = g.push(env);
+    let mult = g.push(Mult);
     g.connect(sin.to(mult))?;
     g.connect(env.to(mult).to_index(1))?;
     g.connect(Connection::graph_output(mult))?;
@@ -187,7 +187,7 @@ fn add_sine(
     output_node: NodeAddress,
     main_graph: &mut Graph,
 ) -> anyhow::Result<()> {
-    let node = main_graph.push_graph(sine_tone_graph(
+    let node = main_graph.push(sine_tone_graph(
         freq,
         attack,
         0.01,
@@ -196,7 +196,7 @@ fn add_sine(
     )?);
     main_graph.connect(node.to(output_node))?;
     // Make the right side sine a different pitch to enhance the stereo effect.
-    let node = main_graph.push_graph(sine_tone_graph(
+    let node = main_graph.push(sine_tone_graph(
         freq * 1.002,
         attack * 1.12,
         0.01,

@@ -41,12 +41,12 @@ fn main() -> anyhow::Result<()> {
     backend.start_processing(&mut g, resources)?;
 
     let buf_playback_node =
-        g.push_gen(BufferReaderMulti::new(buffer, 1.0, StopAction::FreeSelf).channels(2));
+        g.push(BufferReaderMulti::new(buffer, 1.0, StopAction::FreeSelf).channels(2));
     g.connect(buf_playback_node.to_graph_out().channels(2))?;
 
     g.commit_changes();
     g.update();
-    println!("Playng back sound for 10 seconds");
+    println!("Playing back sound for 10 seconds");
     std::thread::sleep(Duration::from_millis(10000));
     Ok(())
 }
