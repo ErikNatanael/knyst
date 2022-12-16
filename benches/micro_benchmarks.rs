@@ -1,7 +1,10 @@
+use std::f32::consts::{PI, TAU};
+
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use fundsp::wavetable;
 use knyst::envelope::{Curve, Envelope};
 use knyst::prelude::*;
-use knyst::wavetable::{Phase, PhaseF32, FRACTIONAL_PART};
+use knyst::wavetable::{Phase, PhaseF32, WavetableOscillatorOwned, FRACTIONAL_PART};
 
 // Test if integer phase is in fact faster than floating point phase
 pub fn phase_float_or_uint(c: &mut Criterion) {
@@ -87,7 +90,57 @@ pub fn envelope_segments(c: &mut Criterion) {
     });
 }
 
+pub fn wavetable_vs_sin(c: &mut Criterion) {
+    let frequency = 440.0;
+    let sample_rate = 48000.0;
+    let integer_phase_increase =
+        ((frequency / sample_rate) * TABLE_SIZE as f32 * FRACTIONAL_PART as f32) as u32;
+    let mut w = Wavetable::sine();
+    let mut phase = Phase(0);
+    c.bench_function("wavetable sin linear", |b| {
+        b.iter(|| {
+            black_box(w.get_linear_interp(phase));
+            phase.increase(integer_phase_increase);
+        });
+    });
+    let mut phase = Phase(0);
+    c.bench_function("wavetable sin no interpolation", |b| {
+        b.iter(|| {
+            black_box(w.get(phase));
+            phase.increase(integer_phase_increase);
+        });
+    });
+    let mut phase: f32 = 0.0;
+    let float_phase_increase = (frequency / sample_rate) * TAU;
+
+    c.bench_function("raw sin no phase overflow", |b| {
+        b.iter(|| {
+            black_box(phase.sin());
+            phase += float_phase_increase;
+        });
+    });
+    c.bench_function("raw sin", |b| {
+        b.iter(|| {
+            black_box(phase.sin());
+            phase += float_phase_increase;
+            while phase > TAU {
+                phase -= TAU;
+            }
+        });
+    });
+    c.bench_function("raw tanh", |b| {
+        b.iter(|| {
+            black_box(phase.tanh());
+            phase += float_phase_increase;
+            while phase > TAU {
+                phase -= TAU;
+            }
+        });
+    });
+}
+
 // criterion_group!(benches, phase_float_or_uint);
-criterion_group!(benches, envelope_segments);
+// criterion_group!(benches, envelope_segments);
+criterion_group!(benches, wavetable_vs_sin);
 
 criterion_main!(benches);
