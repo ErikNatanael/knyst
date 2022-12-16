@@ -34,6 +34,9 @@ jack = { version =  "0.10", optional = true }
 # CPAL audio backend
 cpal = {version = "0.14.0", optional = true }
 
+# For concurrency testing
+[target.'cfg(loom)'.dependencies]
+loom = {version = "0.5", features = ["checkpoint"] }
 
 [dev-dependencies]
 rand = "0.8"
