@@ -26,10 +26,19 @@
 //! backend. Have a look at [`RunGraph`] if you want to do non-realtime
 //! synthesis or implement your own backend.
 
+// #[cfg(loom)]
+// use loom::cell::UnsafeCell;
+#[cfg(loom)]
+use loom::sync::atomic::Ordering;
+
+// #[cfg(not(loom))]
 use std::cell::UnsafeCell;
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicU16, AtomicU64};
-use std::sync::{atomic::Ordering, Arc};
+use std::mem;
+#[cfg(not(loom))]
+use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, AtomicU64};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use super::Resources;
@@ -1087,7 +1096,7 @@ impl Drop for OwnedRawBuffer {
 pub struct Graph {
     id: GraphId,
     nodes: Arc<UnsafeCell<SlotMap<NodeKey, Node>>>,
-    node_keys_to_free_when_safe: Vec<(NodeKey, u16)>,
+    node_keys_to_free_when_safe: Vec<(NodeKey, Arc<AtomicBool>)>,
     node_keys_pending_removal: HashSet<NodeKey>,
     /// A list of input edges for every node, sharing the same index as the node
     node_input_edges: SecondaryMap<NodeKey, Vec<Edge>>,
@@ -1223,7 +1232,7 @@ impl Graph {
         // Create the GraphGen from the new Graph
         let gen = graph.create_graph_gen().unwrap();
         // Add the GraphGen to this Graph as a Node
-        let address = self.push_gen(gen);
+        let address = self.push_gen_private(gen);
         // Add the Graph to this Graph's graph list
         self.graphs_per_node.insert(address.key, graph);
         address
@@ -1231,6 +1240,10 @@ impl Graph {
     /// Add anything that implements Gen to this Graph as a node.
     #[deprecated(since = "0.3.1", note = "please use `push` instead")]
     pub fn push_gen<G: Gen + Send + 'static>(&mut self, gen: G) -> NodeAddress {
+        self.push_node(Node::new(gen.name(), Box::new(gen)))
+    }
+    /// Convert a Gen to a Node and add it to the Graph. Used to be public, but now it is private in favour of `Graph::push()`
+    fn push_gen_private<G: Gen + Send + 'static>(&mut self, gen: G) -> NodeAddress {
         self.push_node(Node::new(gen.name(), Box::new(gen)))
     }
     /// Add a node to this Graph. The Node will be (re)initialised with the correct block size for this Graph.
@@ -1437,6 +1450,7 @@ impl Graph {
             if !self.get_nodes_mut().contains_key(node.key) {
                 return Err(FreeError::NodeNotFound);
             }
+
             // Remove all edges leading to the node
             self.node_input_edges.remove(node.key);
             self.graph_input_edges.remove(node.key);
@@ -1515,7 +1529,7 @@ impl Graph {
             if let Some(ggc) = &mut self.graph_gen_communicator {
                 // The GraphGen has been created so we have to be more careful
                 self.node_keys_to_free_when_safe
-                    .push((node.key, ggc.generation()));
+                    .push((node.key, ggc.next_change_flag.clone()));
                 self.node_keys_pending_removal.insert(node.key);
             } else {
                 // The GraphGen has not been created so we can do things the easy way
@@ -2483,6 +2497,7 @@ impl Graph {
         let tasks = self.generate_tasks().into_boxed_slice();
         let output_tasks = self.generate_output_tasks().into_boxed_slice();
         let task_data = TaskData {
+            applied: Arc::new(AtomicBool::new(false)),
             tasks,
             output_tasks,
         };
@@ -2497,11 +2512,11 @@ impl Graph {
         let (scheduler, schedule_receiver) = Scheduler::new(self.sample_rate, 300, self.latency);
 
         let graph_gen_communicator = GraphGenCommunicator {
-            generation: Arc::new(AtomicU16::new(0)),
             free_node_queue_consumer,
             scheduler,
             task_data_to_be_dropped_consumer,
             new_task_data_producer,
+            next_change_flag: task_data.applied.clone(),
             timestamp: Arc::new(AtomicU64::new(0)),
         };
 
@@ -2510,7 +2525,6 @@ impl Graph {
             block_size: self.block_size,
             num_outputs: self.num_outputs,
             num_inputs: self.num_inputs,
-            generation: graph_gen_communicator.generation.clone(),
             graph_state: GenState::Continue,
             sample_counter: 0,
             timestamp: graph_gen_communicator.timestamp.clone(),
@@ -2594,22 +2608,20 @@ impl Graph {
                 GenState::Continue => unreachable!(),
             };
         }
-        if let Some(ggc) = &mut self.graph_gen_communicator {
-            // Remove old nodes
-            let nodes = unsafe { &mut *self.nodes.get() };
-            let mut i = 0;
-            while i < self.node_keys_to_free_when_safe.len() {
-                let (key, gen) = &self.node_keys_to_free_when_safe[i];
-                if ggc.is_later_generation(*gen) {
-                    nodes.remove(*key);
-                    // If the node was a graph, free the graph as well (it will be returned and  dropped here)
-                    // The Graph should be dropped after the GraphGen Node.
-                    self.graphs_per_node.remove(*key);
-                    self.node_keys_pending_removal.remove(key);
-                    self.node_keys_to_free_when_safe.remove(i);
-                } else {
-                    i += 1;
-                }
+        // Remove old nodes
+        let nodes = unsafe { &mut *self.nodes.get() };
+        let mut i = 0;
+        while i < self.node_keys_to_free_when_safe.len() {
+            let (key, flag) = &self.node_keys_to_free_when_safe[i];
+            if flag.load(Ordering::SeqCst) {
+                nodes.remove(*key);
+                // If the node was a graph, free the graph as well (it will be returned and  dropped here)
+                // The Graph should be dropped after the GraphGen Node.
+                self.graphs_per_node.remove(*key);
+                self.node_keys_pending_removal.remove(key);
+                self.node_keys_to_free_when_safe.remove(i);
+            } else {
+                i += 1;
             }
         }
     }
@@ -2642,8 +2654,9 @@ impl Gen for GraphGen {
                 if num_new_task_data > 0 {
                     if let Ok(td_chunk) = self.new_task_data_consumer.read_chunk(num_new_task_data)
                     {
-                        self.generation.fetch_add(1, Ordering::SeqCst);
                         for td in td_chunk {
+                            // Setting `applied` to true signals that the new TaskData have been received and old data can be dropped
+                            td.applied.store(true, Ordering::SeqCst);
                             let old_td = std::mem::replace(&mut self.current_task_data, td);
                             match self.task_data_to_be_dropped_producer.push(old_td) {
                             Ok(_) => (),
@@ -2653,9 +2666,9 @@ impl Gen for GraphGen {
                     }
                 }
 
-                // let task_data = unsafe { &mut *self.task_data_ptr.load(Ordering::Relaxed) };
                 let task_data = &mut self.current_task_data;
                 let TaskData {
+                    applied: _,
                     tasks,
                     output_tasks,
                 } = task_data;
@@ -2762,7 +2775,6 @@ impl Gen for GraphGen {
                 }
                 self.sample_counter += self.block_size as u64;
                 self.timestamp.store(self.sample_counter, Ordering::SeqCst);
-                // println!("output0: {:?}", ctx.outputs.get_channel(0));
             }
             GenState::FreeSelf => {
                 ctx.outputs.fill(0.0);
@@ -2808,10 +2820,6 @@ struct GraphGen {
     num_outputs: usize,
     num_inputs: usize,
     current_task_data: TaskData,
-    // The number of blocks that updates applied to this GraphGen. Wraps around
-    // when it overflows. It is used to determine that a graph update has taken
-    // effect on the audio thread.
-    generation: Arc<AtomicU16>,
     // This Arc is cloned from the Graph and exists so that if the Graph gets dropped, the GraphGen can continue on without segfaulting.
     _arc_nodes: Arc<UnsafeCell<SlotMap<NodeKey, Node>>>,
     // This Arc makes sure the input buffers allocation is valid for as long as it needs to be
@@ -2961,6 +2969,10 @@ impl ScheduleReceiver {
 /// pointer to the TaskData. If there is a problem, the Boxes in TaskData may
 /// need to be raw pointers.
 struct TaskData {
+    // `applied` must be set to true when the running GraphGen receives it. This
+    // signals that the changes in this TaskData have been applied and certain
+    // Nodes may be dropped.
+    applied: Arc<AtomicBool>,
     tasks: Box<[Task]>,
     output_tasks: Box<[OutputTask]>,
 }
@@ -2969,9 +2981,9 @@ struct GraphGenCommunicator {
     // The number of updates applied to this GraphGen. Add by
     // `updates_available` every time it finishes a block. It is a u16 so that
     // when it overflows generation - some_generation_number fits in an i32.
-    generation: Arc<AtomicU16>,
     scheduler: Scheduler,
     timestamp: Arc<AtomicU64>,
+    next_change_flag: Arc<AtomicBool>,
     free_node_queue_consumer: rtrb::Consumer<(NodeKey, GenState)>,
     task_data_to_be_dropped_consumer: rtrb::Consumer<TaskData>,
     new_task_data_producer: rtrb::Producer<TaskData>,
@@ -3000,7 +3012,11 @@ impl GraphGenCommunicator {
     fn send_updated_tasks(&mut self, tasks: Box<[Task]>, output_tasks: Box<[OutputTask]>) {
         self.free_old();
 
+        let current_change_flag =
+            mem::replace(&mut self.next_change_flag, Arc::new(AtomicBool::new(false)));
+
         let td = TaskData {
+            applied: current_change_flag,
             tasks,
             output_tasks,
         };
@@ -3013,50 +3029,8 @@ impl GraphGenCommunicator {
 
     /// Run periodically to make sure the scheduler passes messages on to the GraphGen
     fn update(&mut self) {
-        let timestamp = self.timestamp.load(Ordering::Relaxed);
+        let timestamp = self.timestamp.load(Ordering::SeqCst);
         self.scheduler.update(timestamp);
-    }
-
-    /// Checks if we have passed the generation provided, meaning resources can
-    /// be safely dropped. The generation value is always the generation of the
-    /// tasks currently running. Since whenever the graph is updated, old
-    /// resources should be discraded if possible, the generation should only
-    /// ever differ by one.
-    fn is_later_generation(&self, cmp: u16) -> bool {
-        let generation = self.generation.load(Ordering::SeqCst);
-        // Happy path
-        if generation == cmp + 1 {
-            false
-        } else if generation == cmp + 2 {
-            true
-        } else if generation == cmp {
-            false
-        } else {
-            let difference = if cmp > generation {
-                cmp - generation
-            } else {
-                generation - cmp
-            };
-            // We have already tested for the case of the difference being 0
-            // above. If the difference is small there was probably a race
-            // condition leading to the generation being increased multiple
-            // times between cleanups. A larger difference points towards a
-            // serious error.
-            //
-            // A difference of two is unusual, but happens. More shouldn't
-            // happen, but it isn't worrying. The reason we don't want a high
-            // difference is that the generation number wraps around when it
-            // overflows the u16.
-            if difference < 16 {
-                true
-            } else {
-                eprintln!("Warning: The generation number is unexpected. This suggests some internal error. Please file a bug report.");
-                false
-            }
-        }
-    }
-    fn generation(&self) -> u16 {
-        self.generation.load(Ordering::SeqCst)
     }
     fn get_nodes_to_free(&mut self) -> Vec<(NodeKey, GenState)> {
         let num_items = self.free_node_queue_consumer.slots();
@@ -3193,9 +3167,9 @@ impl Node {
 }
 impl Drop for Node {
     fn drop(&mut self) {
-        drop(unsafe { Box::from_raw(self.output_buffers) });
-        drop(unsafe { Box::from_raw(self.input_constants) });
         drop(unsafe { Box::from_raw(self.gen) });
+        drop(unsafe { Box::from_raw(self.input_constants) });
+        drop(unsafe { Box::from_raw(self.output_buffers) });
     }
 }
 
@@ -3650,6 +3624,8 @@ use slotmap::{new_key_type, SecondaryMap, SlotMap};
 #[cfg(test)]
 mod tests {
 
+    use std::sync::atomic::AtomicBool;
+
     use crate::ResourcesSettings;
 
     use super::*;
@@ -3973,14 +3949,15 @@ mod tests {
             block_size: BLOCK,
             ..Default::default()
         });
-        let mut graph_node = graph_node(&mut graph);
-        let mut resources = Resources::new(test_resources_settings());
+        let resources = Resources::new(test_resources_settings());
+        let mut run_graph = RunGraph::new(&mut graph, resources).unwrap();
         let mut nodes = vec![];
         let mut last_node = None;
+        let done_flag = Arc::new(AtomicBool::new(false));
+        let audio_done_flag = done_flag.clone();
         let audio_thread = std::thread::spawn(move || {
-            let null_input = null_input();
-            for _ in 0..100 {
-                graph_node.process(&null_input, &mut resources);
+            while !audio_done_flag.load(Ordering::SeqCst) {
+                run_graph.process_block();
                 std::thread::sleep(std::time::Duration::from_millis(1));
             }
         });
@@ -4021,9 +3998,11 @@ mod tests {
         for node in nodes.into_iter() {
             graph.free_node(node).unwrap();
             graph.commit_changes();
-            std::thread::sleep(std::time::Duration::from_millis(3));
+            graph.update();
+            std::thread::sleep(std::time::Duration::from_millis(1));
         }
         drop(graph);
+        done_flag.store(true, Ordering::SeqCst);
         audio_thread.join().unwrap();
     }
     struct SelfFreeing {
@@ -4110,22 +4089,17 @@ mod tests {
         graph_node.process(&null_input(), &mut resources);
         assert_eq!(graph_node.output_buffers().read(0, 0), 6.0);
         graph.commit_changes();
-        // With the generation needing to be 2 higher, we have to wait yet
-        // another round for the node to be freed.
-        assert_eq!(graph.num_nodes(), 4);
-        graph_node.process(&null_input(), &mut resources);
-        assert_eq!(graph_node.output_buffers().read(0, 0), 5.0);
-        graph.commit_changes();
         assert_eq!(graph.num_nodes(), 3);
         graph_node.process(&null_input(), &mut resources);
         assert_eq!(graph_node.output_buffers().read(0, 0), 5.0);
         graph.commit_changes();
         assert_eq!(graph.num_nodes(), 2);
         graph_node.process(&null_input(), &mut resources);
-        assert_eq!(graph_node.output_buffers().read(0, 0), 0.0);
+        assert_eq!(graph_node.output_buffers().read(0, 0), 5.0);
         graph.commit_changes();
         assert_eq!(graph.num_nodes(), 2);
         graph_node.process(&null_input(), &mut resources);
+        assert_eq!(graph_node.output_buffers().read(0, 0), 0.0);
         graph.commit_changes();
         assert_eq!(graph.num_nodes(), 1);
         graph_node.process(&null_input(), &mut resources);

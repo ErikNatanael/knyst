@@ -1,5 +1,10 @@
 # Change Log
 
+## 0.3.1
+
+- Fixed a data race bug potentially resulting in a segfault by replacing the generation counting synchronisation with atomic flags.
+- Improved tests for catching new data race bugs in the future.
+
 ## 0.3.0
 
 - Fixed serious bug in signal routing due to the incorrect index being set when generating Tasks (i.e. the graph representation running on the audio thread).
