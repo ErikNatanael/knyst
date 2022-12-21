@@ -1220,28 +1220,6 @@ impl Graph {
         }
         address
     }
-    /// Add a graph as a node in this graph. This will allow you to change the Graph you added later on as needed.
-    #[deprecated(since = "0.3.1", note = "please use `push` instead")]
-    pub fn push_graph(&mut self, mut graph: Graph) -> NodeAddress {
-        if graph.block_size() != self.block_size() {
-            panic!("Warning: You are pushing a graph with a different block size. The library is not currently equipped to handle this. In a future version this will work seamlesly.")
-        }
-        if graph.sample_rate != self.sample_rate {
-            eprintln!("Warning: You are pushing a graph with a different sample rate. This is currently allowed, but expect bugs unless you deal with resampling manually.")
-        }
-        // Create the GraphGen from the new Graph
-        let gen = graph.create_graph_gen().unwrap();
-        // Add the GraphGen to this Graph as a Node
-        let address = self.push_gen_private(gen);
-        // Add the Graph to this Graph's graph list
-        self.graphs_per_node.insert(address.key, graph);
-        address
-    }
-    /// Add anything that implements Gen to this Graph as a node.
-    #[deprecated(since = "0.3.1", note = "please use `push` instead")]
-    pub fn push_gen<G: Gen + Send + 'static>(&mut self, gen: G) -> NodeAddress {
-        self.push_node(Node::new(gen.name(), Box::new(gen)))
-    }
     /// Convert a Gen to a Node and add it to the Graph. Used to be public, but now it is private in favour of `Graph::push()`
     fn push_gen_private<G: Gen + Send + 'static>(&mut self, gen: G) -> NodeAddress {
         self.push_node(Node::new(gen.name(), Box::new(gen)))
