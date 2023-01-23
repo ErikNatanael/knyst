@@ -1,9 +1,19 @@
 # Change Log
 
+## Current changes
+
+- Renamed functions/methods for clarity.
+  - ParameterChange::relative_duration -> ParameterChange::duration_from_now
+- Removed the deprecated methods.
+- Changed NodeAddress to be async compatible. This required making it not Copy and methods taking a reference to it instead.
+- Internal changes to make scheduling changes more flexible and exact.
+- Preliminary support for scheduling events in musical time.
+
 ## 0.3.1
 
 - Fixed a data race bug potentially resulting in a segfault by replacing the generation counting synchronisation with atomic flags.
 - Improved tests for catching new data race bugs in the future.
+- Deprecated `Graph::push_graph` and `Graph::push_gen` methods
 
 ## 0.3.0
 

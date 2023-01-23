@@ -59,6 +59,7 @@ pub mod buffer;
 pub mod envelope;
 pub mod graph;
 pub mod prelude;
+pub mod scheduling;
 pub mod wavetable;
 pub mod xorrng;
 

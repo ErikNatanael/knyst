@@ -81,7 +81,8 @@ fn parallel_mutation() {
             ..Default::default()
         });
         let resources = Resources::new(ResourcesSettings::default());
-        let mut run_graph = RunGraph::new(&mut graph, resources).unwrap();
+        let mut run_graph =
+            RunGraph::new(&mut graph, resources, RunGraphSettings::default()).unwrap();
         let mut nodes = vec![];
         let mut last_node = None;
         let done_flag = Arc::new(AtomicBool::new(false));
@@ -96,18 +97,18 @@ fn parallel_mutation() {
         for _ in 0..10 {
             let node = graph.push(OneGen {});
             if let Some(last) = last_node.take() {
-                graph.connect(node.to(last)).unwrap();
+                graph.connect(node.to(&last)).unwrap();
             } else {
-                graph.connect(Connection::graph_output(node)).unwrap();
+                graph.connect(Connection::graph_output(&node)).unwrap();
             }
-            last_node = Some(node);
+            last_node = Some(node.clone());
             nodes.push(node);
             graph.commit_changes();
             #[cfg(loom)]
             loom::thread::yield_now();
         }
         for node in nodes.into_iter().rev() {
-            graph.free_node(node).unwrap();
+            graph.free_node(node.to_raw().unwrap()).unwrap();
             graph.commit_changes();
             #[cfg(loom)]
             loom::thread::yield_now();
@@ -117,11 +118,11 @@ fn parallel_mutation() {
         for _ in 0..10 {
             let node = graph.push(DummyGen { counter: 0. });
             if let Some(last) = last_node.take() {
-                graph.connect(node.to(last)).unwrap();
+                graph.connect(node.to(&last)).unwrap();
             } else {
-                graph.connect(Connection::graph_output(node)).unwrap();
+                graph.connect(Connection::graph_output(&node)).unwrap();
             }
-            last_node = Some(node);
+            last_node = Some(node.clone());
             nodes.push(node);
             graph.commit_changes();
             #[cfg(loom)]
@@ -131,7 +132,7 @@ fn parallel_mutation() {
         let mut rng = rand::thread_rng();
         nodes.shuffle(&mut rng);
         for node in nodes.into_iter() {
-            graph.free_node(node).unwrap();
+            graph.free_node(node.to_raw().unwrap()).unwrap();
             graph.commit_changes();
             graph.update();
             #[cfg(loom)]
