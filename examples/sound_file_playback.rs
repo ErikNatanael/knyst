@@ -38,7 +38,7 @@ fn main() -> anyhow::Result<()> {
     // Create the Graph with the settings above
     let mut g: Graph = Graph::new(graph_settings);
     // The backend will split the Graph into two
-    backend.start_processing(&mut g, resources)?;
+    backend.start_processing(&mut g, resources, RunGraphSettings::default())?;
 
     let buf_playback_node =
         g.push(BufferReaderMulti::new(buffer, 1.0, StopAction::FreeSelf).channels(2));

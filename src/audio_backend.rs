@@ -12,6 +12,7 @@
 //! the [`Graph`] is considered to be running, meaning changes to the [`Graph`]
 //! may take longer to perform since they involve the audio thread.
 
+use crate::graph::RunGraphSettings;
 #[allow(unused)]
 use crate::{
     graph::{Graph, RunGraph},
@@ -28,6 +29,7 @@ pub trait AudioBackend {
         &mut self,
         graph: &mut Graph,
         resources: Resources,
+        run_graph_settings: RunGraphSettings,
     ) -> Result<(), AudioBackendError>;
     fn stop(&mut self) -> Result<(), AudioBackendError>;
     fn sample_rate(&self) -> usize;
@@ -67,7 +69,7 @@ pub enum AudioBackendError {
 #[cfg(feature = "jack")]
 mod jack_backend {
     use crate::audio_backend::{AudioBackend, AudioBackendError};
-    use crate::graph::RunGraph;
+    use crate::graph::{RunGraph, RunGraphSettings};
     use crate::{graph::Graph, Resources};
     enum JackClient {
         Passive(jack::Client),
@@ -100,6 +102,7 @@ mod jack_backend {
             &mut self,
             graph: &mut Graph,
             resources: Resources,
+            run_graph_settings: RunGraphSettings,
         ) -> Result<(), AudioBackendError> {
             if let Some(JackClient::Passive(client)) = self.client.take() {
                 let mut in_ports = vec![];
@@ -115,7 +118,7 @@ mod jack_backend {
                         client.register_port(&format!("out_{i}"), jack::AudioOut::default())?,
                     );
                 }
-                let run_graph = RunGraph::new(graph, resources)?;
+                let run_graph = RunGraph::new(graph, resources, run_graph_settings)?;
                 let jack_process = JackProcess {
                     run_graph,
                     in_ports,
@@ -266,7 +269,7 @@ mod jack_backend {
 #[cfg(feature = "cpal")]
 pub mod cpal_backend {
     use crate::audio_backend::{AudioBackend, AudioBackendError};
-    use crate::graph::RunGraph;
+    use crate::graph::{RunGraph, RunGraphSettings};
     use crate::{graph::Graph, Resources};
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
@@ -326,6 +329,7 @@ pub mod cpal_backend {
             &mut self,
             graph: &mut Graph,
             resources: Resources,
+            run_graph_settings: RunGraphSettings,
         ) -> Result<(), AudioBackendError> {
             if self.stream.is_some() {
                 return Err(AudioBackendError::BackendAlreadyRunning);
@@ -336,7 +340,7 @@ pub mod cpal_backend {
             if graph.num_inputs() > 0 {
                 eprintln!("Warning: CpalBackend currently does not support inputs into Graphs.")
             }
-            let run_graph = RunGraph::new(graph, resources)?;
+            let run_graph = RunGraph::new(graph, resources, run_graph_settings)?;
             let config = self.config.clone();
             let stream = match self.config.sample_format() {
                 cpal::SampleFormat::F32 => run::<f32>(&self.device, &config.into(), run_graph),

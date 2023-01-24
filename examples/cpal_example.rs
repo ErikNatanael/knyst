@@ -23,18 +23,18 @@ fn main() -> Result<()> {
         num_outputs: backend.num_outputs(),
         ..Default::default()
     });
-    backend.start_processing(&mut graph, resources)?;
+    backend.start_processing(&mut graph, resources, RunGraphSettings::default())?;
     let node0 = graph.push(WavetableOscillatorOwned::new(Wavetable::sine()));
-    graph.connect(constant(440.).to(node0).to_label("freq"))?;
+    graph.connect(constant(440.).to(&node0).to_label("freq"))?;
     let modulator = graph.push(WavetableOscillatorOwned::new(Wavetable::sine()));
-    graph.connect(constant(5.).to(modulator).to_label("freq"))?;
+    graph.connect(constant(5.).to(&modulator).to_label("freq"))?;
     let mod_amp = graph.push(Mult);
-    graph.connect(modulator.to(mod_amp))?;
-    graph.connect(constant(0.25).to(mod_amp).to_index(1))?;
+    graph.connect(modulator.to(&mod_amp))?;
+    graph.connect(constant(0.25).to(&mod_amp).to_index(1))?;
     let amp = graph.push(Mult);
-    graph.connect(node0.to(amp))?;
-    graph.connect(constant(0.5).to(amp).to_index(1))?;
-    graph.connect(mod_amp.to(amp).to_index(1))?;
+    graph.connect(node0.to(&amp))?;
+    graph.connect(constant(0.5).to(&amp).to_index(1))?;
+    graph.connect(mod_amp.to(&amp).to_index(1))?;
     graph.connect(amp.to_graph_out())?;
     graph.connect(amp.to_graph_out().to_index(1))?;
     graph.commit_changes();
@@ -48,7 +48,9 @@ fn main() -> Result<()> {
                 println!("{}", input.trim());
                 let input = input.trim();
                 if let Ok(freq) = input.parse::<usize>() {
-                    graph.schedule_change(ParameterChange::now(node0, freq as f32).l("freq"))?;
+                    graph.schedule_change(
+                        ParameterChange::now(node0.clone(), freq as f32).l("freq"),
+                    )?;
                     graph.update();
                 } else if input == "q" {
                     break;

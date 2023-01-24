@@ -59,7 +59,7 @@ fn main() -> anyhow::Result<()> {
         ..Default::default()
     };
     let mut graph: Graph = Graph::new(graph_settings);
-    backend.start_processing(&mut graph, resources)?;
+    backend.start_processing(&mut graph, resources, RunGraphSettings::default())?;
 
     // Create a custom output node. Right now, it just acts like a brickwall limiter.
     let output_node = graph.push(
@@ -121,7 +121,7 @@ fn main() -> anyhow::Result<()> {
                     0.02,
                     0.05,
                     graph_settings,
-                    output_node,
+                    &output_node,
                     &mut graph,
                 )?;
             }
@@ -135,7 +135,7 @@ fn main() -> anyhow::Result<()> {
                     0.001,
                     0.25,
                     graph_settings,
-                    output_node,
+                    &output_node,
                     &mut graph,
                 )?;
             }
@@ -143,13 +143,29 @@ fn main() -> anyhow::Result<()> {
                 let i = beat_counter / 4;
                 let amp = [0.8, 0.6, 0.4, 0.7][i % 4];
                 let freq = degree_to_freq(seq2_0[(beat_counter / 4) % seq2_0.len()], fundamental);
-                add_sine(freq, amp, 0.1, 0.5, graph_settings, output_node, &mut graph)?;
+                add_sine(
+                    freq,
+                    amp,
+                    0.1,
+                    0.5,
+                    graph_settings,
+                    &output_node,
+                    &mut graph,
+                )?;
             }
             if beat_counter % 8 == 0 {
                 let i = beat_counter / 8;
                 let amp = [1.0, 0.5, 0.8, 0.5][i % 4];
                 let freq = degree_to_freq(seq4_0[(beat_counter / 8) % seq4_0.len()], fundamental);
-                add_sine(freq, amp, 0.1, 1.2, graph_settings, output_node, &mut graph)?;
+                add_sine(
+                    freq,
+                    amp,
+                    0.1,
+                    1.2,
+                    graph_settings,
+                    &output_node,
+                    &mut graph,
+                )?;
             }
 
             std::thread::sleep(Duration::from_millis(150));
@@ -167,7 +183,7 @@ fn main() -> anyhow::Result<()> {
                     rng.gen::<f32>().powi(3) * 0.2,
                     0.20,
                     graph_settings,
-                    output_node,
+                    &output_node,
                     &mut graph,
                 )?;
             }
@@ -181,7 +197,7 @@ fn main() -> anyhow::Result<()> {
                     0.001,
                     0.25,
                     graph_settings,
-                    output_node,
+                    &output_node,
                     &mut graph,
                 )?;
             }
@@ -195,7 +211,7 @@ fn main() -> anyhow::Result<()> {
                     0.1,
                     0.9,
                     graph_settings,
-                    output_node,
+                    &output_node,
                     &mut graph,
                 )?;
             }
@@ -209,7 +225,7 @@ fn main() -> anyhow::Result<()> {
                     0.2,
                     1.2,
                     graph_settings,
-                    output_node,
+                    &output_node,
                     &mut graph,
                 )?;
             }
@@ -239,7 +255,7 @@ fn sine_tone_graph(
 ) -> anyhow::Result<Graph> {
     let mut g = Graph::new(graph_settings);
     let sin = g.push(WavetableOscillatorOwned::new(Wavetable::sine()));
-    g.connect(constant(freq).to(sin).to_label("freq"))?;
+    g.connect(constant(freq).to(&sin).to_label("freq"))?;
     let env = Envelope {
         points: vec![(amp, attack), (0.0, duration_secs)],
         curves: vec![Curve::Linear, Curve::Exponential(2.0)],
@@ -249,8 +265,8 @@ fn sine_tone_graph(
     let env = env.to_gen();
     let env = g.push(env);
     let mult = g.push(Mult);
-    g.connect(sin.to(mult))?;
-    g.connect(env.to(mult).to_index(1))?;
+    g.connect(sin.to(&mult))?;
+    g.connect(env.to(&mult).to_index(1))?;
     g.connect(mult.to_graph_out())?;
     g.connect(mult.to_graph_out().to_index(1))?;
     g.commit_changes();
@@ -263,7 +279,7 @@ fn add_sine(
     attack: f32,
     duration_secs: f32,
     graph_settings: GraphSettings,
-    output_node: NodeAddress,
+    output_node: &NodeAddress,
     main_graph: &mut Graph,
 ) -> anyhow::Result<()> {
     let node = main_graph.push(sine_tone_graph(

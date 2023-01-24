@@ -37,16 +37,22 @@ fn main() -> anyhow::Result<()> {
     // Create the Graph with the settings above
     let mut graph: Graph = Graph::new(graph_settings);
     // The backend will split the Graph into two
-    backend.start_processing(&mut graph, resources)?;
+    backend.start_processing(
+        &mut graph,
+        resources,
+        RunGraphSettings {
+            scheduling_latency: Duration::from_millis(200),
+        },
+    )?;
 
     // Create a sine Gen to modulate the distortion parameter of the output_node below.
     let dist_sine = graph.push(WavetableOscillatorOwned::new(Wavetable::sine()));
     // Connect the constant 0.03 to the input names "freq" on the node "dist_sine"
-    graph.connect(constant(0.03).to(dist_sine).to_label("freq"))?;
+    graph.connect(constant(0.03).to(&dist_sine).to_label("freq"))?;
     let dist_sine_mul = graph.push(Mult);
     // Multiply the dist_sine by 5.0, giving it the range of +- 5.0 at 0.3 Hz
-    graph.connect(dist_sine.to(dist_sine_mul))?;
-    graph.connect(constant(1.5).to(dist_sine_mul).to_index(1))?;
+    graph.connect(dist_sine.to(&dist_sine_mul))?;
+    graph.connect(constant(1.5).to(&dist_sine_mul).to_index(1))?;
 
     let mut fundsp_graph = {
         use fundsp::hacker::*;
@@ -111,10 +117,10 @@ fn main() -> anyhow::Result<()> {
     );
     // Create a Ramp for smooth transitions between distortion values.
     let dist_ramp = graph.push(Ramp::new());
-    graph.connect(dist_ramp.to(output_node).to_label("distortion"))?;
-    graph.connect(dist_sine_mul.to(dist_ramp).to_label("value"))?;
-    graph.connect(constant(1.5).to(dist_ramp).to_label("value"))?;
-    graph.connect(constant(0.05).to(dist_ramp).to_label("time"))?;
+    graph.connect(dist_ramp.to(&output_node).to_label("distortion"))?;
+    graph.connect(dist_sine_mul.to(&dist_ramp).to_label("value"))?;
+    graph.connect(constant(1.5).to(&dist_ramp).to_label("value"))?;
+    graph.connect(constant(0.05).to(&dist_ramp).to_label("time"))?;
     graph.connect(output_node.to_graph_out().channels(2))?;
     graph.commit_changes();
     graph.update();
@@ -125,7 +131,7 @@ fn main() -> anyhow::Result<()> {
         // the input value of the Ramp which is connected to the distortion
         // value.
         graph.schedule_change(
-            ParameterChange::now(dist_ramp, rng.gen::<f32>() * 5.0 - 2.5).label("value"),
+            ParameterChange::now(dist_ramp.clone(), rng.gen::<f32>() * 5.0 - 2.5).label("value"),
         )?;
         // After scheduling a change, we need to update the graph scheduler for
         // it to pass changes on to the audio thread.
