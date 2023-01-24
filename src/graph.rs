@@ -2222,7 +2222,6 @@ impl Graph {
                             },
                             TimeKind::Immediately,
                         );
-                        println!("Adding constant to scheduler");
                     } else {
                         // No GraphGen exists so we can set the constant directly.
                         self.get_nodes_mut()[sink.key].set_constant(value, input);
@@ -3154,7 +3153,6 @@ impl Scheduler {
                         let zero_timestamp =
                             ((start_ts.elapsed()).as_secs_f64() * *sample_rate as f64) as u64
                                 + *latency;
-                        println!("change timestamp: {timestamp}, zero_ts {zero_timestamp}, latency: {latency}");
                         scheduling_queue.push(ScheduledChange {
                             timestamp,
                             key,
