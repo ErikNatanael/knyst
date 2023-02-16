@@ -54,6 +54,7 @@ use wavetable::{Wavetable, WavetableKey};
 
 use crate::wavetable::{FRACTIONAL_PART, TABLE_SIZE};
 
+pub mod async_api;
 pub mod audio_backend;
 pub mod buffer;
 pub mod envelope;
@@ -62,6 +63,18 @@ pub mod prelude;
 pub mod scheduling;
 pub mod wavetable;
 pub mod xorrng;
+
+#[derive(thiserror::Error, Debug, PartialEq)]
+pub enum KnystError {
+    #[error("There was an error adding or removing connections between nodes.")]
+    ConnectionError(#[from] graph::ConnectionError),
+    #[error("There was an error freeing a node.")]
+    FreeError(#[from] graph::FreeError),
+    #[error("There was an error scheduling a change.")]
+    ScheduleError(#[from] graph::ScheduleError),
+    #[error("There was an error with the RunGraph.")]
+    RunGraphError(#[from] graph::RunGraphError),
+}
 
 pub type Sample = f32;
 pub trait AnyData: Downcast + Send + Debug {}
