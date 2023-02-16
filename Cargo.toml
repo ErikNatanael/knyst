@@ -35,6 +35,8 @@ symphonia = {version = "0.5.1", features = ["mp3"] }
 jack = { version =  "0.10", optional = true }
 # CPAL audio backend
 cpal = {version = "0.14.0", optional = true }
+# Only for non real time use
+crossbeam-channel = "0.5.6"
 
 # For concurrency testing
 [target.'cfg(loom)'.dependencies]
