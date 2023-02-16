@@ -1327,22 +1327,32 @@ impl Graph {
         self.get_nodes().len()
     }
     pub fn push(&mut self, to_node: impl GenOrGraph) -> NodeAddress {
+        let mut new_node_address = NodeAddress::new();
+        self.push_with_existing_address(to_node, &mut new_node_address);
+        new_node_address
+    }
+    pub fn push_with_existing_address(
+        &mut self,
+        to_node: impl GenOrGraph,
+        node_address: &mut NodeAddress,
+    ) {
         let (graph, gen) = to_node.components();
-        let address = self.push_node(Node::new(gen.name(), gen));
+        self.push_node(Node::new(gen.name(), gen), node_address);
         if let Some(graph) = graph {
             self.graphs_per_node
-                .insert(address.node_key().unwrap(), graph);
+                .insert(node_address.node_key().unwrap(), graph);
         }
-        address
     }
-    /// Convert a Gen to a Node and add it to the Graph. Used to be public, but now it is private in favour of `Graph::push()`
-    fn push_gen_private<G: Gen + Send + 'static>(&mut self, gen: G) -> NodeAddress {
-        self.push_node(Node::new(gen.name(), Box::new(gen)))
-    }
-    /// Add a node to this Graph. The Node will be (re)initialised with the correct block size for this Graph.
+    /// Add a node to this Graph. The Node will be (re)initialised with the
+    /// correct block size for this Graph.
     ///
-    /// Making it not public means Graphs cannot be accidentally added, but a Node<Graph> can still be created for the top level one if preferred.
-    fn push_node(&mut self, mut node: Node) -> NodeAddress {
+    /// Provide a [`NodeAddress`] so that a pre-created async NodeAddress can be
+    /// connected to this node. A new NodeAddress can also be passed in. Either
+    /// way, it will be connected to this node.
+    ///
+    /// Making it not public means Graphs cannot be accidentally added, but a
+    /// Node<Graph> can still be created for the top level one if preferred.
+    fn push_node(&mut self, mut node: Node, node_address: &mut NodeAddress) {
         if node.num_inputs() > self.max_node_inputs {
             eprintln!("Warning: You are trying to add a node with more inputs than the maximum for this Graph. Try increasing the maximum number of node inputs in the GraphSettings.");
         }
@@ -1376,19 +1386,20 @@ impl Graph {
         self.node_output_name_to_index
             .insert(key, output_name_to_index);
 
-        let raw = RawNodeAddress {
-            graph_id: self.id,
-            key,
-        };
-        raw.into()
+        node_address.set_graph_id(self.id);
+        node_address.set_node_key(key);
     }
     /// Remove all nodes in this graph and all its subgraphs that are not connected to anything.
     pub fn free_disconnected_nodes(&mut self) -> Result<(), FreeError> {
         // The easiest way to do it would be to store disconnected nodes after
         // calculating the node order of the graph. (i.e. all the nodes that
         // weren't visited)
+        // TODO: This method should be infallible because any error is an internal bug.
 
         let disconnected_nodes = std::mem::take(&mut self.disconnected_nodes);
+        if disconnected_nodes.len() > 0 {
+            self.recalculation_required = true;
+        }
         for node in disconnected_nodes {
             match self.free_node(RawNodeAddress {
                 key: node,
@@ -2161,10 +2172,12 @@ impl Graph {
                         } else {
                             let num_outputs = self.get_nodes_mut()[source.key].num_outputs();
                             let feedback_node = FeedbackGen::node(num_outputs);
-                            let adress = self.push_node(feedback_node).to_raw().unwrap();
-                            self.feedback_node_indices.push(adress.key);
-                            self.node_feedback_node_key.insert(source.key, adress.key);
-                            adress.key
+                            let mut feedback_node_address = NodeAddress::new();
+                            self.push_node(feedback_node, &mut feedback_node_address);
+                            let address = feedback_node_address.to_raw().unwrap();
+                            self.feedback_node_indices.push(address.key);
+                            self.node_feedback_node_key.insert(source.key, address.key);
+                            address.key
                         };
                     // Create feedback edges leading to the FeedbackNode from
                     // the source and normal edges leading from the FeedbackNode
