@@ -53,7 +53,7 @@ use super::Resources;
 /// depth-first search from the graph output. Nodes not connected to the graph output will still be run
 /// because this is the most intuitive behaviour.
 ///
-/// Each node contains a trait object on the heap with the sound generating object, a Box<dyn Gen> Each
+/// Each node contains a trait object on the heap with the sound generating object, a `Box<dyn Gen>` Each
 /// edge/connection specifies between which output/input of the nodes data is mapped.
 
 pub type Sample = f32;
@@ -1157,7 +1157,7 @@ impl Drop for OwnedRawBuffer {
 /// [`Gen`]s in a different [`Graph`].
 ///
 /// To run a [`Graph`] it has to be split so that parts of it are mirrored in a
-/// `GraphGen` (private). This is done internally when calling [`Graph::push_graph`].
+/// `GraphGen` (private). This is done internally when calling [`Graph::push`]ing a [`Graph`].
 /// You can also do it yourself using a [`RunGraph`]. The [`Graph`] behaves
 /// slightly differently when split:
 ///
@@ -1230,6 +1230,8 @@ pub struct Graph {
     output_edges: Vec<Edge>,
     /// The edges from the graph inputs to nodes, one Vec per node. `source` in the edge is really the sink here.
     graph_input_edges: SecondaryMap<NodeKey, Vec<Edge>>,
+    /// If changes have been made that require recalculating the graph this will be set to true.
+    recalculation_required: bool,
     num_inputs: usize,
     num_outputs: usize,
     block_size: usize,
@@ -1303,6 +1305,7 @@ impl Graph {
             max_node_inputs,
             ring_buffer_size,
             graph_gen_communicator: None,
+            recalculation_required: false,
         }
     }
     /// Create a node that will run this graph. This will fail if a Node or Gen has already been created from the Graph since only one Gen is allowed to exist per Graph.
@@ -1313,6 +1316,7 @@ impl Graph {
         let graph_gen = self.create_graph_gen()?;
         let mut node = Node::new("graph", Box::new(graph_gen));
         node.init(block_size, self.sample_rate);
+        self.recalculation_required = true;
         Ok(node)
     }
 
@@ -1360,6 +1364,7 @@ impl Graph {
         if nodes.capacity() == nodes.len() {
             eprintln!("Error: Trying to push a node into a Graph that is at capacity. Try increasing the number of node slots and make sure you free the nodes you don't need.");
         }
+        self.recalculation_required = true;
         let input_index_to_name = node.input_indices_to_names();
         let input_name_to_index = input_index_to_name
             .iter()
@@ -1430,6 +1435,8 @@ impl Graph {
             if !self.get_nodes_mut().contains_key(node.key) {
                 return Err(FreeError::NodeNotFound);
             }
+            self.recalculation_required = true;
+
             let num_inputs = self.node_input_index_to_name.get(node.key).expect("Since the key exists in the Graph it should have a corresponding node_input_index_to_name Vec").len();
             let num_outputs= self.node_output_index_to_name.get(node.key).expect("Since the key exists in the Graph it should have a corresponding node_output_index_to_name Vec").len();
             let inputs_to_bridge = num_inputs.min(num_outputs);
@@ -1565,6 +1572,8 @@ impl Graph {
             if !self.get_nodes_mut().contains_key(node.key) {
                 return Err(FreeError::NodeNotFound);
             }
+
+            self.recalculation_required = true;
 
             // Remove all edges leading to the node
             self.node_input_edges.remove(node.key);
@@ -2055,6 +2064,8 @@ impl Graph {
                 return self.connect(connection);
             }
         }
+        // If no error was encountered we end up here and a recalculation is required.
+        self.recalculation_required = true;
         Ok(())
     }
     /// Create or clear a connection in the Graph. Will call child Graphs until
@@ -2445,6 +2456,7 @@ impl Graph {
                 }
             }
         }
+        self.recalculation_required = true;
         Ok(())
     }
     fn input_index_from_label(&self, node: NodeKey, label: &'static str) -> Option<usize> {
@@ -2763,7 +2775,7 @@ impl Graph {
 
     /// Applies the latest changes to connections and added nodes in the graph on the audio thread and updates the scheduler.
     pub fn commit_changes(&mut self) {
-        if self.graph_gen_communicator.is_some() {
+        if self.recalculation_required && self.graph_gen_communicator.is_some() {
             self.free_old();
             self.calculate_node_order();
             let output_tasks = self.generate_output_tasks().into_boxed_slice();
@@ -2785,6 +2797,7 @@ impl Graph {
         for (_key, graph) in &mut self.graphs_per_node {
             graph.update();
         }
+        self.commit_changes();
     }
 
     /// Check if there are any old nodes or other resources that have been
@@ -3500,7 +3513,7 @@ impl Drop for Node {
     }
 }
 
-#[derive(thiserror::Error, Debug)]
+#[derive(thiserror::Error, Debug, PartialEq)]
 pub enum RunGraphError {
     #[error("Unable to create a node from the Graph: {0}")]
     CouldNodeCreateNode(String),
@@ -4051,8 +4064,7 @@ mod tests {
     #[test]
     fn create_graph() {
         let mut graph: Graph = Graph::new(GraphSettings::default());
-        let node = Node::new("Dummy", Box::new(DummyGen { counter: 0.0 }));
-        let node_id = graph.push_node(node);
+        let node_id = graph.push(DummyGen { counter: 0.0 });
         graph.connect(Connection::graph_output(&node_id)).unwrap();
         graph.init();
         let mut resources = Resources::new(test_resources_settings());
@@ -4066,12 +4078,12 @@ mod tests {
             block_size: 4,
             ..Default::default()
         });
-        let node1 = Node::new("Dummy", Box::new(DummyGen { counter: 0.0 }));
-        let node2 = Node::new("Dummy", Box::new(DummyGen { counter: 0.0 }));
-        let node3 = Node::new("Dummy", Box::new(DummyGen { counter: 0.0 }));
-        let node_id1 = graph.push_node(node1);
-        let node_id2 = graph.push_node(node2);
-        let node_id3 = graph.push_node(node3);
+        let node1 = DummyGen { counter: 0.0 };
+        let node2 = DummyGen { counter: 0.0 };
+        let node3 = DummyGen { counter: 0.0 };
+        let node_id1 = graph.push(node1);
+        let node_id2 = graph.push(node2);
+        let node_id3 = graph.push(node3);
         graph.connect(node_id1.to(&node_id3)).unwrap();
         graph.connect(node_id2.to(&node_id3)).unwrap();
         graph.connect(Connection::graph_output(&node_id3)).unwrap();
@@ -4087,8 +4099,8 @@ mod tests {
             block_size: BLOCK,
             ..Default::default()
         });
-        let node = Node::new("Dummy", Box::new(DummyGen { counter: 0.0 }));
-        let node_id = graph.push_node(node);
+        let node = DummyGen { counter: 0.0 };
+        let node_id = graph.push(node);
         graph.connect(constant(0.5).to(&node_id)).unwrap();
         graph.connect(Connection::graph_output(&node_id)).unwrap();
         let resources = Resources::new(test_resources_settings());
@@ -4105,8 +4117,8 @@ mod tests {
             block_size: BLOCK,
             ..Default::default()
         });
-        let node = Node::new("Dummy", Box::new(DummyGen { counter: 0.0 }));
-        let node_address = inner_graph.push_node(node);
+        let node = DummyGen { counter: 0.0 };
+        let node_address = inner_graph.push(node);
         inner_graph
             .connect(Connection::graph_output(&node_address))
             .unwrap();
@@ -4145,11 +4157,11 @@ mod tests {
             block_size: BLOCK,
             ..Default::default()
         });
-        let n0 = graph.push_node(Node::new("Dummy", Box::new(DummyGen { counter: 0.0 })));
-        let n1 = graph.push_node(Node::new("Dummy", Box::new(DummyGen { counter: 0.0 })));
-        let n2 = graph.push_node(Node::new("Dummy", Box::new(DummyGen { counter: 4.0 })));
-        let n3 = graph.push_node(Node::new("Dummy", Box::new(DummyGen { counter: 5.0 })));
-        let n4 = graph.push_node(Node::new("Dummy", Box::new(DummyGen { counter: 1.0 })));
+        let n0 = graph.push(DummyGen { counter: 0.0 });
+        let n1 = graph.push(DummyGen { counter: 0.0 });
+        let n2 = graph.push(DummyGen { counter: 4.0 });
+        let n3 = graph.push(DummyGen { counter: 5.0 });
+        let n4 = graph.push(DummyGen { counter: 1.0 });
         graph.connect(Connection::graph_output(&n1)).unwrap();
         graph
             .connect(Connection::graph_output(&n0).to_index(1))
@@ -4212,11 +4224,10 @@ mod tests {
             RunGraph::new(&mut graph, resources, RunGraphSettings::default()).unwrap();
         let triangular_sequence = |n| (n * (n + 1)) / 2;
         for i in 0..10 {
-            let node = Node::new("Dummy", Box::new(DummyGen { counter: 0.0 }));
-            let node_id = graph.push_node(node);
+            let node = DummyGen { counter: 0.0 };
+            let node_id = graph.push(node);
             graph.connect(constant(0.5).to(&node_id)).unwrap();
             graph.connect(Connection::graph_output(&node_id)).unwrap();
-            graph.commit_changes();
             graph.update();
             run_graph.process_block();
             assert_eq!(
@@ -4241,8 +4252,8 @@ mod tests {
         let resources = Resources::new(test_resources_settings());
         let mut run_graph =
             RunGraph::new(&mut graph, resources, RunGraphSettings::default()).unwrap();
-        let node = Node::new("Dummy", Box::new(DummyGen { counter: 0.0 }));
-        let node_id = graph.push_node(node);
+        let node = DummyGen { counter: 0.0 };
+        let node_id = graph.push(node);
         graph
             .connect(
                 Connection::graph_input(&node_id)
@@ -4251,7 +4262,7 @@ mod tests {
             )
             .unwrap();
         graph.connect(Connection::graph_output(&node_id)).unwrap();
-        graph.commit_changes();
+        graph.update();
         run_graph.graph_input_buffers().fill_channel(10.0, 2);
         run_graph.process_block();
         assert_eq!(run_graph.graph_output_buffers().read(0, 0), 11.0);
@@ -4278,26 +4289,26 @@ mod tests {
             last_node = Some(node.clone());
             nodes.push(node);
         }
-        graph.commit_changes();
+        graph.update();
         graph_node.process(&null_input(), &mut resources);
         assert_eq!(graph_node.output_buffers().read(0, 0), 10.0);
         // Convert NodeAddress to RawNodeAddress for removal, which we know will work because we pushed it straight to the graph
         graph.free_node(nodes[9].to_raw().unwrap()).unwrap();
-        graph.commit_changes();
+        graph.update();
         graph_node.process(&null_input(), &mut resources);
         assert_eq!(graph_node.output_buffers().read(0, 0), 9.0);
         graph.free_node(nodes[4].to_raw().unwrap()).unwrap();
-        graph.commit_changes();
+        graph.update();
         graph_node.process(&null_input(), &mut resources);
         assert_eq!(graph_node.output_buffers().read(0, 0), 4.0);
         graph.connect(nodes[5].to(&nodes[3])).unwrap();
-        graph.commit_changes();
+        graph.update();
         graph_node.process(&null_input(), &mut resources);
         assert_eq!(graph_node.output_buffers().read(0, 0), 8.0);
         for node in &nodes[1..4] {
             graph.free_node(node.to_raw().unwrap()).unwrap();
         }
-        graph.commit_changes();
+        graph.update();
         graph_node.process(&null_input(), &mut resources);
         assert_eq!(graph_node.output_buffers().read(0, 0), 1.0);
         assert_eq!(
@@ -4336,7 +4347,7 @@ mod tests {
             }
             last_node = Some(node.clone());
             nodes.push(node);
-            graph.commit_changes();
+            graph.update();
             std::thread::sleep(std::time::Duration::from_millis(3));
         }
         for node in nodes.into_iter().rev() {
@@ -4355,7 +4366,7 @@ mod tests {
             }
             last_node = Some(node.clone());
             nodes.push(node);
-            graph.commit_changes();
+            graph.update();
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
         use rand::seq::SliceRandom;
@@ -4363,7 +4374,6 @@ mod tests {
         nodes.shuffle(&mut rng);
         for node in nodes.into_iter() {
             graph.free_node(node.to_raw().unwrap()).unwrap();
-            graph.commit_changes();
             graph.update();
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
@@ -4444,32 +4454,32 @@ mod tests {
         graph.connect(n2.to(&n1)).unwrap();
         graph.connect(n3.to(&n2)).unwrap();
 
-        graph.commit_changes();
+        graph.update();
         assert_eq!(graph.num_nodes(), 4);
         graph_node.process(&null_input(), &mut resources);
         assert_eq!(graph_node.output_buffers().read(0, 0), 7.0);
-        graph.commit_changes();
+        graph.update();
         // Still 4 since the node has been added to the free node queue, but there
         // hasn't been a new generation in the GraphGen yet.
         assert_eq!(graph.num_nodes(), 4);
         graph_node.process(&null_input(), &mut resources);
         assert_eq!(graph_node.output_buffers().read(0, 0), 6.0);
-        graph.commit_changes();
+        graph.update();
         assert_eq!(graph.num_nodes(), 3);
         graph_node.process(&null_input(), &mut resources);
         assert_eq!(graph_node.output_buffers().read(0, 0), 5.0);
-        graph.commit_changes();
+        graph.update();
         assert_eq!(graph.num_nodes(), 2);
         graph_node.process(&null_input(), &mut resources);
         assert_eq!(graph_node.output_buffers().read(0, 0), 5.0);
-        graph.commit_changes();
+        graph.update();
         assert_eq!(graph.num_nodes(), 2);
         graph_node.process(&null_input(), &mut resources);
         assert_eq!(graph_node.output_buffers().read(0, 0), 0.0);
-        graph.commit_changes();
+        graph.update();
         assert_eq!(graph.num_nodes(), 1);
         graph_node.process(&null_input(), &mut resources);
-        graph.commit_changes();
+        graph.update();
         assert_eq!(graph.num_nodes(), 0);
     }
     #[test]
@@ -4496,7 +4506,7 @@ mod tests {
         graph.connect(node1.to(&node0)).unwrap();
         // This gets applied only one sample late. Why?
         graph.connect(constant(2.).to(&node1)).unwrap();
-        graph.commit_changes();
+        graph.update();
         graph
             .schedule_change(ParameterChange::absolute_samples(node0.clone(), 1.0, 3).i(0))
             .unwrap();
