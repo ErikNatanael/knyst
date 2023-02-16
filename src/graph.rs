@@ -757,6 +757,11 @@ pub enum ScheduleError {
     SchedulerNotCreated,
 }
 
+pub enum GenOrGraphEnum {
+    Gen(Box<dyn Gen + Send>),
+    Graph(Graph),
+}
+
 /// This trait is not meant to be implemented by users. In almost all situations
 /// you instead want to implement the [`Gen`] trait.
 ///
@@ -764,11 +769,15 @@ pub enum ScheduleError {
 /// a Graph using the same API.
 pub trait GenOrGraph {
     fn components(self) -> (Option<Graph>, Box<dyn Gen + Send>);
+    fn into_gen_or_graph_enum(self) -> GenOrGraphEnum;
 }
 
 impl<T: Gen + Send + 'static> GenOrGraph for T {
     fn components(self) -> (Option<Graph>, Box<dyn Gen + Send>) {
         (None, Box::new(self))
+    }
+    fn into_gen_or_graph_enum(self) -> GenOrGraphEnum {
+        GenOrGraphEnum::Gen(Box::new(self))
     }
 }
 impl GenOrGraph for Graph {
@@ -782,6 +791,9 @@ impl GenOrGraph for Graph {
         // Create the GraphGen from the new Graph
         let gen = self.create_graph_gen().unwrap();
         (Some(self), Box::new(gen))
+    }
+    fn into_gen_or_graph_enum(self) -> GenOrGraphEnum {
+        GenOrGraphEnum::Graph(self)
     }
 }
 
