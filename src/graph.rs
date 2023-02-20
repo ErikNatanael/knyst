@@ -1122,8 +1122,6 @@ pub struct GraphSettings {
     /// Ring buffers are used pass information back and forth between the audio
     /// thread (GraphGen) and the Graph.
     pub ring_buffer_size: usize,
-    /// How much time is added to every *relative* scheduling event to ensure the Change has time to travel to the GraphGen.
-    pub latency: Duration,
 }
 
 impl Default for GraphSettings {
@@ -1136,7 +1134,6 @@ impl Default for GraphSettings {
             num_nodes: 1024,
             sample_rate: 48000.,
             ring_buffer_size: 100,
-            latency: Duration::from_millis(4),
         }
     }
 }
@@ -1244,8 +1241,6 @@ pub struct Graph {
     inputs_buffers_ptr: Arc<OwnedRawBuffer>,
     max_node_inputs: usize,
     graph_gen_communicator: Option<GraphGenCommunicator>,
-    /// The duration added to all changes scheduled to a relative time so that they have time to travel to the GraphGen.
-    latency: Duration,
 }
 
 impl Default for Graph {
@@ -1264,7 +1259,6 @@ impl Graph {
             num_nodes,
             sample_rate,
             ring_buffer_size,
-            latency,
         } = options;
         let inputs_buffers_ptr = Box::<[Sample]>::into_raw(
             vec![0.0 as Sample; block_size * max_node_inputs].into_boxed_slice(),
@@ -1299,7 +1293,6 @@ impl Graph {
             num_outputs,
             block_size,
             sample_rate,
-            latency,
             initiated: false,
             inputs_buffers_ptr,
             max_node_inputs,
@@ -3520,6 +3513,7 @@ pub enum RunGraphError {
 }
 
 pub struct RunGraphSettings {
+    /// How much time is added to every *relative* scheduling event to ensure the Change has time to travel to the GraphGen.
     pub scheduling_latency: Duration,
 }
 impl Default for RunGraphSettings {
@@ -4487,7 +4481,6 @@ mod tests {
         const BLOCK: usize = 4;
         let mut graph: Graph = Graph::new(GraphSettings {
             block_size: BLOCK,
-            latency: Duration::from_millis(0),
             ..Default::default()
         });
         // let mut graph_node = graph_node(&mut graph);

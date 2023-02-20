@@ -8,6 +8,7 @@
 - Changed NodeAddress to be async compatible. This required making it not Copy and methods taking a reference to it instead.
 - Internal changes to make scheduling changes more flexible and exact.
 - Preliminary support for scheduling events in musical time.
+- Move latency setting from GraphSettings to RunGraphSettings so that the latency is the same for every Graph.
 
 ## 0.3.1
 
