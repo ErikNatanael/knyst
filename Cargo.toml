@@ -51,6 +51,7 @@ criterion = "0.3"
 anyhow = "1.0"
 dialog = "0.3"
 fundsp = { version = "0.9" }
+termion = "2.0.1"
 
 
 [[bench]]
