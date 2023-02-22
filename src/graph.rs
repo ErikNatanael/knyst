@@ -252,7 +252,7 @@ impl ParameterChange {
         Self {
             node,
             value,
-            time: TimeKind::DurationFromNow(Duration::from_millis(0)),
+            time: TimeKind::Immediately,
             input_index: None,
             input_label: None,
         }
