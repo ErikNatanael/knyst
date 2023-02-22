@@ -737,6 +737,12 @@ pub enum ConnectionError {
     NodeFree(#[from] FreeError),
 }
 
+#[derive(thiserror::Error, Debug)]
+pub enum PushError {
+    #[error("The target graph was not found. The GenOrGraph that was pushed is returned.")]
+    GraphNotFound(GenOrGraphEnum),
+}
+
 #[derive(thiserror::Error, Debug, PartialEq)]
 pub enum FreeError {
     #[error("The graph containing the NodeAdress provided was not found. The node itself may or may not exist.")]
@@ -763,6 +769,41 @@ pub enum GenOrGraphEnum {
     Graph(Graph),
 }
 
+impl std::fmt::Debug for GenOrGraphEnum {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            GenOrGraphEnum::Gen(gen) => write!(f, "Gen: {}", gen.name()),
+            GenOrGraphEnum::Graph(graph) => write!(f, "Graph: {}, {}", graph.id, graph.name),
+        }
+    }
+}
+
+impl GenOrGraphEnum {
+    fn components(self) -> (Option<Graph>, Box<dyn Gen + Send>) {
+        match self {
+            GenOrGraphEnum::Gen(boxed_gen) => (None, boxed_gen),
+            GenOrGraphEnum::Graph(graph) => graph.components(),
+        }
+    }
+}
+
+impl<T: GenOrGraph> From<T> for GenOrGraphEnum {
+    fn from(value: T) -> Self {
+        value.into_gen_or_graph_enum()
+    }
+}
+// impl GenOrGraph for GenOrGraphEnum {
+//     fn components(self) -> (Option<Graph>, Box<dyn Gen + Send>) {
+//         match self {
+//             GenOrGraphEnum::Gen(boxed_gen) => (None, boxed_gen),
+//             GenOrGraphEnum::Graph(graph) => graph.components(),
+//         }
+//     }
+//     fn into_gen_or_graph_enum(self) -> GenOrGraphEnum {
+//         self
+//     }
+// }
+
 /// This trait is not meant to be implemented by users. In almost all situations
 /// you instead want to implement the [`Gen`] trait.
 ///
@@ -781,6 +822,14 @@ impl<T: Gen + Send + 'static> GenOrGraph for T {
         GenOrGraphEnum::Gen(Box::new(self))
     }
 }
+// impl<T: Gen + Send> GenOrGraph for Box<T> {
+//     fn components(self) -> (Option<Graph>, Box<dyn Gen + Send>) {
+//         (None, self)
+//     }
+//     fn into_gen_or_graph_enum(self) -> GenOrGraphEnum {
+//         GenOrGraphEnum::Gen(self)
+//     }
+// }
 impl GenOrGraph for Graph {
     fn components(mut self) -> (Option<Graph>, Box<dyn Gen + Send>) {
         if self.block_size() != self.block_size() {
@@ -1207,6 +1256,7 @@ impl Drop for OwnedRawBuffer {
 /// ```
 pub struct Graph {
     id: GraphId,
+    name: String,
     nodes: Arc<UnsafeCell<SlotMap<NodeKey, Node>>>,
     node_keys_to_free_when_safe: Vec<(NodeKey, Arc<AtomicBool>)>,
     node_keys_pending_removal: HashSet<NodeKey>,
@@ -1274,6 +1324,7 @@ impl Graph {
         let graph_input_edges = SecondaryMap::with_capacity(num_nodes);
         Self {
             id,
+            name: String::new(),
             nodes,
             node_input_edges,
             node_input_index_to_name: SecondaryMap::with_capacity(num_nodes),
@@ -1324,21 +1375,64 @@ impl Graph {
     pub fn num_stored_nodes(&self) -> usize {
         self.get_nodes().len()
     }
-    pub fn push(&mut self, to_node: impl GenOrGraph) -> NodeAddress {
-        let mut new_node_address = NodeAddress::new();
-        self.push_with_existing_address(to_node, &mut new_node_address);
-        new_node_address
+    /// Push something implementing [`Gen`] or a [`Graph`] to self creating a
+    /// new node whose address is returned.
+    pub fn push(&mut self, to_node: impl Into<GenOrGraphEnum>) -> NodeAddress {
+        self.push_to_graph(to_node, self.id).unwrap()
     }
+    /// Push something implementing [`Gen`] or a [`Graph`] to the graph with the
+    /// id provided, creating a new node whose address is returned.
+    pub fn push_to_graph(
+        &mut self,
+        to_node: impl Into<GenOrGraphEnum>,
+        graph_id: GraphId,
+    ) -> Result<NodeAddress, PushError> {
+        let mut new_node_address = NodeAddress::new();
+        self.push_with_existing_address_to_graph(to_node, &mut new_node_address, graph_id)?;
+        Ok(new_node_address)
+    }
+    /// Push something implementing [`Gen`] or a [`Graph`] to self, storing its
+    /// address in the NodeAddress provided.
     pub fn push_with_existing_address(
         &mut self,
-        to_node: impl GenOrGraph,
+        to_node: impl Into<GenOrGraphEnum>,
         node_address: &mut NodeAddress,
     ) {
-        let (graph, gen) = to_node.components();
-        self.push_node(Node::new(gen.name(), gen), node_address);
-        if let Some(graph) = graph {
-            self.graphs_per_node
-                .insert(node_address.node_key().unwrap(), graph);
+        self.push_with_existing_address_to_graph(to_node, node_address, self.id)
+            .unwrap()
+    }
+    /// Push something implementing [`Gen`] or a [`Graph`] to the graph with the
+    /// id provided, storing its address in the NodeAddress provided.
+    pub fn push_with_existing_address_to_graph(
+        &mut self,
+        to_node: impl Into<GenOrGraphEnum>,
+        node_address: &mut NodeAddress,
+        graph_id: GraphId,
+    ) -> Result<(), PushError> {
+        if graph_id == self.id {
+            let (graph, gen) = to_node.into().components();
+            self.push_node(Node::new(gen.name(), gen), node_address);
+            if let Some(graph) = graph {
+                self.graphs_per_node
+                    .insert(node_address.node_key().unwrap(), graph);
+            }
+            Ok(())
+        } else {
+            // Try to find the graph containing the node by asking all the graphs in this graph to free the node
+            let mut to_node = to_node.into();
+            for (_key, graph) in &mut self.graphs_per_node {
+                match graph.push_with_existing_address_to_graph(to_node, node_address, graph_id) {
+                    Ok(_) => return Ok(()),
+                    // Return the error unless it's a GraphNotFound in which case we continue trying
+                    Err(e) => match e {
+                        PushError::GraphNotFound(returned_to_node) => to_node = returned_to_node,
+                        _ => {
+                            return Err(e);
+                        }
+                    },
+                }
+            }
+            Err(PushError::GraphNotFound(to_node))
         }
     }
     /// Add a node to this Graph. The Node will be (re)initialised with the
@@ -3057,7 +3151,10 @@ struct GraphGen {
 /// to access the data from within GraphGen.
 unsafe impl Send for GraphGen {}
 
+/// The internal representation of a scheduled change to a running graph. This
+/// is what gets sent to the GraphGen.
 struct ScheduledChange {
+    /// timestamp in samples in the current Graph's sample rate
     timestamp: u64,
     key: NodeKey,
     kind: ScheduledChangeKind,

@@ -7,14 +7,8 @@ use crate::graph::{
 use crossbeam_channel::{unbounded, Receiver, Sender};
 
 enum Command {
-    // TODO: Should push gen/graph be used on a running graph or all node changes scheduled?
-    PushGen {
-        boxed_gen: Box<dyn Gen + Send>,
-        node_address: NodeAddress,
-        graph_id: GraphId,
-    },
-    PushGraph {
-        graph: Graph,
+    Push {
+        gen_or_graph: GenOrGraphEnum,
         node_address: NodeAddress,
         graph_id: GraphId,
     },
@@ -47,17 +41,10 @@ pub struct ToKnyst {
 impl ToKnyst {
     pub fn push(&mut self, gen_or_graph: impl GenOrGraph, graph_id: GraphId) -> NodeAddress {
         let new_node_address = NodeAddress::new();
-        let command = match gen_or_graph.into_gen_or_graph_enum() {
-            GenOrGraphEnum::Gen(boxed_gen) => Command::PushGen {
-                boxed_gen,
-                node_address: new_node_address.clone(),
-                graph_id,
-            },
-            GenOrGraphEnum::Graph(graph) => Command::PushGraph {
-                graph,
-                node_address: new_node_address.clone(),
-                graph_id,
-            },
+        let command = Command::Push {
+            gen_or_graph: gen_or_graph.into_gen_or_graph_enum(),
+            node_address: new_node_address.clone(),
+            graph_id,
         };
         self.sender.send(command).unwrap();
         new_node_address
@@ -89,9 +76,6 @@ pub struct AsyncKnystController {
     // NodeAddress couldn't be resolved because the node had not yet been
     // pushed.
     command_queue: Vec<(Instant, Command)>,
-    /// If a node operation that requires commiting changes to the graph has
-    /// been applied this will be set to true.
-    node_change_flag: bool,
 }
 impl AsyncKnystController {
     pub fn new(top_level_graph: Graph) -> Self {
@@ -101,26 +85,21 @@ impl AsyncKnystController {
             command_receiver: receiver,
             command_sender: sender,
             command_queue: vec![],
-            node_change_flag: false,
         }
     }
 
     fn apply_command(&mut self, command: Command) {
         let result: Result<(), crate::KnystError> = match command {
-            Command::PushGen {
-                boxed_gen,
-                node_address,
+            Command::Push {
+                gen_or_graph,
+                mut node_address,
                 graph_id,
             } => {
-                self.node_change_flag = true;
-                todo!()
-            }
-            Command::PushGraph {
-                graph,
-                node_address,
-                graph_id,
-            } => {
-                self.node_change_flag = true;
+                self.top_level_graph.push_with_existing_address_to_graph(
+                    gen_or_graph,
+                    &mut node_address,
+                    graph_id,
+                );
                 todo!()
             }
             Command::Connect(connection) => {
@@ -139,7 +118,6 @@ impl AsyncKnystController {
             }
             Command::FreeNode(node_address) => {
                 if let Some(raw_address) = node_address.to_raw() {
-                    self.node_change_flag = true;
                     self.top_level_graph
                         .free_node(raw_address)
                         .map_err(|e| From::from(e))
@@ -151,7 +129,6 @@ impl AsyncKnystController {
             }
             Command::FreeNodeMendConnections(node_address) => {
                 if let Some(raw_address) = node_address.to_raw() {
-                    self.node_change_flag = true;
                     self.top_level_graph
                         .free_node_mend_connections(raw_address)
                         .map_err(|e| From::from(e))
