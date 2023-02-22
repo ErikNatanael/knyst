@@ -1154,8 +1154,9 @@ new_key_type! {
 }
 
 /// Pass to Graph::new to set the options the Graph is created with in an ergonomic and clear way.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct GraphSettings {
+    pub name: String,
     /// The number of inputs to the Graph
     pub num_inputs: usize,
     /// The maximum number of inputs to a Node contained in the Graph
@@ -1177,6 +1178,7 @@ pub struct GraphSettings {
 impl Default for GraphSettings {
     fn default() -> Self {
         GraphSettings {
+            name: String::from(""),
             num_inputs: 0,
             num_outputs: 2,
             max_node_inputs: 8,
@@ -1303,6 +1305,7 @@ impl Default for Graph {
 impl Graph {
     pub fn new(options: GraphSettings) -> Self {
         let GraphSettings {
+            name,
             num_inputs,
             num_outputs,
             max_node_inputs,
@@ -1324,7 +1327,7 @@ impl Graph {
         let graph_input_edges = SecondaryMap::with_capacity(num_nodes);
         Self {
             id,
-            name: String::new(),
+            name,
             nodes,
             node_input_edges,
             node_input_index_to_name: SecondaryMap::with_capacity(num_nodes),
@@ -1415,7 +1418,22 @@ impl Graph {
         if graph_id == self.id {
             let (graph, gen) = to_node.into().components();
             self.push_node(Node::new(gen.name(), gen), node_address);
-            if let Some(graph) = graph {
+            if let Some(mut graph) = graph {
+                // Important: we must start the scheduler here if the current
+                // graph is started, otherwise it will never start.
+                if let Some(ggc) = &mut self.graph_gen_communicator {
+                    if let Scheduler::Running {
+                        start_ts,
+                        latency_in_samples,
+                        musical_time_map,
+                        ..
+                    } = &mut ggc.scheduler
+                    {
+                        let latency =
+                            Duration::from_secs_f64(*latency_in_samples / self.sample_rate as f64);
+                        graph.start_scheduler(latency, start_ts.clone(), musical_time_map.clone());
+                    }
+                }
                 self.graphs_per_node
                     .insert(node_address.node_key().unwrap(), graph);
             }
@@ -3163,6 +3181,7 @@ struct ScheduledChange {
     key: NodeKey,
     kind: ScheduledChangeKind,
 }
+#[derive(Clone, Copy, Debug)]
 enum ScheduledChangeKind {
     Constant { index: usize, value: Sample },
 }
@@ -3225,7 +3244,7 @@ enum Scheduler {
         max_duration_to_send: u64,
         /// Changes waiting to be sent to the GraphGen because they are too far into the future
         scheduling_queue: Vec<ScheduledChange>,
-        latency: u64,
+        latency_in_samples: f64,
         musical_time_map: Arc<RwLock<MusicalTimeMap>>,
     },
 }
@@ -3254,7 +3273,7 @@ impl Scheduler {
                     sample_rate: sample_rate as u64,
                     max_duration_to_send: (sample_rate * 0.5) as u64,
                     scheduling_queue: vec![],
-                    latency: (latency.as_secs_f32() * sample_rate) as u64,
+                    latency_in_samples: (latency.as_secs_f64() * sample_rate as f64),
                     musical_time_map,
                 };
                 for (node_key, change_kind, time) in scheduling_queue {
@@ -3275,17 +3294,17 @@ impl Scheduler {
                 sample_rate,
                 max_duration_to_send,
                 scheduling_queue,
-                latency,
+                latency_in_samples: latency,
                 musical_time_map,
             } => {
                 match time {
                     TimeKind::DurationFromNow(duration_from_now) => {
                         let timestamp = ((start_ts.elapsed() + duration_from_now).as_secs_f64()
-                            * *sample_rate as f64) as u64
-                            + *latency;
-                        let zero_timestamp =
-                            ((start_ts.elapsed()).as_secs_f64() * *sample_rate as f64) as u64
-                                + *latency;
+                            * *sample_rate as f64
+                            + *latency) as u64;
+                        let zero_timestamp = ((start_ts.elapsed()).as_secs_f64()
+                            * *sample_rate as f64
+                            + *latency) as u64;
                         scheduling_queue.push(ScheduledChange {
                             timestamp,
                             key,
@@ -3305,9 +3324,8 @@ impl Scheduler {
                         let mtm = musical_time_map.read().unwrap();
                         let duration_from_start =
                             Duration::from_secs_f64(mtm.musical_time_to_secs_f64(mt));
-                        let timestamp = ((duration_from_start).as_secs_f64() * *sample_rate as f64)
-                            as u64
-                            + *latency;
+                        let timestamp = ((duration_from_start).as_secs_f64() * *sample_rate as f64
+                            + *latency) as u64;
                         scheduling_queue.push(ScheduledChange {
                             timestamp,
                             key,
@@ -3337,7 +3355,7 @@ impl Scheduler {
                 sample_rate,
                 max_duration_to_send,
                 scheduling_queue,
-                latency,
+                latency_in_samples: latency,
                 musical_time_map,
             } => {
                 // scheduled updates should always be sorted before they are sent, in case there are several changes to the same thing
@@ -4236,7 +4254,6 @@ mod tests {
         let mut run_graph =
             RunGraph::new(&mut top_level_graph, resources, RunGraphSettings::default()).unwrap();
         run_graph.process_block();
-        println!("{:#?}", run_graph.graph_output_buffers().get_channel(0));
         assert_eq!(
             run_graph.graph_output_buffers().read(0, BLOCK - 2),
             (BLOCK - 1) as Sample + CONSTANT_INPUT_TO_NODE
