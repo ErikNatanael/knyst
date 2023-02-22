@@ -32,6 +32,7 @@
 use loom::sync::atomic::Ordering;
 
 use crate::scheduling::{MusicalTime, MusicalTimeMap};
+use crate::time::Superseconds;
 
 // #[cfg(not(loom))]
 use std::cell::UnsafeCell;
@@ -229,11 +230,11 @@ pub struct ParameterChange {
 }
 
 impl ParameterChange {
-    pub fn absolute_samples(node: NodeAddress, value: Sample, absolute_timestamp: u64) -> Self {
+    pub fn superseconds(node: NodeAddress, value: Sample, superseconds: Superseconds) -> Self {
         Self {
             node,
             value,
-            time: TimeKind::AbsoluteSample(absolute_timestamp),
+            time: TimeKind::Superseconds(superseconds),
             input_index: None,
             input_label: None,
         }
@@ -278,7 +279,7 @@ impl ParameterChange {
 pub enum TimeKind {
     MusicalTime(MusicalTime),
     DurationFromNow(Duration),
-    AbsoluteSample(u64),
+    Superseconds(Superseconds),
     Immediately,
 }
 
@@ -3190,7 +3191,8 @@ impl Scheduler {
                             kind: change_kind,
                         });
                     }
-                    TimeKind::AbsoluteSample(absolute_timestamp) => {
+                    TimeKind::Superseconds(superseconds) => {
+                        let absolute_timestamp = superseconds.to_samples(*sample_rate);
                         scheduling_queue.push(ScheduledChange {
                             timestamp: absolute_timestamp,
                             key,
@@ -4479,8 +4481,10 @@ mod tests {
     #[test]
     fn scheduling() {
         const BLOCK: usize = 4;
+        const SR: u64 = 44100;
         let mut graph: Graph = Graph::new(GraphSettings {
             block_size: BLOCK,
+            sample_rate: SR as f32,
             ..Default::default()
         });
         // let mut graph_node = graph_node(&mut graph);
@@ -4501,15 +4505,34 @@ mod tests {
         graph.connect(constant(2.).to(&node1)).unwrap();
         graph.update();
         graph
-            .schedule_change(ParameterChange::absolute_samples(node0.clone(), 1.0, 3).i(0))
-            .unwrap();
-        graph
             .schedule_change(
-                ParameterChange::absolute_samples(node0.clone(), 2.0, 2).l("passthrough"),
+                ParameterChange::superseconds(
+                    node0.clone(),
+                    1.0,
+                    Superseconds::from_samples(3, SR),
+                )
+                .i(0),
             )
             .unwrap();
         graph
-            .schedule_change(ParameterChange::absolute_samples(node1.clone(), 10.0, 7).i(0))
+            .schedule_change(
+                ParameterChange::superseconds(
+                    node0.clone(),
+                    2.0,
+                    Superseconds::from_samples(2, SR),
+                )
+                .l("passthrough"),
+            )
+            .unwrap();
+        graph
+            .schedule_change(
+                ParameterChange::superseconds(
+                    node1.clone(),
+                    10.0,
+                    Superseconds::from_samples(7, SR),
+                )
+                .i(0),
+            )
             .unwrap();
         // Schedule far into the future, this should not show up in the test output
         graph
@@ -4525,21 +4548,34 @@ mod tests {
         assert_eq!(run_graph.graph_output_buffers().read(0, 2), 6.0);
         assert_eq!(run_graph.graph_output_buffers().read(0, 3), 5.0);
         graph
-            .schedule_change(ParameterChange::absolute_samples(node0, 0.0, 5).i(0))
+            .schedule_change(
+                ParameterChange::superseconds(node0, 0.0, Superseconds::from_samples(5, SR)).i(0),
+            )
             .unwrap();
         graph
             .schedule_change(
-                ParameterChange::absolute_samples(node1.clone(), 0.0, 6).l("passthrough"),
+                ParameterChange::superseconds(
+                    node1.clone(),
+                    0.0,
+                    Superseconds::from_samples(6, SR),
+                )
+                .l("passthrough"),
             )
             .unwrap();
         assert_eq!(
             graph.schedule_change(
-                ParameterChange::absolute_samples(node1.clone(), 100.0, 6).l("pasta")
+                ParameterChange::superseconds(
+                    node1.clone(),
+                    100.0,
+                    Superseconds::from_samples(6, SR)
+                )
+                .l("pasta")
             ),
             Err(ScheduleError::InputLabelNotFound("pasta"))
         );
         graph.update();
         run_graph.process_block();
+        dbg!(run_graph.graph_output_buffers().get_channel(0));
         assert_eq!(run_graph.graph_output_buffers().read(0, 0), 5.0);
         assert_eq!(run_graph.graph_output_buffers().read(0, 1), 4.0);
         assert_eq!(run_graph.graph_output_buffers().read(0, 2), 2.0);

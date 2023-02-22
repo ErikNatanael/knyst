@@ -2,7 +2,6 @@ use std::sync::Arc;
 use std::sync::RwLock;
 
 pub use meadowlark_core_types::time::MusicalTime;
-pub use meadowlark_core_types::time::SuperclockTime;
 
 pub enum TempoChange {
     NewTempo { bpm: f64 },
