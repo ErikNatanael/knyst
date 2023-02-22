@@ -1375,6 +1375,9 @@ impl Graph {
     pub fn num_stored_nodes(&self) -> usize {
         self.get_nodes().len()
     }
+    pub fn id(&self) -> GraphId {
+        self.id
+    }
     /// Push something implementing [`Gen`] or a [`Graph`] to self creating a
     /// new node whose address is returned.
     pub fn push(&mut self, to_node: impl Into<GenOrGraphEnum>) -> NodeAddress {
@@ -2871,6 +2874,7 @@ impl Graph {
             if let Some(ggc) = &mut self.graph_gen_communicator {
                 ggc.send_updated_tasks(tasks, output_tasks);
             }
+            self.recalculation_required = false;
         }
         for (_key, graph) in &mut self.graphs_per_node {
             graph.commit_changes();
