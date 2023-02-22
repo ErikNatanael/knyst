@@ -36,10 +36,18 @@ impl Command {}
 #[derive(Clone)]
 pub struct ToKnyst {
     sender: crossbeam_channel::Sender<Command>,
+    top_level_graph_id: GraphId,
 }
 
 impl ToKnyst {
-    pub fn push(&mut self, gen_or_graph: impl GenOrGraph, graph_id: GraphId) -> NodeAddress {
+    pub fn push(&mut self, gen_or_graph: impl GenOrGraph) -> NodeAddress {
+        self.push_to_graph(gen_or_graph, self.top_level_graph_id)
+    }
+    pub fn push_to_graph(
+        &mut self,
+        gen_or_graph: impl GenOrGraph,
+        graph_id: GraphId,
+    ) -> NodeAddress {
         let new_node_address = NodeAddress::new();
         let command = Command::Push {
             gen_or_graph: gen_or_graph.into_gen_or_graph_enum(),
@@ -71,6 +79,7 @@ impl ToKnyst {
 pub struct AsyncKnystController {
     top_level_graph: Graph,
     command_receiver: Receiver<Command>,
+    // TODO: Maybe we don't need to store the sender since it can be produced by cloning a ToKnyst
     command_sender: Sender<Command>,
     // the queue is for commands that couldn't be applied yet e.g. because a
     // NodeAddress couldn't be resolved because the node had not yet been
@@ -95,12 +104,15 @@ impl AsyncKnystController {
                 mut node_address,
                 graph_id,
             } => {
-                self.top_level_graph.push_with_existing_address_to_graph(
+                if let Err(e) = self.top_level_graph.push_with_existing_address_to_graph(
                     gen_or_graph,
                     &mut node_address,
                     graph_id,
-                );
-                todo!()
+                ) {
+                    Err(From::from(e))
+                } else {
+                    Ok(())
+                }
             }
             Command::Connect(connection) => {
                 match self.top_level_graph.connect(connection.clone()) {
@@ -148,8 +160,10 @@ impl AsyncKnystController {
                 .map_err(|e| From::from(e)),
         };
 
-        // TODO: Do something with the result: send it through a channel, store it in a log
-        todo!();
+        // TODO: Do something better with the result: send it through a channel, store it in a log
+        if let Err(e) = result {
+            eprintln!("Error in async controller: {e}");
+        }
     }
 
     // Receive commands from the queue and apply them to the graph. If
@@ -173,6 +187,7 @@ impl AsyncKnystController {
 }
 
 pub fn start_async_knyst_thread(top_level_graph: Graph) -> ToKnyst {
+    let top_level_graph_id = top_level_graph.id();
     let mut controller = AsyncKnystController::new(top_level_graph);
     let sender = controller.command_sender.clone();
 
@@ -182,5 +197,8 @@ pub fn start_async_knyst_thread(top_level_graph: Graph) -> ToKnyst {
         std::thread::sleep(Duration::from_micros(1));
     });
 
-    ToKnyst { sender }
+    ToKnyst {
+        sender,
+        top_level_graph_id,
+    }
 }

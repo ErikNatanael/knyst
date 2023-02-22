@@ -65,12 +65,14 @@ pub mod time;
 pub mod wavetable;
 pub mod xorrng;
 
-#[derive(thiserror::Error, Debug, PartialEq)]
+#[derive(thiserror::Error, Debug)]
 pub enum KnystError {
     #[error("There was an error adding or removing connections between nodes.")]
     ConnectionError(#[from] graph::ConnectionError),
     #[error("There was an error freeing a node.")]
     FreeError(#[from] graph::FreeError),
+    #[error("There was an error pushing a node.")]
+    PushError(#[from] graph::PushError),
     #[error("There was an error scheduling a change.")]
     ScheduleError(#[from] graph::ScheduleError),
     #[error("There was an error with the RunGraph.")]
