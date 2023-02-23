@@ -54,9 +54,9 @@ use wavetable::{Wavetable, WavetableKey};
 
 use crate::wavetable::{FRACTIONAL_PART, TABLE_SIZE};
 
-pub mod async_api;
 pub mod audio_backend;
 pub mod buffer;
+pub mod controller;
 pub mod envelope;
 pub mod graph;
 pub mod prelude;

@@ -13,7 +13,7 @@
 //! may take longer to perform since they involve the audio thread.
 
 use crate::{
-    async_api::{Controller, KnystCommands},
+    controller::{Controller, KnystCommands},
     graph::RunGraphSettings,
 };
 #[allow(unused)]
@@ -87,8 +87,8 @@ pub enum AudioBackendError {
 
 #[cfg(feature = "jack")]
 mod jack_backend {
-    use crate::async_api::{Controller, KnystCommands};
     use crate::audio_backend::{AudioBackend, AudioBackendError};
+    use crate::controller::{Controller, KnystCommands};
     use crate::graph::{RunGraph, RunGraphSettings};
     use crate::{graph::Graph, Resources};
     enum JackClient {
@@ -289,8 +289,8 @@ mod jack_backend {
 
 #[cfg(feature = "cpal")]
 pub mod cpal_backend {
-    use crate::async_api::Controller;
     use crate::audio_backend::{AudioBackend, AudioBackendError};
+    use crate::controller::Controller;
     use crate::graph::{RunGraph, RunGraphSettings};
     use crate::{graph::Graph, Resources};
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -352,7 +352,7 @@ pub mod cpal_backend {
             mut graph: Graph,
             resources: Resources,
             run_graph_settings: RunGraphSettings,
-        ) -> Result<crate::async_api::Controller, AudioBackendError> {
+        ) -> Result<crate::controller::Controller, AudioBackendError> {
             if self.stream.is_some() {
                 return Err(AudioBackendError::BackendAlreadyRunning);
             }
