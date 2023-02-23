@@ -2884,15 +2884,18 @@ impl Graph {
 
     /// Applies the latest changes to connections and added nodes in the graph on the audio thread and updates the scheduler.
     pub fn commit_changes(&mut self) {
-        if self.recalculation_required && self.graph_gen_communicator.is_some() {
+        if self.graph_gen_communicator.is_some() {
+            // We need to run free_old to know if there are nodes to free and hence a recalculation required.
             self.free_old();
-            self.calculate_node_order();
-            let output_tasks = self.generate_output_tasks().into_boxed_slice();
-            let tasks = self.generate_tasks().into_boxed_slice();
-            if let Some(ggc) = &mut self.graph_gen_communicator {
-                ggc.send_updated_tasks(tasks, output_tasks);
+            if self.recalculation_required {
+                self.calculate_node_order();
+                let output_tasks = self.generate_output_tasks().into_boxed_slice();
+                let tasks = self.generate_tasks().into_boxed_slice();
+                if let Some(ggc) = &mut self.graph_gen_communicator {
+                    ggc.send_updated_tasks(tasks, output_tasks);
+                }
+                self.recalculation_required = false;
             }
-            self.recalculation_required = false;
         }
         for (_key, graph) in &mut self.graphs_per_node {
             graph.commit_changes();
