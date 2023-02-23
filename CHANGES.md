@@ -2,13 +2,15 @@
 
 ## Current changes
 
+- Introduced a convenient and unified way of running knyst in single or multi threaded contexts through the `Controller` and `KnystCommands` (name inspired from Bevy). This was incorporated in the AudioBackend API for convenience.
 - Renamed functions/methods for clarity.
   - ParameterChange::relative_duration -> ParameterChange::duration_from_now
 - Removed the deprecated methods.
-- Changed NodeAddress to be async compatible. This required making it not Copy and methods taking a reference to it instead.
+- Changed NodeAddress to be async compatible i.e. it can be created before the Gen/Graph has been pushed to a Graph. This required making it not Copy and methods taking a reference to it instead.
 - Internal changes to make scheduling changes more flexible and exact.
-- Preliminary support for scheduling events in musical time.
+- Preparations to support scheduling events in musical time in the future.
 - Move latency setting from GraphSettings to RunGraphSettings so that the latency is the same for every Graph.
+- Replace absolute sample scheduling by a type that can handle all common sample rates transparently, inspired by BillyDM's blogpost: https://billydm.github.io/blog/time-keeping/
 
 ## 0.3.1
 
