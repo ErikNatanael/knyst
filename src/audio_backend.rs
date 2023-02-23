@@ -12,7 +12,10 @@
 //! the [`Graph`] is considered to be running, meaning changes to the [`Graph`]
 //! may take longer to perform since they involve the audio thread.
 
-use crate::graph::RunGraphSettings;
+use crate::{
+    async_api::{Controller, KnystCommands},
+    graph::RunGraphSettings,
+};
 #[allow(unused)]
 use crate::{
     graph::{Graph, RunGraph},
@@ -25,12 +28,28 @@ pub use cpal_backend::{CpalBackend, CpalBackendOptions};
 pub use jack_backend::JackBackend;
 
 pub trait AudioBackend {
+    /// Starts processing and returns a [`Controller`]. This is the easiest
+    /// option and will run the [`Controller`] in a loop on a new thread.
+    ///
     fn start_processing(
         &mut self,
-        graph: &mut Graph,
+        graph: Graph,
         resources: Resources,
         run_graph_settings: RunGraphSettings,
-    ) -> Result<(), AudioBackendError>;
+    ) -> Result<KnystCommands, AudioBackendError> {
+        let controller =
+            self.start_processing_return_controller(graph, resources, run_graph_settings)?;
+        Ok(controller.start_on_new_thread())
+    }
+    /// Starts processing and returns a [`Controller`]. This is suitable if you
+    /// want to run single threaded or handle running the [`Controller`]
+    /// manually.
+    fn start_processing_return_controller(
+        &mut self,
+        graph: Graph,
+        resources: Resources,
+        run_graph_settings: RunGraphSettings,
+    ) -> Result<Controller, AudioBackendError>;
     fn stop(&mut self) -> Result<(), AudioBackendError>;
     fn sample_rate(&self) -> usize;
     fn block_size(&self) -> Option<usize>;
@@ -68,6 +87,7 @@ pub enum AudioBackendError {
 
 #[cfg(feature = "jack")]
 mod jack_backend {
+    use crate::async_api::{Controller, KnystCommands};
     use crate::audio_backend::{AudioBackend, AudioBackendError};
     use crate::graph::{RunGraph, RunGraphSettings};
     use crate::{graph::Graph, Resources};
@@ -98,12 +118,12 @@ mod jack_backend {
     }
 
     impl AudioBackend for JackBackend {
-        fn start_processing(
+        fn start_processing_return_controller(
             &mut self,
-            graph: &mut Graph,
+            mut graph: Graph,
             resources: Resources,
             run_graph_settings: RunGraphSettings,
-        ) -> Result<(), AudioBackendError> {
+        ) -> Result<Controller, AudioBackendError> {
             if let Some(JackClient::Passive(client)) = self.client.take() {
                 let mut in_ports = vec![];
                 let mut out_ports = vec![];
@@ -118,7 +138,7 @@ mod jack_backend {
                         client.register_port(&format!("out_{i}"), jack::AudioOut::default())?,
                     );
                 }
-                let run_graph = RunGraph::new(graph, resources, run_graph_settings)?;
+                let run_graph = RunGraph::new(&mut graph, resources, run_graph_settings)?;
                 let jack_process = JackProcess {
                     run_graph,
                     in_ports,
@@ -129,10 +149,11 @@ mod jack_backend {
                     .activate_async(JackNotifications, jack_process)
                     .unwrap();
                 self.client = Some(JackClient::Active(active_client));
+                let controller = Controller::new(graph);
+                Ok(controller)
             } else {
-                return Err(AudioBackendError::BackendAlreadyRunning);
+                Err(AudioBackendError::BackendAlreadyRunning)
             }
-            Ok(())
         }
 
         fn stop(&mut self) -> Result<(), AudioBackendError> {
@@ -268,6 +289,7 @@ mod jack_backend {
 
 #[cfg(feature = "cpal")]
 pub mod cpal_backend {
+    use crate::async_api::Controller;
     use crate::audio_backend::{AudioBackend, AudioBackendError};
     use crate::graph::{RunGraph, RunGraphSettings};
     use crate::{graph::Graph, Resources};
@@ -325,12 +347,12 @@ pub mod cpal_backend {
     }
 
     impl AudioBackend for CpalBackend {
-        fn start_processing(
+        fn start_processing_return_controller(
             &mut self,
-            graph: &mut Graph,
+            mut graph: Graph,
             resources: Resources,
             run_graph_settings: RunGraphSettings,
-        ) -> Result<(), AudioBackendError> {
+        ) -> Result<crate::async_api::Controller, AudioBackendError> {
             if self.stream.is_some() {
                 return Err(AudioBackendError::BackendAlreadyRunning);
             }
@@ -340,7 +362,7 @@ pub mod cpal_backend {
             if graph.num_inputs() > 0 {
                 eprintln!("Warning: CpalBackend currently does not support inputs into Graphs.")
             }
-            let run_graph = RunGraph::new(graph, resources, run_graph_settings)?;
+            let run_graph = RunGraph::new(&mut graph, resources, run_graph_settings)?;
             let config = self.config.clone();
             let stream = match self.config.sample_format() {
                 cpal::SampleFormat::F32 => run::<f32>(&self.device, &config.into(), run_graph),
@@ -348,7 +370,7 @@ pub mod cpal_backend {
                 cpal::SampleFormat::U16 => run::<u16>(&self.device, &config.into(), run_graph),
             }?;
             self.stream = Some(stream);
-            Ok(())
+            Ok(Controller::new(graph))
         }
 
         fn stop(&mut self) -> Result<(), AudioBackendError> {

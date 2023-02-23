@@ -1,6 +1,5 @@
 use anyhow::Result;
 use knyst::{
-    async_api,
     audio_backend::{CpalBackend, CpalBackendOptions},
     graph::{Mult, NodeAddress},
     prelude::*,
@@ -25,41 +24,35 @@ fn main() -> Result<()> {
         sample_rate,
         ..Default::default()
     });
-    let mut top_level_graph = Graph::new(GraphSettings {
+    let top_level_graph = Graph::new(GraphSettings {
         block_size,
         sample_rate,
         num_outputs: backend.num_outputs(),
         ..Default::default()
     });
-    backend.start_processing(
-        &mut top_level_graph,
+    let mut k = backend.start_processing(
+        top_level_graph,
         resources,
         RunGraphSettings {
             scheduling_latency: Duration::from_millis(100),
         },
     )?;
     let num_outputs = backend.num_outputs();
-    // We start the asynchronous api on another thread and receive an object
-    // with which we can communicate with the graph.
-    //
-    // TODO: Combine with start_processing or something to ensure we have access
-    // to modifying resources as well.
-    let mut tk = async_api::start_async_knyst_thread(top_level_graph);
 
     // Nodes are pushed to the top level graph if no graph id is specified
-    let node0 = tk.push(WavetableOscillatorOwned::new(Wavetable::sine()));
-    tk.connect(constant(ROOT_FREQ).to(&node0).to_label("freq"));
-    let modulator = tk.push(WavetableOscillatorOwned::new(Wavetable::sine()));
-    tk.connect(constant(5.).to(&modulator).to_label("freq"));
-    let mod_amp = tk.push(Mult);
-    tk.connect(modulator.to(&mod_amp));
-    tk.connect(constant(0.25).to(&mod_amp).to_index(1));
-    let amp = tk.push(Mult);
-    tk.connect(node0.to(&amp));
-    tk.connect(constant(0.25).to(&amp).to_index(1));
-    tk.connect(mod_amp.to(&node0).to_label("freq"));
-    tk.connect(amp.to_graph_out());
-    tk.connect(amp.to_graph_out().to_index(1));
+    let node0 = k.push(WavetableOscillatorOwned::new(Wavetable::sine()));
+    k.connect(constant(ROOT_FREQ).to(&node0).to_label("freq"));
+    let modulator = k.push(WavetableOscillatorOwned::new(Wavetable::sine()));
+    k.connect(constant(5.).to(&modulator).to_label("freq"));
+    let mod_amp = k.push(Mult);
+    k.connect(modulator.to(&mod_amp));
+    k.connect(constant(0.25).to(&mod_amp).to_index(1));
+    let amp = k.push(Mult);
+    k.connect(node0.to(&amp));
+    k.connect(constant(0.25).to(&amp).to_index(1));
+    k.connect(mod_amp.to(&node0).to_label("freq"));
+    k.connect(amp.to_graph_out());
+    k.connect(amp.to_graph_out().to_index(1));
 
     // Have a background thread play some harmony
     {
@@ -70,10 +63,10 @@ fn main() -> Result<()> {
             vec![0, 22, 39],
             vec![-5, 9, 31],
         ];
-        let mut k = tk.clone();
+        let mut k = k.clone();
         std::thread::spawn(move || {
             let mut rng = thread_rng();
-            let mut sub_graph = Graph::new(GraphSettings {
+            let sub_graph = Graph::new(GraphSettings {
                 block_size,
                 sample_rate,
                 num_outputs,
@@ -146,11 +139,11 @@ fn main() -> Result<()> {
 
                     // Change the frequency of the nodes based on what key was pressed
                     let new_freq = character_to_hz(c);
-                    tk.schedule_change(ParameterChange::now(node0.clone(), new_freq).l("freq"));
-                    tk.schedule_change(
+                    k.schedule_change(ParameterChange::now(node0.clone(), new_freq).l("freq"));
+                    k.schedule_change(
                         ParameterChange::now(modulator.clone(), new_freq * 5.).l("freq"),
                     );
-                    tk.schedule_change(ParameterChange::now(mod_amp.clone(), new_freq * 0.1).i(1));
+                    k.schedule_change(ParameterChange::now(mod_amp.clone(), new_freq * 0.1).i(1));
 
                     stdout.lock().flush().unwrap();
                 }

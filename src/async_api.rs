@@ -6,6 +6,7 @@ use crate::graph::{
 };
 use crossbeam_channel::{unbounded, Receiver, Sender};
 
+/// Encodes commands sent from a [`KnystCommands`]
 enum Command {
     Push {
         gen_or_graph: GenOrGraphEnum,
@@ -22,7 +23,9 @@ enum Command {
 
 impl Command {}
 
-/// [`AsyncKnyst`] communicates asynchronously with the main [`Graph`] on a
+/// [`KnystCommands`] sends commands to
+///
+/// asynchronously with the main [`Graph`] on a
 /// different thread. The API is as close as possible to that of a owned [`Graph`].
 ///
 /// This can safely be cloned and sent to a different thread for use.
@@ -34,12 +37,12 @@ impl Command {}
 // always the handiest. It would be nice to be able to choose to refer to Graphs
 // by an identifier e.g. name. In Bevy holding on to GraphIds is easy.
 #[derive(Clone)]
-pub struct ToKnyst {
+pub struct KnystCommands {
     sender: crossbeam_channel::Sender<Command>,
     top_level_graph_id: GraphId,
 }
 
-impl ToKnyst {
+impl KnystCommands {
     pub fn push(&mut self, gen_or_graph: impl GenOrGraph) -> NodeAddress {
         self.push_to_graph(gen_or_graph, self.top_level_graph_id)
     }
@@ -76,7 +79,9 @@ impl ToKnyst {
     }
 }
 
-pub struct AsyncKnystController {
+/// Receives commands from one or several [`KnystCommands`] that may be on
+/// different threads, and applies those to a top level [`Graph`].
+pub struct Controller {
     top_level_graph: Graph,
     command_receiver: Receiver<Command>,
     // TODO: Maybe we don't need to store the sender since it can be produced by cloning a ToKnyst
@@ -86,7 +91,7 @@ pub struct AsyncKnystController {
     // pushed.
     command_queue: Vec<(Instant, Command)>,
 }
-impl AsyncKnystController {
+impl Controller {
     pub fn new(top_level_graph: Graph) -> Self {
         let (sender, receiver) = unbounded();
         Self {
@@ -169,36 +174,61 @@ impl AsyncKnystController {
     // Receive commands from the queue and apply them to the graph. If
     // `max_commands` commands have been processed, return so that maintenance
     // functions can be run e.g. updating the scheduler.
-    pub fn receive_and_apply_commands(&mut self, max_commands: usize) {
+    //
+    // Returns true if all commands in the queue were processed.
+    fn receive_and_apply_commands(&mut self, max_commands: usize) -> bool {
         let mut i = 0;
         while let Ok(command) = self.command_receiver.try_recv() {
             self.apply_command(command);
             i += 1;
             if i >= max_commands {
-                break;
+                return false;
             }
         }
+        true
     }
 
     /// Run maintenance tasks: update the graph and run internal maintenance
-    pub fn run_maintenance(&mut self) {
+    fn run_maintenance(&mut self) {
         self.top_level_graph.update();
     }
-}
 
-pub fn start_async_knyst_thread(top_level_graph: Graph) -> ToKnyst {
-    let top_level_graph_id = top_level_graph.id();
-    let mut controller = AsyncKnystController::new(top_level_graph);
-    let sender = controller.command_sender.clone();
+    /// Receives messages, applies them and then runs maintenance. Maintenance
+    /// includes updating the [`Graph`](s), sending the changes made to the
+    /// audio thread.
+    ///
+    /// `max_commands_before_update` is the maximum number of commands read from
+    /// the queue before forcing maintenance. If you are sending a lot of
+    /// commands, fine tuning this can probably reduce latency.
+    ///
+    /// Returns true if all commands in the queue were processed.
+    pub fn run(&mut self, max_commands_before_update: usize) -> bool {
+        let all_commands_received = self.receive_and_apply_commands(max_commands_before_update);
+        self.run_maintenance();
+        all_commands_received
+    }
 
-    std::thread::spawn(move || loop {
-        controller.receive_and_apply_commands(300);
-        controller.run_maintenance();
-        std::thread::sleep(Duration::from_micros(1));
-    });
+    pub fn get_knyst_commands(&self) -> KnystCommands {
+        KnystCommands {
+            sender: self.command_sender.clone(),
+            top_level_graph_id: self.top_level_graph.id(),
+        }
+    }
 
-    ToKnyst {
-        sender,
-        top_level_graph_id,
+    /// Consumes the [`Controller`] and moves it to a new thread where it will `run` in a loop.
+    pub fn start_on_new_thread(self) -> KnystCommands {
+        let top_level_graph_id = self.top_level_graph.id();
+        let mut controller = self;
+        let sender = controller.command_sender.clone();
+
+        std::thread::spawn(move || loop {
+            while !controller.run(300) {}
+            std::thread::sleep(Duration::from_micros(1));
+        });
+
+        KnystCommands {
+            sender,
+            top_level_graph_id,
+        }
     }
 }
