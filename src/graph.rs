@@ -382,7 +382,7 @@ impl Connection {
             graph_inputs: false,
         }
     }
-    pub fn clear_inputs(node: &NodeAddress) -> Self {
+    pub fn clear_from_nodes(node: &NodeAddress) -> Self {
         Self::Clear {
             node: node.clone(),
             input_constants: false,
@@ -392,7 +392,7 @@ impl Connection {
             graph_inputs: false,
         }
     }
-    pub fn clear_node_outputs(node: &NodeAddress) -> Self {
+    pub fn clear_to_nodes(node: &NodeAddress) -> Self {
         Self::Clear {
             node: node.clone(),
             input_constants: false,
@@ -402,7 +402,7 @@ impl Connection {
             graph_inputs: false,
         }
     }
-    pub fn clear_graph_outputs(node: &NodeAddress) -> Self {
+    pub fn clear_to_graph_outputs(node: &NodeAddress) -> Self {
         Self::Clear {
             node: node.clone(),
             input_constants: false,
@@ -412,7 +412,7 @@ impl Connection {
             graph_inputs: false,
         }
     }
-    pub fn clear_graph_inputs(node: &NodeAddress) -> Self {
+    pub fn clear_from_graph_inputs(node: &NodeAddress) -> Self {
         Self::Clear {
             node: node.clone(),
             input_constants: false,
@@ -4893,9 +4893,7 @@ mod tests {
         run_graph.process_block();
         assert_eq!(run_graph.graph_output_buffers().read(0, 0), 135000.0);
 
-        graph
-            .connect(Connection::clear_node_outputs(&five))
-            .unwrap();
+        graph.connect(Connection::clear_to_nodes(&five)).unwrap();
         graph.update();
         run_graph.process_block();
         assert_eq!(run_graph.graph_output_buffers().read(0, 0), 9.0);
