@@ -214,12 +214,12 @@ impl Buffer {
         }
 
         let (sampling_rate, num_channels) = if let Some(cp) = codec_params {
-            println!(
-                "channels: {}, rate: {}, num samples: {}",
-                cp.channels.unwrap(),
-                cp.sample_rate.unwrap(),
-                buffer.len()
-            );
+            // println!(
+            //     "channels: {}, rate: {}, num samples: {}",
+            //     cp.channels.unwrap(),
+            //     cp.sample_rate.unwrap(),
+            //     buffer.len()
+            // );
             // The channels are stored as a bit field
             // https://docs.rs/symphonia-core/0.5.1/src/symphonia_core/audio.rs.html#29-90
             // The number of bits set to 1 is the number of channels in the buffer.
