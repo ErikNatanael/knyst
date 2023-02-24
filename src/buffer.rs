@@ -27,6 +27,14 @@ use crate::{BufferId, IdOrKey};
 
 use super::Sample;
 
+#[derive(thiserror::Error, Debug)]
+pub enum BufferError {
+    #[error("Tried to load a file in an unsupported format: {0}")]
+    FileFormatNotSupported(PathBuf),
+    #[error("Symphonia error: {0}")]
+    SymphoniaError(#[from] SymphoniaError),
+}
+
 new_key_type! {
     pub struct BufferKey;
 }
@@ -79,7 +87,7 @@ impl Buffer {
 
     /// Create a [`Buffer`] by loading a sound file from disk. Currently
     /// supported file formats: Wave, Ogg Vorbis, FLAC, MP3
-    pub fn from_sound_file(path: impl Into<PathBuf>) -> Result<Self, SymphoniaError> {
+    pub fn from_sound_file(path: impl Into<PathBuf>) -> Result<Self, BufferError> {
         let path = path.into();
         let mut buffer = Vec::new();
         let mut codec_params = None;
@@ -135,7 +143,7 @@ impl Buffer {
                         }
                         Err(err) => match err {
                             SymphoniaError::IoError(e) => {
-                                println!("{e}");
+                                // println!("{e}");
                                 break;
                             }
                             SymphoniaError::DecodeError(_) => todo!(),
@@ -196,21 +204,14 @@ impl Buffer {
                         }
                         Err(err) => {
                             // An unrecoverable error occured, halt decoding.
-                            match err {
-                                SymphoniaError::SeekError(_) => todo!(),
-                                SymphoniaError::Unsupported(_) => todo!(),
-                                SymphoniaError::LimitError(_) => todo!(),
-                                SymphoniaError::ResetRequired => todo!(),
-                                _ => (),
-                            }
-                            panic!("{}", err);
+                            return Err(From::from(err));
                         }
                     }
                 }
             }
-            Err(err) => {
+            Err(_err) => {
                 // The input was not supported by any format reader.
-                eprintln!("file not supported: {}", err);
+                return Err(BufferError::FileFormatNotSupported(path));
             }
         }
 
@@ -343,7 +344,7 @@ impl Gen for BufferReader {
                 } else {
                     // Output zeroes if the buffer doesn't exist.
                     // TODO: Send error back to the user that the buffer doesn't exist without interrupting the audio thread.
-                    eprintln!("Error: BufferReader: buffer doesn't exist in Resources");
+                    // eprintln!("Error: BufferReader: buffer doesn't exist in Resources");
                     stop_sample = Some(0);
                 }
             }
@@ -459,7 +460,7 @@ impl Gen for BufferReaderMulti {
             } else {
                 // Output zeroes if the buffer doesn't exist.
                 // TODO: Send error back to the user that the buffer doesn't exist without interrupting the audio thread.
-                eprintln!("Error: BufferReader: buffer doesn't exist in Resources");
+                // eprintln!("Error: BufferReader: buffer doesn't exist in Resources");
                 stop_sample = Some(0);
             }
         } else {
