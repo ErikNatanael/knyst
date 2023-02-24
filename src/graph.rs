@@ -31,6 +31,7 @@
 #[cfg(loom)]
 use loom::sync::atomic::Ordering;
 
+use crate::controller;
 use crate::scheduling::{MusicalTime, MusicalTimeMap};
 use crate::time::Superseconds;
 
@@ -1239,7 +1240,7 @@ impl Drop for OwnedRawBuffer {
 ///     sample_rate: 44100.,
 ///     ..Default::default()
 /// });
-/// let mut run_graph = RunGraph::new(&mut graph, resources, RunGraphSettings::default())?;
+/// let (mut run_graph, _, _) = RunGraph::new(&mut graph, resources, RunGraphSettings::default())?;
 /// // Adding a node gives you an address to that node
 /// let sine_node_address = graph.push(WavetableOscillatorOwned::new(Wavetable::sine()));
 /// // Connecting the node to the graph output
@@ -3657,6 +3658,8 @@ pub struct RunGraph {
     input_buffer_length: usize,
     input_node_buffer_ref: NodeBufferRef,
     output_node_buffer_ref: NodeBufferRef,
+    resources_command_receiver: rtrb::Consumer<crate::ResourcesCommand>,
+    resources_response_sender: rtrb::Producer<crate::ResourcesResponse>,
     /// The MusicalTimeMap that is shared between all sub Graphs running through
     /// this RunGraph. Stored here so that the user can get access to changing it.
     musical_time_map: Arc<RwLock<MusicalTimeMap>>,
@@ -3666,11 +3669,21 @@ impl RunGraph {
     /// Prepare the necessary resources for running the graph. This will fail if
     /// the Graph passed in has already been turned into a Node somewhere else,
     /// for example if it has been pushed to a different Graph.
+    ///
+    /// Returns Self as well as ring buffer channels to apply changes to
+    /// Resources.
     pub fn new(
         graph: &mut Graph,
         resources: Resources,
         settings: RunGraphSettings,
-    ) -> Result<Self, RunGraphError> {
+    ) -> Result<
+        (
+            Self,
+            rtrb::Producer<crate::ResourcesCommand>,
+            rtrb::Consumer<crate::ResourcesResponse>,
+        ),
+        RunGraphError,
+    > {
         match graph.split_and_create_node() {
             Ok(graph_node) => {
                 let input_buffer_length = graph_node.num_inputs() * graph_node.block_size;
@@ -3705,15 +3718,24 @@ impl RunGraph {
                 );
                 // Run a first update to make sure any queued changes get sent to the GraphGen
                 graph.update();
-                Ok(Self {
-                    graph_node,
-                    resources,
-                    input_buffer_length,
-                    input_buffer_ptr,
-                    input_node_buffer_ref,
-                    output_node_buffer_ref,
-                    musical_time_map,
-                })
+                // Create ring buffer channels for communicating with Resources
+                let (resources_command_sender, resources_command_receiver) = RingBuffer::new(50);
+                let (resources_response_sender, resources_response_receiver) = RingBuffer::new(50);
+                Ok((
+                    Self {
+                        graph_node,
+                        resources,
+                        input_buffer_length,
+                        input_buffer_ptr,
+                        input_node_buffer_ref,
+                        output_node_buffer_ref,
+                        musical_time_map,
+                        resources_command_receiver,
+                        resources_response_sender,
+                    },
+                    resources_command_sender,
+                    resources_response_receiver,
+                ))
             }
             Err(e) => Err(RunGraphError::CouldNodeCreateNode(e)),
         }
@@ -3725,6 +3747,21 @@ impl RunGraph {
     #[inline]
     pub fn graph_input_buffers(&mut self) -> &mut NodeBufferRef {
         &mut self.input_node_buffer_ref
+    }
+    pub fn run_resources_communication(&mut self, max_commands_to_process: usize) {
+        let mut i = 0;
+        while let Ok(command) = self.resources_command_receiver.pop() {
+            if let Err(e) = self
+                .resources_response_sender
+                .push(self.resources.apply_command(command))
+            {
+                eprintln!("Warning: A ResourcesResponse could not be sent back from the RunGraph. This may lead to dropping on the audio thread. {e}");
+            }
+            i += 1;
+            if i >= max_commands_to_process {
+                break;
+            }
+        }
     }
     /// Run the Graph for one block using the inputs currently stored in the
     /// input buffer. The results can be accessed through the output buffer
@@ -3916,7 +3953,7 @@ impl Gen for Ramp {
 ///     sample_rate: 44100.,
 ///     ..Default::default()
 /// });
-/// let mut run_graph = RunGraph::new(&mut graph, resources, RunGraphSettings::default())?;
+/// let (mut run_graph, _, _) = RunGraph::new(&mut graph, resources, RunGraphSettings::default())?;
 /// let mult = graph.push(Mult);
 /// // Connecting the node to the graph output
 /// graph.connect(mult.to_graph_out())?;
@@ -3995,7 +4032,7 @@ impl Gen for Mult {
 ///     graph.connect(pan.to_graph_out().channels(2))?;
 ///     graph.commit_changes();
 ///     graph.update();
-///     let mut run_graph = RunGraph::new(&mut graph, resources, RunGraphSettings::default())?;
+///     let (mut run_graph, _, _) = RunGraph::new(&mut graph, resources, RunGraphSettings::default())?;
 ///     run_graph.process_block();
 ///     assert!(run_graph.graph_output_buffers().read(0, 0) > 0.9999);
 ///     assert!(run_graph.graph_output_buffers().read(1, 0) < 0.0001);
@@ -4114,7 +4151,11 @@ mod tests {
 
     use std::sync::atomic::AtomicBool;
 
-    use crate::ResourcesSettings;
+    use crate::{
+        buffer::{Buffer, BufferReader},
+        controller::Controller,
+        ResourcesSettings,
+    };
 
     use super::*;
     fn null_input() -> NodeBufferRef {
@@ -4178,6 +4219,11 @@ mod tests {
     fn test_resources_settings() -> ResourcesSettings {
         ResourcesSettings::default()
     }
+    fn test_run_graph(graph: &mut Graph, settings: RunGraphSettings) -> RunGraph {
+        let resources = Resources::new(test_resources_settings());
+        let (run_graph, _, _) = RunGraph::new(graph, resources, settings).unwrap();
+        run_graph
+    }
 
     #[test]
     fn create_graph() {
@@ -4221,9 +4267,7 @@ mod tests {
         let node_id = graph.push(node);
         graph.connect(constant(0.5).to(&node_id)).unwrap();
         graph.connect(Connection::graph_output(&node_id)).unwrap();
-        let resources = Resources::new(test_resources_settings());
-        let mut run_graph =
-            RunGraph::new(&mut graph, resources, RunGraphSettings::default()).unwrap();
+        let mut run_graph = test_run_graph(&mut graph, RunGraphSettings::default());
         run_graph.process_block();
         assert_eq!(run_graph.graph_output_buffers().read(0, BLOCK - 1), 16.5);
     }
@@ -4253,9 +4297,7 @@ mod tests {
         top_level_graph
             .connect(constant(CONSTANT_INPUT_TO_NODE).to(&node_address))
             .unwrap();
-        let resources = Resources::new(test_resources_settings());
-        let mut run_graph =
-            RunGraph::new(&mut top_level_graph, resources, RunGraphSettings::default()).unwrap();
+        let mut run_graph = test_run_graph(&mut top_level_graph, RunGraphSettings::default());
         run_graph.process_block();
         assert_eq!(
             run_graph.graph_output_buffers().read(0, BLOCK - 2),
@@ -4336,9 +4378,7 @@ mod tests {
             block_size: BLOCK,
             ..Default::default()
         });
-        let resources = Resources::new(test_resources_settings());
-        let mut run_graph =
-            RunGraph::new(&mut graph, resources, RunGraphSettings::default()).unwrap();
+        let mut run_graph = test_run_graph(&mut graph, RunGraphSettings::default());
         let triangular_sequence = |n| (n * (n + 1)) / 2;
         for i in 0..10 {
             let node = DummyGen { counter: 0.0 };
@@ -4366,9 +4406,7 @@ mod tests {
             num_inputs: 3,
             ..Default::default()
         });
-        let resources = Resources::new(test_resources_settings());
-        let mut run_graph =
-            RunGraph::new(&mut graph, resources, RunGraphSettings::default()).unwrap();
+        let mut run_graph = test_run_graph(&mut graph, RunGraphSettings::default());
         let node = DummyGen { counter: 0.0 };
         let node_id = graph.push(node);
         graph
@@ -4442,10 +4480,8 @@ mod tests {
             block_size: BLOCK,
             ..Default::default()
         });
-        let resources = Resources::new(test_resources_settings());
         let mut nodes = vec![];
-        let mut run_graph =
-            RunGraph::new(&mut graph, resources, RunGraphSettings::default()).unwrap();
+        let mut run_graph = test_run_graph(&mut graph, RunGraphSettings::default());
         let mut last_node = None;
         let done_flag = Arc::new(AtomicBool::new(false));
         let audio_done_flag = done_flag.clone();
@@ -4609,15 +4645,12 @@ mod tests {
             ..Default::default()
         });
         // let mut graph_node = graph_node(&mut graph);
-        let resources = Resources::new(test_resources_settings());
-        let mut run_graph = RunGraph::new(
+        let mut run_graph = test_run_graph(
             &mut graph,
-            resources,
             RunGraphSettings {
                 scheduling_latency: Duration::from_millis(0),
             },
-        )
-        .unwrap();
+        );
         let node0 = graph.push(OneGen {});
         let node1 = graph.push(OneGen {});
         graph.connect(Connection::graph_output(&node0)).unwrap();
@@ -4725,12 +4758,7 @@ mod tests {
             ..Default::default()
         };
         let mut graph = Graph::new(graph_settings);
-        let resources = Resources::new(ResourcesSettings {
-            sample_rate: 44100.,
-            ..Default::default()
-        });
-        let mut run_graph =
-            RunGraph::new(&mut graph, resources, RunGraphSettings::default()).unwrap();
+        let mut run_graph = test_run_graph(&mut graph, RunGraphSettings::default());
         let mult = graph.push(Mult);
         let five = graph.push(
             gen(move |ctx, _resources| {
@@ -4770,12 +4798,7 @@ mod tests {
             ..Default::default()
         };
         let mut graph = Graph::new(graph_settings);
-        let resources = Resources::new(ResourcesSettings {
-            sample_rate: 44100.,
-            ..Default::default()
-        });
-        let mut run_graph =
-            RunGraph::new(&mut graph, resources, RunGraphSettings::default()).unwrap();
+        let mut run_graph = test_run_graph(&mut graph, RunGraphSettings::default());
         let multiplier = graph.push(
             gen(move |ctx, _resources| {
                 for i in 0..ctx.block_size() {
@@ -4854,21 +4877,18 @@ mod tests {
         graph.connect(nine.to(&multiplier).to_index(0)).unwrap();
         graph.connect(five.to(&multiplier).to_index(1)).unwrap();
         // You need to commit changes and update if the graph is running.
-        graph.commit_changes();
         graph.update();
         run_graph.process_block();
         assert_eq!(run_graph.graph_output_buffers().read(0, 0), 90.0);
 
         graph.disconnect(five.to(&multiplier).to_index(1)).unwrap();
         graph.connect(five.to(&multiplier).to_index(3)).unwrap();
-        graph.commit_changes();
         graph.update();
         run_graph.process_block();
         assert_eq!(run_graph.graph_output_buffers().read(0, 0), 180.0);
 
         graph.connect(five.to(&multiplier).to_index(4)).unwrap();
         graph.connect(five.to(&multiplier).to_label("i5")).unwrap();
-        graph.commit_changes();
         graph.update();
         run_graph.process_block();
         assert_eq!(run_graph.graph_output_buffers().read(0, 0), 135000.0);
@@ -4876,7 +4896,6 @@ mod tests {
         graph
             .connect(Connection::clear_node_outputs(&five))
             .unwrap();
-        graph.commit_changes();
         graph.update();
         run_graph.process_block();
         assert_eq!(run_graph.graph_output_buffers().read(0, 0), 9.0);
@@ -4887,9 +4906,67 @@ mod tests {
         graph
             .connect(numberer.to(&multiplier).from_index(7).to_index(2))
             .unwrap();
-        graph.commit_changes();
         graph.update();
         run_graph.process_block();
         assert_eq!(run_graph.graph_output_buffers().read(0, 0), 1890.0);
+    }
+    #[test]
+    fn sending_buffer_to_resources() {
+        const BLOCK_SIZE: usize = 16;
+        let graph_settings = GraphSettings {
+            block_size: BLOCK_SIZE,
+            sample_rate: 44100.,
+            num_outputs: 2,
+            ..Default::default()
+        };
+        let mut graph = Graph::new(graph_settings);
+        let resources = Resources::new(ResourcesSettings {
+            sample_rate: 44100.,
+            max_wavetables: 0,
+            max_buffers: 3,
+            max_user_data: 0,
+        });
+        let (mut run_graph, resources_command_sender, resources_response_receiver) = RunGraph::new(
+            &mut graph,
+            resources,
+            RunGraphSettings {
+                scheduling_latency: Duration::from_secs(0),
+            },
+        )
+        .unwrap();
+
+        let mut controller = Controller::new(
+            graph,
+            |e| println!("{e}"),
+            resources_command_sender,
+            resources_response_receiver,
+        );
+        let mut k = controller.get_knyst_commands();
+
+        // Send a buffer to the RunGraph
+        let buffer_vec = vec![10., 9., 8., 7., 6., 5., 4., 3., 2., 1., 0.];
+        let buffer = Buffer::from_vec(buffer_vec.clone(), 44100.);
+        let buffer_id = k.insert_buffer(buffer);
+        // Push a buffer reader that can read the Buffer
+        let mut buffer_reader = BufferReader::new(
+            crate::IdOrKey::Id(buffer_id),
+            1.0,
+            crate::StopAction::FreeSelf,
+        );
+        buffer_reader.looping = true;
+        let br = k.push(buffer_reader);
+        k.connect(br.to_graph_out());
+        // Process the Controller and RunGraph in order
+        controller.run(300);
+        run_graph.run_resources_communication(50);
+        run_graph.process_block();
+        // We should be able to read the buffer
+        let mut cycling_vec = buffer_vec.iter().cycle();
+        for i in 0..BLOCK_SIZE {
+            assert_eq!(
+                run_graph.graph_output_buffers().read(0, i),
+                *cycling_vec.next().unwrap()
+            );
+        }
     }
 }

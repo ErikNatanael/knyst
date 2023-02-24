@@ -1,6 +1,7 @@
 use anyhow::Result;
 use knyst::{
     audio_backend::{CpalBackend, CpalBackendOptions},
+    controller,
     graph::{Mult, NodeAddress},
     prelude::*,
     wavetable::{Wavetable, WavetableOscillatorOwned},
@@ -36,6 +37,7 @@ fn main() -> Result<()> {
         RunGraphSettings {
             scheduling_latency: Duration::from_millis(100),
         },
+        controller::print_error_handler,
     )?;
     let num_outputs = backend.num_outputs();
 
@@ -108,7 +110,7 @@ fn main() -> Result<()> {
                     );
                 }
 
-                std::thread::sleep(Duration::from_millis(rng.gen_range(500..2500)));
+                std::thread::sleep(Duration::from_millis(1000));
             }
         });
     }

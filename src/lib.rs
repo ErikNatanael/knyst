@@ -48,8 +48,8 @@ use graph::GenState;
 // Import these for docs
 #[allow(unused_imports)]
 use graph::{Connection, Gen, Graph, RunGraph};
-use slotmap::SlotMap;
-use std::collections::HashMap;
+use slotmap::{SecondaryMap, SlotMap};
+use std::{collections::HashMap, hash::Hash, sync::atomic::AtomicU64};
 use wavetable::{Wavetable, WavetableKey};
 
 use crate::wavetable::{FRACTIONAL_PART, TABLE_SIZE};
@@ -77,6 +77,8 @@ pub enum KnystError {
     ScheduleError(#[from] graph::ScheduleError),
     #[error("There was an error with the RunGraph: {0}")]
     RunGraphError(#[from] graph::RunGraphError),
+    #[error("Resources error : {0}")]
+    ResourcesError(#[from] ResourcesError),
 }
 
 pub type Sample = f32;
@@ -137,7 +139,34 @@ pub enum ResourcesError {
     WavetablesFull(Wavetable),
     #[error("There is not enough space to insert the given Buffer. You can create a Resources with more space or remove old Buffers")]
     BuffersFull(Buffer),
+    #[error("The key for replacement did not exist.")]
+    ReplaceBufferKeyInvalid(Buffer),
+    #[error("The id supplied does not match any buffer.")]
+    BufferIdNotFound(BufferId),
 }
+
+#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
+pub enum IdOrKey<I, K>
+where
+    I: Clone + Copy + Debug + Hash + Eq,
+    K: Clone + Copy + Debug + Hash + Eq,
+{
+    Id(I),
+    Key(K),
+}
+
+type IdType = u64;
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct BufferId(IdType);
+
+impl BufferId {
+    pub fn new() -> Self {
+        Self(NEXT_BUFFER_ID.fetch_add(1, std::sync::atomic::Ordering::Release))
+    }
+}
+
+/// Get a unique id for a Graph from this by using `fetch_add`
+pub(crate) static NEXT_BUFFER_ID: AtomicU64 = AtomicU64::new(0);
 
 /// Common resources for all Nodes in a Graph and all its sub Graphs:
 /// - [`Wavetable`]
@@ -147,6 +176,7 @@ pub enum ResourcesError {
 /// You can also add any resource you need to be shared between nodes using [`AnyData`].
 pub struct Resources {
     pub buffers: SlotMap<BufferKey, Buffer>,
+    pub buffer_ids: SecondaryMap<BufferKey, BufferId>,
     pub wavetables: SlotMap<WavetableKey, Wavetable>,
     /// A precalculated value based on the sample rate and the table size. The
     /// frequency * this number is the amount that the phase should increase one
@@ -167,6 +197,17 @@ pub struct Resources {
     pub rng: fastrand::Rng,
 }
 
+pub enum ResourcesCommand {
+    InsertBuffer { id: BufferId, buffer: Buffer },
+    RemoveBuffer { id: BufferId },
+    ReplaceBuffer { id: BufferId, buffer: Buffer },
+}
+pub enum ResourcesResponse {
+    InsertBuffer(Result<BufferKey, ResourcesError>),
+    RemoveBuffer(Result<Option<Buffer>, ResourcesError>),
+    ReplaceBuffer(Result<Buffer, ResourcesError>),
+}
+
 impl Resources {
     #[must_use]
     pub fn new(settings: ResourcesSettings) -> Self {
@@ -176,17 +217,34 @@ impl Resources {
         // Add standard wavetables to the arena
         let wavetables = SlotMap::with_capacity_and_key(settings.max_wavetables);
         let buffers = SlotMap::with_capacity_and_key(settings.max_buffers);
+        let buffer_ids = SecondaryMap::with_capacity(settings.max_buffers);
 
         let freq_to_phase_inc =
             TABLE_SIZE as f64 * FRACTIONAL_PART as f64 * (1.0 / settings.sample_rate as f64);
 
         Resources {
             buffers,
+            buffer_ids,
             wavetables,
             freq_to_phase_inc,
             user_data,
             sample_rate: settings.sample_rate,
             rng,
+        }
+    }
+    fn apply_command(&mut self, command: ResourcesCommand) -> ResourcesResponse {
+        match command {
+            ResourcesCommand::InsertBuffer { id, buffer } => {
+                ResourcesResponse::InsertBuffer(self.insert_buffer_with_id(buffer, id))
+            }
+            ResourcesCommand::RemoveBuffer { id } => match self.buffer_key_from_id(id) {
+                Some(key) => ResourcesResponse::RemoveBuffer(Ok(self.remove_buffer(key))),
+                None => ResourcesResponse::RemoveBuffer(Err(ResourcesError::BufferIdNotFound(id))),
+            },
+            ResourcesCommand::ReplaceBuffer { id, buffer } => match self.buffer_key_from_id(id) {
+                Some(key) => ResourcesResponse::ReplaceBuffer(self.replace_buffer(key, buffer)),
+                None => ResourcesResponse::RemoveBuffer(Err(ResourcesError::BufferIdNotFound(id))),
+            },
         }
     }
     /// Insert any kind of data using [`AnyData`].
@@ -223,11 +281,47 @@ impl Resources {
         self.wavetables.remove(wavetable_key)
     }
     pub fn insert_buffer(&mut self, buf: Buffer) -> Result<BufferKey, ResourcesError> {
+        self.insert_buffer_with_id(buf, BufferId::new())
+    }
+    pub fn insert_buffer_with_id(
+        &mut self,
+        buf: Buffer,
+        buf_id: BufferId,
+    ) -> Result<BufferKey, ResourcesError> {
         if self.buffers.len() < self.buffers.capacity() {
-            Ok(self.buffers.insert(buf))
+            let buf_key = self.buffers.insert(buf);
+            self.buffer_ids.insert(buf_key, buf_id);
+            Ok(buf_key)
         } else {
             Err(ResourcesError::BuffersFull(buf))
         }
+    }
+    pub fn replace_buffer(
+        &mut self,
+        buffer_key: BufferKey,
+        buf: Buffer,
+    ) -> Result<Buffer, ResourcesError> {
+        match self.buffers.get_mut(buffer_key) {
+            Some(map_buf) => {
+                let old_buffer = std::mem::replace(map_buf, buf);
+                Ok(old_buffer)
+            }
+            None => Err(ResourcesError::ReplaceBufferKeyInvalid(buf)),
+        }
+    }
+    /// Removes the buffer and returns it if the key is valid. Don't do this on
+    /// the audio thread unless you have a way of sending the buffer to a
+    /// different thread for deallocation.
+    pub fn remove_buffer(&mut self, buffer_key: BufferKey) -> Option<Buffer> {
+        self.buffers.remove(buffer_key)
+    }
+    pub fn buffer_key_from_id(&self, buf_id: BufferId) -> Option<BufferKey> {
+        for (key, &id) in self.buffer_ids.iter() {
+            if id == buf_id {
+                return Some(key);
+            }
+        }
+        None
     }
     /// Returns the rate with which a buffer needs to be played to sound at its original speed at the current sample rate.
     ///
@@ -249,12 +343,6 @@ impl Resources {
         } else {
             1.0
         }
-    }
-    /// Removes the buffer and returns it if the key is valid. Don't do this on
-    /// the audio thread unless you have a way of sending the buffer to a
-    /// different thread for deallocation.
-    pub fn remove_buffer(&mut self, buffer_key: BufferKey) -> Option<Buffer> {
-        self.buffers.remove(buffer_key)
     }
 }
 

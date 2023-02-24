@@ -1,8 +1,12 @@
 use std::time::{Duration, Instant};
 
-use crate::graph::{
-    Connection, ConnectionError, Gen, GenOrGraph, GenOrGraphEnum, Graph, GraphId, NodeAddress,
-    ParameterChange,
+use crate::{
+    buffer::Buffer,
+    graph::{
+        Connection, ConnectionError, Gen, GenOrGraph, GenOrGraphEnum, Graph, GraphId, NodeAddress,
+        ParameterChange,
+    },
+    BufferId, KnystError, ResourcesCommand, ResourcesResponse,
 };
 use crossbeam_channel::{unbounded, Receiver, Sender};
 
@@ -18,15 +22,15 @@ enum Command {
     FreeNodeMendConnections(NodeAddress),
     ScheduleChange(ParameterChange),
     FreeDisconnectedNodes,
+    ResourcesCommand(ResourcesCommand),
     // TODO: Commands to change a Resources
 }
 
 impl Command {}
 
-/// [`KnystCommands`] sends commands to
-///
-/// asynchronously with the main [`Graph`] on a
-/// different thread. The API is as close as possible to that of a owned [`Graph`].
+/// [`KnystCommands`] sends commands to the [`Controller`] which should hold the
+/// top level [`Graph`]. The API is as close as possible to that of an owned
+/// [`Graph`].
 ///
 /// This can safely be cloned and sent to a different thread for use.
 ///
@@ -77,6 +81,31 @@ impl KnystCommands {
     pub fn schedule_change(&mut self, change: ParameterChange) {
         self.sender.send(Command::ScheduleChange(change)).unwrap();
     }
+    pub fn insert_buffer(&mut self, buffer: Buffer) -> BufferId {
+        let id = BufferId::new();
+        self.sender
+            .send(Command::ResourcesCommand(ResourcesCommand::InsertBuffer {
+                id,
+                buffer,
+            }))
+            .unwrap();
+        id
+    }
+    pub fn remove_buffer(&mut self, buffer_id: BufferId) {
+        self.sender
+            .send(Command::ResourcesCommand(ResourcesCommand::RemoveBuffer {
+                id: buffer_id,
+            }))
+            .unwrap();
+    }
+    pub fn replace_buffer(&mut self, buffer_id: BufferId, buffer: Buffer) {
+        self.sender
+            .send(Command::ResourcesCommand(ResourcesCommand::ReplaceBuffer {
+                id: buffer_id,
+                buffer,
+            }))
+            .unwrap();
+    }
 }
 
 /// Receives commands from one or several [`KnystCommands`] that may be on
@@ -86,19 +115,33 @@ pub struct Controller {
     command_receiver: Receiver<Command>,
     // TODO: Maybe we don't need to store the sender since it can be produced by cloning a ToKnyst
     command_sender: Sender<Command>,
-    // the queue is for commands that couldn't be applied yet e.g. because a
+    resources_sender: rtrb::Producer<ResourcesCommand>,
+    resources_receiver: rtrb::Consumer<ResourcesResponse>,
+    // The queue is for commands that couldn't be applied yet e.g. because a
     // NodeAddress couldn't be resolved because the node had not yet been
     // pushed.
     command_queue: Vec<(Instant, Command)>,
+    error_handler: Box<dyn FnMut(KnystError) + Send>,
 }
 impl Controller {
-    pub fn new(top_level_graph: Graph) -> Self {
+    /// Creates a new [`Controller`] taking the top level [`Graph`] to which
+    /// commands will be applied and an error handler. You almost never want to
+    /// call this in program code; the AudioBackend will create one for you.
+    pub fn new(
+        top_level_graph: Graph,
+        error_handler: impl FnMut(KnystError) + Send + 'static,
+        resources_sender: rtrb::Producer<ResourcesCommand>,
+        resources_receiver: rtrb::Consumer<ResourcesResponse>,
+    ) -> Self {
         let (sender, receiver) = unbounded();
         Self {
             top_level_graph,
             command_receiver: receiver,
             command_sender: sender,
             command_queue: vec![],
+            error_handler: Box::new(error_handler),
+            resources_receiver,
+            resources_sender,
         }
     }
 
@@ -163,11 +206,25 @@ impl Controller {
                 .top_level_graph
                 .free_disconnected_nodes()
                 .map_err(|e| From::from(e)),
+            Command::ResourcesCommand(resources_command) => {
+                // Try sending it to Resources. If it fails, store it in the queue.
+                match self.resources_sender.push(resources_command) {
+                    Ok(_) => Ok(()),
+                    Err(e) => match e {
+                        rtrb::PushError::Full(resources_command) => {
+                            self.command_queue.push((
+                                Instant::now(),
+                                Command::ResourcesCommand(resources_command),
+                            ));
+                            Ok(())
+                        }
+                    },
+                }
+            }
         };
 
-        // TODO: Do something better with the result: send it through a channel, store it in a log
         if let Err(e) = result {
-            eprintln!("Error in async controller: {e}");
+            (*self.error_handler)(e);
         }
     }
 
@@ -191,6 +248,25 @@ impl Controller {
     /// Run maintenance tasks: update the graph and run internal maintenance
     fn run_maintenance(&mut self) {
         self.top_level_graph.update();
+        while let Ok(response) = self.resources_receiver.pop() {
+            match response {
+                ResourcesResponse::InsertBuffer(res) => {
+                    if let Err(e) = res {
+                        (*self.error_handler)(e.into())
+                    }
+                }
+                ResourcesResponse::RemoveBuffer(res) => {
+                    if let Err(e) = res {
+                        (*self.error_handler)(e.into())
+                    }
+                }
+                ResourcesResponse::ReplaceBuffer(res) => {
+                    if let Err(e) = res {
+                        (*self.error_handler)(e.into())
+                    }
+                }
+            }
+        }
     }
 
     /// Receives messages, applies them and then runs maintenance. Maintenance
@@ -231,4 +307,8 @@ impl Controller {
             top_level_graph_id,
         }
     }
+}
+
+pub fn print_error_handler(e: KnystError) {
+    eprintln!("Error in Controller: {e}");
 }

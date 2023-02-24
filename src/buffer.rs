@@ -23,6 +23,7 @@ use crate::{
     graph::{Gen, GenState, Graph},
     StopAction,
 };
+use crate::{BufferId, IdOrKey};
 
 use super::Sample;
 
@@ -266,7 +267,7 @@ impl Buffer {
 /// TODO: Support rate through an argument with a default constant of 1
 #[derive(Clone, Debug)]
 pub struct BufferReader {
-    buffer_key: BufferKey,
+    buffer_key: IdOrKey<BufferId, BufferKey>,
     read_pointer: f64,
     rate: f64,
     base_rate: f64, // The basic rate for playing the buffer at normal speed
@@ -276,7 +277,11 @@ pub struct BufferReader {
 }
 
 impl BufferReader {
-    pub fn new(buffer_key: BufferKey, rate: f64, stop_action: StopAction) -> Self {
+    pub fn new(
+        buffer_key: IdOrKey<BufferId, BufferKey>,
+        rate: f64,
+        stop_action: StopAction,
+    ) -> Self {
         BufferReader {
             buffer_key,
             read_pointer: 0.0,
@@ -304,33 +309,41 @@ impl Gen for BufferReader {
     ) -> crate::graph::GenState {
         let mut stop_sample = None;
         if !self.finished {
-            if let Some(buffer) = &mut resources.buffers.get(self.buffer_key) {
-                // Initialise the base rate if it hasn't been set
-                if self.base_rate == 0.0 {
-                    self.base_rate = buffer.buf_rate_scale(resources.sample_rate);
+            if let IdOrKey::Id(id) = self.buffer_key {
+                match resources.buffer_key_from_id(id) {
+                    Some(key) => self.buffer_key = IdOrKey::Key(key),
+                    None => (),
                 }
+            }
+            if let IdOrKey::Key(buffer_key) = self.buffer_key {
+                if let Some(buffer) = &mut resources.buffers.get(buffer_key) {
+                    // Initialise the base rate if it hasn't been set
+                    if self.base_rate == 0.0 {
+                        self.base_rate = buffer.buf_rate_scale(resources.sample_rate);
+                    }
 
-                for (i, out) in ctx.outputs.get_channel_mut(0).iter_mut().enumerate() {
-                    let samples = buffer.get_interleaved((self.read_pointer) as usize);
-                    *out = samples[0];
-                    // println!("out: {}", sample);
-                    self.read_pointer += self.base_rate * self.rate;
-                    if self.read_pointer >= buffer.size() {
-                        self.finished = true;
-                        if self.looping {
-                            self.reset();
+                    for (i, out) in ctx.outputs.get_channel_mut(0).iter_mut().enumerate() {
+                        let samples = buffer.get_interleaved((self.read_pointer) as usize);
+                        *out = samples[0];
+                        // println!("out: {}", sample);
+                        self.read_pointer += self.base_rate * self.rate;
+                        if self.read_pointer >= buffer.size() {
+                            self.finished = true;
+                            if self.looping {
+                                self.reset();
+                            }
+                        }
+                        if self.finished {
+                            stop_sample = Some(i + 1);
+                            break;
                         }
                     }
-                    if self.finished {
-                        stop_sample = Some(i + 1);
-                        break;
-                    }
+                } else {
+                    // Output zeroes if the buffer doesn't exist.
+                    // TODO: Send error back to the user that the buffer doesn't exist without interrupting the audio thread.
+                    eprintln!("Error: BufferReader: buffer doesn't exist in Resources");
+                    stop_sample = Some(0);
                 }
-            } else {
-                // Output zeroes if the buffer doesn't exist.
-                // TODO: Send error back to the user that the buffer doesn't exist without interrupting the audio thread.
-                eprintln!("Error: BufferReader: buffer doesn't exist in Resources");
-                stop_sample = Some(0);
             }
         } else {
             stop_sample = Some(0);
