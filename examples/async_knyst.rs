@@ -60,8 +60,7 @@ fn main() -> Result<()> {
     k.connect(node0.to(&amp));
     k.connect(constant(0.25).to(&amp).to_index(1));
     k.connect(mod_amp.to(&node0).to_label("freq"));
-    k.connect(amp.to_graph_out());
-    k.connect(amp.to_graph_out().to_index(1));
+    k.connect(amp.to_graph_out().channels(2));
 
     let sub_graph = Graph::new(GraphSettings {
         block_size,
@@ -273,17 +272,17 @@ fn insert_reverb(
     let mix = 0.5;
     let reverb = k.push(fundsp_reverb_gen(sample_rate, mix));
     for input in inputs {
-        // k.disconnect(input.clone().to_graph_out());
-        // k.disconnect(input.clone().to_graph_out().to_index(1));
+        // Clear all connections from this node to the outputs of the graph it is in.
         k.disconnect(Connection::clear_to_graph_outputs(&input));
+        // Connect the node to the newly created reverb instead
         k.connect(input.clone().to(&reverb));
         k.connect(input.clone().to(&reverb).to_index(1));
     }
-    k.connect(reverb.to_graph_out().channels(1));
-    k.connect(reverb.to_graph_out().to_index(1));
+    k.connect(reverb.to_graph_out().channels(2));
     reverb
 }
 
+/// Create a Gen containing a fundsp graph
 fn fundsp_reverb_gen(sample_rate: f64, mix: f32) -> ClosureGen {
     use fundsp::audiounit::AudioUnit32;
     let mut fundsp_graph = {
@@ -299,6 +298,8 @@ fn fundsp_reverb_gen(sample_rate: f64, mix: f32) -> ClosureGen {
         let in1 = ctx.inputs.get_channel(1);
         let out0 = ctx.outputs.get_channel_mut(0);
         let out1 = ctx.outputs.get_channel_mut(1);
+        // With an f32 fundsp AudioUnit we can pass input/output buffers
+        // straight to the fundsp process method to avoid copying.
         let mut output = [out0, out1];
         let input = [in0, in1];
         fundsp_graph.process(ctx.block_size(), input.as_slice(), output.as_mut_slice());
