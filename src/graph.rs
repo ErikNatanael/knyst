@@ -518,6 +518,15 @@ impl Connection {
         }
         self
     }
+    pub fn get_from_index(&self) -> Option<usize> {
+        match &self {
+            Connection::Node { from_index, .. } => *from_index,
+            Connection::GraphOutput { from_index, .. } => *from_index,
+            Connection::Clear { .. } => None,
+            Connection::Constant { .. } => None,
+            Connection::GraphInput { from_index, .. } => Some(*from_index),
+        }
+    }
     pub fn get_to_index(&self) -> Option<usize> {
         match &self {
             Connection::Node {
@@ -587,6 +596,10 @@ impl Connection {
         }
         self
     }
+    /// Set how many channels should be connected together. This is most useful
+    /// for multi channel connections e.g. stereo -> stereo. Inputs/outputs will
+    /// wrap if the `num_channels` value if higher than the number of
+    /// inputs/outputs available.
     pub fn channels(mut self, num_channels: usize) -> Self {
         match &mut self {
             Connection::Node { channels, .. } => {
@@ -1550,6 +1563,7 @@ impl Graph {
             let num_inputs = self.node_input_index_to_name.get(node.key).expect("Since the key exists in the Graph it should have a corresponding node_input_index_to_name Vec").len();
             let num_outputs= self.node_output_index_to_name.get(node.key).expect("Since the key exists in the Graph it should have a corresponding node_output_index_to_name Vec").len();
             let inputs_to_bridge = num_inputs.min(num_outputs);
+            // First collect all the connections that should be bridged so that they are in one place
             let mut outputs = vec![vec![]; inputs_to_bridge];
             for (destination_node_key, edge_vec) in &self.node_input_edges {
                 for edge in edge_vec {
@@ -1629,7 +1643,15 @@ impl Graph {
             for (inputs, outputs) in inputs.into_iter().zip(outputs.iter()) {
                 for input in inputs {
                     for output in outputs {
-                        let connection = output.clone();
+                        // We are not certain that the input node has as many
+                        // outputs as the node being freed.
+                        let num_node_outputs =
+                            self.get_nodes().get(input.source).unwrap().num_outputs();
+                        let mut connection = output.clone();
+                        if let Some(connection_from_index) = connection.get_from_index() {
+                            connection =
+                                connection.from_index(connection_from_index % num_node_outputs)
+                        }
                         self.connect(
                             connection.from(
                                 &RawNodeAddress {
@@ -2271,28 +2293,31 @@ impl Graph {
                 } else {
                     0
                 };
-                // Alternative way to get the num_inputs without accessing the node
-                if channels + to_index > self.node_input_index_to_name.get(sink.key).unwrap().len()
-                {
-                    return Err(ConnectionError::ChannelOutOfBounds);
-                }
+                // Alternative way to get the num_inputs and outputs without accessing the node
+                let num_source_outputs = self
+                    .node_output_index_to_name
+                    .get(source.key)
+                    .unwrap()
+                    .len();
+                let num_sink_inputs = self.node_input_index_to_name.get(sink.key).unwrap().len();
                 if !feedback {
                     let edge_list = &mut self.node_input_edges[sink.key];
                     for i in 0..channels {
                         edge_list.push(Edge {
-                            from_output_index: from_index + i,
+                            // wrap channels if there are too many
+                            from_output_index: (from_index + i) % num_source_outputs,
                             source: source.key,
-                            to_input_index: to_index + i,
+                            // wrap channels if there are too many
+                            to_input_index: (to_index + i) % num_sink_inputs,
                         });
                     }
                 } else {
                     // Create a feedback node if there isn't one.
-                    let feedback_node_index =
+                    let feedback_node_key =
                         if let Some(&index) = self.node_feedback_node_key.get(source.key) {
                             index
                         } else {
-                            let num_outputs = self.get_nodes_mut()[source.key].num_outputs();
-                            let feedback_node = FeedbackGen::node(num_outputs);
+                            let feedback_node = FeedbackGen::node(num_source_outputs);
                             let mut feedback_node_address = NodeAddress::new();
                             self.push_node(feedback_node, &mut feedback_node_address);
                             let address = feedback_node_address.to_raw().unwrap();
@@ -2306,17 +2331,17 @@ impl Graph {
                     let edge_list = &mut self.node_input_edges[sink.key];
                     for i in 0..channels {
                         edge_list.push(Edge {
-                            from_output_index: from_index + i,
-                            source: feedback_node_index,
-                            to_input_index: to_index + i,
+                            from_output_index: (from_index + i) % num_source_outputs,
+                            source: feedback_node_key,
+                            to_input_index: (to_index + i) % num_sink_inputs,
                         });
                     }
-                    let edge_list = &mut self.node_feedback_edges[feedback_node_index];
+                    let edge_list = &mut self.node_feedback_edges[feedback_node_key];
                     for i in 0..channels {
                         edge_list.push(FeedbackEdge {
-                            from_output_index: from_index + i,
+                            from_output_index: (from_index + i) % num_source_outputs,
                             source: source.key,
-                            to_input_index: from_index + i,
+                            to_input_index: (from_index + i) % num_source_outputs,
                             feedback_destination: sink.key,
                         });
                     }
@@ -2394,9 +2419,16 @@ impl Graph {
                 if source.graph_id != self.id {
                     return try_connect_to_graphs(connection);
                 }
-                if channels + to_index > self.num_outputs {
-                    return Err(ConnectionError::ChannelOutOfBounds);
-                }
+
+                // TODO: Check that the source key exists first
+                let num_source_outputs = self
+                    .node_output_index_to_name
+                    .get(source.key)
+                    .unwrap()
+                    .len();
+                // if channels + to_index > self.num_outputs {
+                //     return Err(ConnectionError::ChannelOutOfBounds);
+                // }
                 let from_index = if from_index.is_some() {
                     if let Some(i) = from_index {
                         i
@@ -2419,8 +2451,8 @@ impl Graph {
                 for i in 0..channels {
                     self.output_edges.push(Edge {
                         source: source.key,
-                        from_output_index: from_index + i,
-                        to_input_index: to_index + i,
+                        from_output_index: (from_index + i) % num_source_outputs,
+                        to_input_index: (to_index + i) % self.num_outputs,
                     })
                 }
             }
