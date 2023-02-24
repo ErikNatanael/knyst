@@ -1,7 +1,7 @@
 use anyhow::Result;
 use knyst::{
     audio_backend::{CpalBackend, CpalBackendOptions},
-    controller,
+    controller::{self, KnystCommands},
     graph::{Mult, NodeAddress},
     prelude::*,
     wavetable::{Wavetable, WavetableOscillatorOwned},
@@ -139,13 +139,17 @@ fn main() -> Result<()> {
                     )
                     .unwrap();
 
-                    // Change the frequency of the nodes based on what key was pressed
-                    let new_freq = character_to_hz(c);
-                    k.schedule_change(ParameterChange::now(node0.clone(), new_freq).l("freq"));
-                    k.schedule_change(
-                        ParameterChange::now(modulator.clone(), new_freq * 5.).l("freq"),
-                    );
-                    k.schedule_change(ParameterChange::now(mod_amp.clone(), new_freq * 0.1).i(1));
+                    if !handle_special_keys(c, k.clone()) {
+                        // Change the frequency of the nodes based on what key was pressed
+                        let new_freq = character_to_hz(c);
+                        k.schedule_change(ParameterChange::now(node0.clone(), new_freq).l("freq"));
+                        k.schedule_change(
+                            ParameterChange::now(modulator.clone(), new_freq * 5.).l("freq"),
+                        );
+                        k.schedule_change(
+                            ParameterChange::now(mod_amp.clone(), new_freq * 0.1).i(1),
+                        );
+                    }
 
                     stdout.lock().flush().unwrap();
                 }
@@ -200,4 +204,31 @@ fn character_to_hz(c: char) -> f32 {
         } as f32,
         ROOT_FREQ * 4.,
     )
+}
+
+fn handle_special_keys(c: char, mut k: KnystCommands) -> bool {
+    match c {
+        'm' => {
+            // Load a buffer and play it back
+
+            let files = rfd::FileDialog::new()
+                .add_filter("wav", &["wav"])
+                .pick_file();
+            if let Some(file_path) = files {
+                match Buffer::from_sound_file(file_path) {
+                    Ok(buffer) => {
+                        let id = k.insert_buffer(buffer);
+                        let reader =
+                            BufferReader::new(knyst::IdOrKey::Id(id), 1.0, StopAction::FreeSelf);
+                        let reader = k.push(reader);
+                        k.connect(reader.to_graph_out());
+                        k.connect(reader.to_graph_out().to_index(1));
+                    }
+                    Err(e) => eprintln!("Error opening sound buffer: {e}"),
+                }
+            }
+            true
+        }
+        _ => false,
+    }
 }
