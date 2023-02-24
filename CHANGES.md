@@ -5,6 +5,10 @@
 - Introduced a convenient and unified way of running knyst in single or multi threaded contexts through the `Controller` and `KnystCommands` (name inspired from Bevy). This was incorporated in the AudioBackend API for convenience.
 - Renamed functions/methods for clarity.
   - ParameterChange::relative_duration -> ParameterChange::duration_from_now
+  - Connection::clear_output_nodes -> Connection::clear_to_nodes
+  - Connection::clear_inputs -> Connection::clear_from_nodes
+  - Connection::clear_graph_outputs -> Connection::clear_to_graph_outputs
+  - Connection::clear_graph_inputs -> Connection::clear_from_graph_inputs
 - Removed the deprecated methods.
 - Changed NodeAddress to be async compatible i.e. it can be created before the Gen/Graph has been pushed to a Graph. This required making it not Copy and methods taking a reference to it instead.
 - Internal changes to make scheduling changes more flexible and exact.
