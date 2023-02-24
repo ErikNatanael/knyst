@@ -35,7 +35,8 @@ new_key_type! {
 pub struct Buffer {
     buffer: Vec<Sample>,
     num_channels: usize,
-    size: f64,
+    /// Size in number of frames independent on the number of channels.
+    num_frames: f64,
     /// The sample rate of the buffer, can be different from the sample rate of the audio server
     sample_rate: f64,
 }
@@ -45,7 +46,7 @@ impl Buffer {
         Buffer {
             buffer: vec![0.0; size],
             num_channels,
-            size: size as f64,
+            num_frames: size as f64,
             sample_rate,
         }
     }
@@ -55,7 +56,7 @@ impl Buffer {
         Buffer {
             buffer,
             num_channels: 1,
-            size,
+            num_frames: size,
             sample_rate,
         }
     }
@@ -67,11 +68,11 @@ impl Buffer {
         num_channels: usize,
         sample_rate: f64,
     ) -> Self {
-        let size = buffer.len() as f64;
+        let size = (buffer.len() / num_channels) as f64;
         Buffer {
             buffer,
             num_channels,
-            size,
+            num_frames: size,
             sample_rate,
         }
     }
@@ -258,8 +259,9 @@ impl Buffer {
         &self.buffer[index..index + self.num_channels]
         // unsafe{ *self.buffer.get_unchecked(index) }
     }
-    pub fn size(&self) -> f64 {
-        self.size
+    /// Size in number of frames regardless of the number of samples
+    pub fn num_frames(&self) -> f64 {
+        self.num_frames
     }
 }
 
@@ -288,7 +290,7 @@ impl BufferReader {
             base_rate: 0.0, // initialise to the correct value the first time next() is called
             rate,
             finished: false,
-            looping: true,
+            looping: false,
             stop_action,
         }
     }
@@ -327,7 +329,7 @@ impl Gen for BufferReader {
                         *out = samples[0];
                         // println!("out: {}", sample);
                         self.read_pointer += self.base_rate * self.rate;
-                        if self.read_pointer >= buffer.size() {
+                        if self.read_pointer >= buffer.num_frames() {
                             self.finished = true;
                             if self.looping {
                                 self.reset();
@@ -443,7 +445,7 @@ impl Gen for BufferReaderMulti {
                         ctx.outputs.write(*sample, out_num, i);
                     }
                     self.read_pointer += self.base_rate * self.rate;
-                    if self.read_pointer >= buffer.size() {
+                    if self.read_pointer >= buffer.num_frames() {
                         self.finished = true;
                         if self.looping {
                             self.reset();
