@@ -18,6 +18,7 @@ enum Command {
         graph_id: GraphId,
     },
     Connect(Connection),
+    Disconnect(Connection),
     FreeNode(NodeAddress),
     FreeNodeMendConnections(NodeAddress),
     ScheduleChange(ParameterChange),
@@ -66,6 +67,9 @@ impl KnystCommands {
     }
     pub fn connect(&mut self, connection: Connection) {
         self.sender.send(Command::Connect(connection)).unwrap();
+    }
+    pub fn disconnect(&mut self, connection: Connection) {
+        self.sender.send(Command::Disconnect(connection)).unwrap();
     }
     pub fn free_disconnected_nodes(&mut self) {
         self.sender.send(Command::FreeDisconnectedNodes).unwrap();
@@ -170,6 +174,20 @@ impl Controller {
                         | ConnectionError::SinkNodeNotPushed => {
                             self.command_queue
                                 .push((Instant::now(), Command::Connect(connection)));
+                            Ok(())
+                        }
+                        _ => Err(From::from(e)),
+                    },
+                }
+            }
+            Command::Disconnect(connection) => {
+                match self.top_level_graph.disconnect(connection.clone()) {
+                    Ok(_) => Ok(()),
+                    Err(e) => match e {
+                        ConnectionError::SourceNodeNotPushed
+                        | ConnectionError::SinkNodeNotPushed => {
+                            self.command_queue
+                                .push((Instant::now(), Command::Disconnect(connection)));
                             Ok(())
                         }
                         _ => Err(From::from(e)),
