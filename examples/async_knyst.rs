@@ -2,7 +2,7 @@ use anyhow::Result;
 use knyst::{
     audio_backend::{CpalBackend, CpalBackendOptions},
     controller::{self, KnystCommands},
-    graph::{Mult, NodeAddress},
+    graph::{ClosureGen, Mult, NodeAddress},
     prelude::*,
     wavetable::{Wavetable, WavetableOscillatorOwned},
 };
@@ -15,6 +15,13 @@ use termion::input::TermRead;
 use termion::raw::IntoRawMode;
 
 static ROOT_FREQ: f32 = 200.;
+
+struct State {
+    potential_reverb_inputs: Vec<NodeAddress>,
+    reverb_node: Option<NodeAddress>,
+    block_size: usize,
+    sample_rate: f32,
+}
 
 fn main() -> Result<()> {
     let mut backend = CpalBackend::new(CpalBackendOptions::default())?;
@@ -56,6 +63,27 @@ fn main() -> Result<()> {
     k.connect(amp.to_graph_out());
     k.connect(amp.to_graph_out().to_index(1));
 
+    let sub_graph = Graph::new(GraphSettings {
+        block_size,
+        sample_rate,
+        num_outputs,
+        name: String::from("subgraph"),
+        ..Default::default()
+    });
+
+    let sub_graph_id = sub_graph.id();
+    let sub_graph = k.push(sub_graph);
+    k.connect(sub_graph.to_graph_out().channels(2));
+
+    // Store the nodes that would be connected to the reverb if it's toggled on.
+    let potential_reverb_inputs = vec![sub_graph, amp];
+    let mut state = State {
+        potential_reverb_inputs,
+        reverb_node: None,
+        block_size,
+        sample_rate,
+    };
+
     // Have a background thread play some harmony
     {
         let chords = vec![
@@ -68,17 +96,6 @@ fn main() -> Result<()> {
         let mut k = k.clone();
         std::thread::spawn(move || {
             let mut rng = thread_rng();
-            let sub_graph = Graph::new(GraphSettings {
-                block_size,
-                sample_rate,
-                num_outputs,
-                name: String::from("subgraph"),
-                ..Default::default()
-            });
-
-            let sub_graph_id = sub_graph.id();
-            let sub_graph = k.push(sub_graph);
-            k.connect(sub_graph.to_graph_out().channels(2));
             let mut harmony_wavetable = Wavetable::sine();
             harmony_wavetable.add_odd_harmonics(8, 1.3);
             harmony_wavetable.normalize();
@@ -139,7 +156,7 @@ fn main() -> Result<()> {
                     )
                     .unwrap();
 
-                    if !handle_special_keys(c, k.clone()) {
+                    if !handle_special_keys(c, k.clone(), &mut state) {
                         // Change the frequency of the nodes based on what key was pressed
                         let new_freq = character_to_hz(c);
                         k.schedule_change(ParameterChange::now(node0.clone(), new_freq).l("freq"));
@@ -206,11 +223,10 @@ fn character_to_hz(c: char) -> f32 {
     )
 }
 
-fn handle_special_keys(c: char, mut k: KnystCommands) -> bool {
+fn handle_special_keys(c: char, mut k: KnystCommands, state: &mut State) -> bool {
     match c {
         'm' => {
             // Load a buffer and play it back
-
             let files = rfd::FileDialog::new()
                 .add_filter("wav", &["wav"])
                 .pick_file();
@@ -229,6 +245,67 @@ fn handle_special_keys(c: char, mut k: KnystCommands) -> bool {
             }
             true
         }
+        'n' => {
+            match state.reverb_node.take() {
+                Some(reverb_node) => k.free_node_mend_connections(reverb_node),
+                None => {
+                    let reverb_node = insert_reverb(
+                        k,
+                        &state.potential_reverb_inputs,
+                        state.sample_rate as f64,
+                        state.block_size,
+                    );
+                    state.reverb_node = Some(reverb_node);
+                }
+            }
+            true
+        }
         _ => false,
     }
+}
+
+fn insert_reverb(
+    mut k: KnystCommands,
+    inputs: &[NodeAddress],
+    sample_rate: f64,
+    _block_size: usize,
+) -> NodeAddress {
+    let mix = 0.5;
+    let reverb = k.push(fundsp_reverb_gen(sample_rate, mix));
+    for input in inputs {
+        // k.disconnect(input.clone().to_graph_out());
+        // k.disconnect(input.clone().to_graph_out().to_index(1));
+        k.disconnect(Connection::clear_to_graph_outputs(&input));
+        k.connect(input.clone().to(&reverb));
+        k.connect(input.clone().to(&reverb).to_index(1));
+    }
+    k.connect(reverb.to_graph_out().channels(1));
+    k.connect(reverb.to_graph_out().to_index(1));
+    reverb
+}
+
+fn fundsp_reverb_gen(sample_rate: f64, mix: f32) -> ClosureGen {
+    use fundsp::audiounit::AudioUnit32;
+    let mut fundsp_graph = {
+        use fundsp::hacker32::*;
+        //let mut c = c * 0.1;
+        let mut c = multipass() & mix * reverb_stereo(10.0, 5.0);
+        c.reset(Some(sample_rate));
+        c
+    };
+
+    gen(move |ctx, _resources| {
+        let in0 = ctx.inputs.get_channel(0);
+        let in1 = ctx.inputs.get_channel(1);
+        let out0 = ctx.outputs.get_channel_mut(0);
+        let out1 = ctx.outputs.get_channel_mut(1);
+        let mut output = [out0, out1];
+        let input = [in0, in1];
+        fundsp_graph.process(ctx.block_size(), input.as_slice(), output.as_mut_slice());
+        GenState::Continue
+    })
+    .output("out0")
+    .output("out1")
+    .input("in0")
+    .input("in1")
 }
