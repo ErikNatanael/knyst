@@ -52,10 +52,15 @@ anyhow = "1.0"
 dialog = "0.3"
 fundsp = { version = "0.9" }
 termion = "2.0.1"
+rfd = "0.11.1"
 
+
+# [[bench]]
+# name = "micro_benchmarks"
+# harness = false
 
 [[bench]]
-name = "micro_benchmarks"
+name = "large_sine_graph"
 harness = false
 
 
@@ -67,6 +72,11 @@ required-features = ["jack"]
 [[example]]
 name = "cpal_example"
 path = "examples/cpal_example.rs"
+required-features = ["cpal"]
+
+[[example]]
+name = "async_knyst"
+path = "examples/async_knyst.rs"
 required-features = ["cpal"]
 
 [[example]]
