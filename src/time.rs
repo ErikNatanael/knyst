@@ -15,6 +15,10 @@ pub struct Superseconds {
     subsample_tesimals: u32,
 }
 impl Superseconds {
+    pub const ZERO: Self = Self {
+        seconds: 0,
+        subsample_tesimals: 0,
+    };
     pub fn new(seconds: u32, subsample_tesimals: u32) -> Self {
         Self {
             seconds,
