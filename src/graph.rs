@@ -686,6 +686,7 @@ impl Task {
         &mut self,
         graph_inputs: &NodeBufferRef,
         resources: &mut Resources,
+        sample_rate: Sample,
         sample_time_at_block_start: u64,
     ) -> GenState {
         // Copy all inputs
@@ -715,6 +716,7 @@ impl Task {
             let ctx = GenContext {
                 inputs: &self.input_buffers,
                 outputs: &mut outputs,
+                sample_rate,
             };
             assert!(!self.gen.is_null());
             unsafe { (*self.gen).process(ctx, resources) }
@@ -738,6 +740,7 @@ impl Task {
             let ctx = GenContext {
                 inputs: &partial_inputs,
                 outputs: &mut partial_outputs,
+                sample_rate,
             };
             assert!(!self.gen.is_null());
             unsafe { (*self.gen).process(ctx, resources) }
@@ -1087,6 +1090,7 @@ impl NodeBufferRef {
 pub struct GenContext<'a, 'b> {
     pub inputs: &'a NodeBufferRef,
     pub outputs: &'b mut NodeBufferRef,
+    pub sample_rate: Sample,
 }
 impl<'a, 'b> GenContext<'a, 'b> {
     /// Returns the current block size
@@ -1317,10 +1321,7 @@ impl Drop for OwnedRawBuffer {
 ///     ..Default::default()
 /// };
 /// let mut graph = Graph::new(graph_settings);
-/// let resources = Resources::new(ResourcesSettings {
-///     sample_rate: 44100.,
-///     ..Default::default()
-/// });
+/// let resources = Resources::new(ResourcesSettings::default());
 /// let (mut run_graph, _, _) = RunGraph::new(&mut graph, resources, RunGraphSettings::default())?;
 /// // Adding a node gives you an address to that node
 /// let sine_node_address = graph.push(WavetableOscillatorOwned::new(Wavetable::sine()));
@@ -3013,6 +3014,7 @@ impl Graph {
         };
 
         let graph_gen = GraphGen {
+            sample_rate: self.sample_rate,
             current_task_data: task_data,
             block_size: self.block_size,
             num_outputs: self.num_outputs,
@@ -3207,7 +3209,7 @@ impl Gen for GraphGen {
                             i += 1;
                         }
                     }
-                    match task.run(ctx.inputs, resources, self.sample_counter) {
+                    match task.run(ctx.inputs, resources, self.sample_rate, self.sample_counter) {
                         GenState::Continue => (),
                         GenState::FreeSelf => {
                             // We don't care if it fails since if it does the
@@ -3315,6 +3317,7 @@ impl Gen for GraphGen {
 /// don't get dropped.
 struct GraphGen {
     block_size: usize,
+    sample_rate: Sample,
     num_outputs: usize,
     num_inputs: usize,
     current_task_data: TaskData,
@@ -3741,6 +3744,7 @@ impl Node {
     pub fn process(
         &mut self,
         input_buffers: &NodeBufferRef,
+        sample_rate: Sample,
         resources: &mut Resources,
     ) -> GenState {
         let mut outputs = NodeBufferRef {
@@ -3752,6 +3756,7 @@ impl Node {
         let ctx = GenContext {
             inputs: input_buffers,
             outputs: &mut outputs,
+            sample_rate,
         };
         unsafe { (*self.gen).process(ctx, resources) }
     }
@@ -3821,6 +3826,7 @@ impl Default for RunGraphSettings {
 /// Graph, either from an audio thread or for non-real time purposes.
 pub struct RunGraph {
     graph_node: Node,
+    graph_sample_rate: Sample,
     resources: Resources,
     input_buffer_ptr: *mut f32,
     input_buffer_length: usize,
@@ -3869,6 +3875,7 @@ impl RunGraph {
                     block_size: graph_node.block_size,
                     block_start_offset: 0,
                 };
+                let graph_sample_rate = graph.sample_rate;
                 let musical_time_map = Arc::new(RwLock::new(MusicalTimeMap::new()));
                 //                TODO: Start the scheduler of the Graph
                 // Safety: The Nodes get initiated and their buffers allocated
@@ -3893,6 +3900,7 @@ impl RunGraph {
                 Ok((
                     Self {
                         graph_node,
+                        graph_sample_rate,
                         resources,
                         input_buffer_length,
                         input_buffer_ptr,
@@ -3936,8 +3944,11 @@ impl RunGraph {
     /// input buffer. The results can be accessed through the output buffer
     /// through [`RunGraph::graph_output_buffers`].
     pub fn process_block(&mut self) {
-        self.graph_node
-            .process(&self.input_node_buffer_ref, &mut self.resources);
+        self.graph_node.process(
+            &self.input_node_buffer_ref,
+            self.graph_sample_rate,
+            &mut self.resources,
+        );
     }
     /// Return a reference to the buffer holding the output of the [`Graph`].
     /// Channels which have no [`Connection`]/graph edge to them will be 0.0.
@@ -4118,10 +4129,7 @@ impl Gen for Ramp {
 ///     ..Default::default()
 /// };
 /// let mut graph = Graph::new(graph_settings);
-/// let resources = Resources::new(ResourcesSettings {
-///     sample_rate: 44100.,
-///     ..Default::default()
-/// });
+/// let resources = Resources::new(ResourcesSettings::default());
 /// let (mut run_graph, _, _) = RunGraph::new(&mut graph, resources, RunGraphSettings::default())?;
 /// let mult = graph.push(Mult);
 /// // Connecting the node to the graph output
@@ -4182,10 +4190,7 @@ impl Gen for Mult {
 /// fn main() -> Result<(), Box<dyn std::error::Error>> {
 ///     let sample_rate = 44100.;
 ///     let block_size = 8;
-///     let resources = Resources::new(ResourcesSettings {
-///         sample_rate,
-///         ..Default::default()
-///     });
+///     let resources = Resources::new(ResourcesSettings::default());
 ///     let graph_settings = GraphSettings {
 ///         block_size,
 ///         sample_rate,
@@ -4288,7 +4293,7 @@ impl Gen for NaiveSine {
         for i in 0..ctx.block_size() {
             let freq = ctx.inputs.read(0, i);
             let amp = ctx.inputs.read(1, i);
-            self.update_freq(freq, resources.sample_rate);
+            self.update_freq(freq, ctx.sample_rate);
             self.amp = amp;
             ctx.outputs.write(self.phase.cos() * self.amp, 0, i);
             self.phase += self.phase_step;
@@ -4400,10 +4405,9 @@ mod tests {
         let node_id = graph.push(DummyGen { counter: 0.0 });
         graph.connect(Connection::graph_output(&node_id)).unwrap();
         graph.init();
-        let mut resources = Resources::new(test_resources_settings());
-        let mut graph_node = graph_node(&mut graph);
-        graph_node.process(&null_input(), &mut resources);
-        assert_eq!(graph_node.output_buffers().read(0, 31), 32.0);
+        let mut run_graph = test_run_graph(&mut graph, RunGraphSettings::default());
+        run_graph.process_block();
+        assert_eq!(run_graph.graph_output_buffers().read(0, 31), 32.0);
     }
     #[test]
     fn multiple_nodes() {
@@ -4420,10 +4424,9 @@ mod tests {
         graph.connect(node_id1.to(&node_id3)).unwrap();
         graph.connect(node_id2.to(&node_id3)).unwrap();
         graph.connect(Connection::graph_output(&node_id3)).unwrap();
-        let mut graph_node = graph_node(&mut graph);
-        let mut resources = Resources::new(test_resources_settings());
-        graph_node.process(&null_input(), &mut resources);
-        assert_eq!(graph_node.output_buffers().read(0, 2), 9.0);
+        let mut run_graph = test_run_graph(&mut graph, RunGraphSettings::default());
+        run_graph.process_block();
+        assert_eq!(run_graph.graph_output_buffers().read(0, 2), 9.0);
     }
     #[test]
     fn constant_inputs() {
@@ -4500,13 +4503,12 @@ mod tests {
         graph.connect(n2.to(&n0).feedback(true)).unwrap();
         graph.connect(n3.to(&n1).feedback(true)).unwrap();
         graph.connect(n4.to(&n0).feedback(true)).unwrap();
-        let mut graph_node = graph_node(&mut graph);
-        let mut resources = Resources::new(test_resources_settings());
-        graph_node.process(&null_input(), &mut resources);
+        let mut run_graph = test_run_graph(&mut graph, RunGraphSettings::default());
+        run_graph.process_block();
         let block1 = vec![2.0f32, 4., 6., 8.];
         let block2 = vec![39f32, 47., 55., 63.];
-        for (&output, expected) in graph_node
-            .output_buffers()
+        for (&output, expected) in run_graph
+            .graph_output_buffers()
             .get_channel(0)
             .iter()
             .zip(block1)
@@ -4517,13 +4519,13 @@ mod tests {
                 "block1 failed with o: {}, expected: {}, n1: {:#?}, n0: {:#?}",
                 output,
                 expected,
-                graph_node.output_buffers().get_channel(0),
-                graph_node.output_buffers().get_channel(1)
+                run_graph.graph_output_buffers().get_channel(0),
+                run_graph.graph_output_buffers().get_channel(1)
             );
         }
-        graph_node.process(&null_input(), &mut resources);
-        for (&output, expected) in graph_node
-            .output_buffers()
+        run_graph.process_block();
+        for (&output, expected) in run_graph
+            .graph_output_buffers()
             .get_channel(0)
             .iter()
             .zip(block2)
@@ -4534,8 +4536,8 @@ mod tests {
                 "block2 failed with o: {}, expected: {}, n1: {:#?}, n0: {:#?}",
                 output,
                 expected,
-                graph_node.output_buffers().get_channel(0),
-                graph_node.output_buffers().get_channel(1)
+                run_graph.graph_output_buffers().get_channel(0),
+                run_graph.graph_output_buffers().get_channel(1)
             );
         }
     }
@@ -4599,8 +4601,7 @@ mod tests {
             block_size: BLOCK,
             ..Default::default()
         });
-        let mut graph_node = graph_node(&mut graph);
-        let mut resources = Resources::new(test_resources_settings());
+        let mut run_graph = test_run_graph(&mut graph, RunGraphSettings::default());
         let mut nodes = vec![];
         let mut last_node = None;
         for _ in 0..10 {
@@ -4614,27 +4615,27 @@ mod tests {
             nodes.push(node);
         }
         graph.update();
-        graph_node.process(&null_input(), &mut resources);
-        assert_eq!(graph_node.output_buffers().read(0, 0), 10.0);
+        run_graph.process_block();
+        assert_eq!(run_graph.graph_output_buffers().read(0, 0), 10.0);
         // Convert NodeAddress to RawNodeAddress for removal, which we know will work because we pushed it straight to the graph
         graph.free_node(nodes[9].to_raw().unwrap()).unwrap();
         graph.update();
-        graph_node.process(&null_input(), &mut resources);
-        assert_eq!(graph_node.output_buffers().read(0, 0), 9.0);
+        run_graph.process_block();
+        assert_eq!(run_graph.graph_output_buffers().read(0, 0), 9.0);
         graph.free_node(nodes[4].to_raw().unwrap()).unwrap();
         graph.update();
-        graph_node.process(&null_input(), &mut resources);
-        assert_eq!(graph_node.output_buffers().read(0, 0), 4.0);
+        run_graph.process_block();
+        assert_eq!(run_graph.graph_output_buffers().read(0, 0), 4.0);
         graph.connect(nodes[5].to(&nodes[3])).unwrap();
         graph.update();
-        graph_node.process(&null_input(), &mut resources);
-        assert_eq!(graph_node.output_buffers().read(0, 0), 8.0);
+        run_graph.process_block();
+        assert_eq!(run_graph.graph_output_buffers().read(0, 0), 8.0);
         for node in &nodes[1..4] {
             graph.free_node(node.to_raw().unwrap()).unwrap();
         }
         graph.update();
-        graph_node.process(&null_input(), &mut resources);
-        assert_eq!(graph_node.output_buffers().read(0, 0), 1.0);
+        run_graph.process_block();
+        assert_eq!(run_graph.graph_output_buffers().read(0, 0), 1.0);
         assert_eq!(
             graph.free_node(nodes[4].to_raw().unwrap()),
             Err(FreeError::NodeNotFound)
@@ -4749,8 +4750,7 @@ mod tests {
             block_size: BLOCK,
             ..Default::default()
         });
-        let mut graph_node = graph_node(&mut graph);
-        let mut resources = Resources::new(test_resources_settings());
+        let mut run_graph = test_run_graph(&mut graph, RunGraphSettings::default());
         let n0 = graph.push(SelfFreeing {
             samples_countdown: 2,
             value: 1.,
@@ -4778,29 +4778,29 @@ mod tests {
 
         graph.update();
         assert_eq!(graph.num_nodes(), 4);
-        graph_node.process(&null_input(), &mut resources);
-        assert_eq!(graph_node.output_buffers().read(0, 0), 7.0);
+        run_graph.process_block();
+        assert_eq!(run_graph.graph_output_buffers().read(0, 0), 7.0);
         graph.update();
         // Still 4 since the node has been added to the free node queue, but there
         // hasn't been a new generation in the GraphGen yet.
         assert_eq!(graph.num_nodes(), 4);
-        graph_node.process(&null_input(), &mut resources);
-        assert_eq!(graph_node.output_buffers().read(0, 0), 6.0);
+        run_graph.process_block();
+        assert_eq!(run_graph.graph_output_buffers().read(0, 0), 6.0);
         graph.update();
         assert_eq!(graph.num_nodes(), 3);
-        graph_node.process(&null_input(), &mut resources);
-        assert_eq!(graph_node.output_buffers().read(0, 0), 5.0);
+        run_graph.process_block();
+        assert_eq!(run_graph.graph_output_buffers().read(0, 0), 5.0);
         graph.update();
         assert_eq!(graph.num_nodes(), 2);
-        graph_node.process(&null_input(), &mut resources);
-        assert_eq!(graph_node.output_buffers().read(0, 0), 5.0);
+        run_graph.process_block();
+        assert_eq!(run_graph.graph_output_buffers().read(0, 0), 5.0);
         graph.update();
         assert_eq!(graph.num_nodes(), 2);
-        graph_node.process(&null_input(), &mut resources);
-        assert_eq!(graph_node.output_buffers().read(0, 0), 0.0);
+        run_graph.process_block();
+        assert_eq!(run_graph.graph_output_buffers().read(0, 0), 0.0);
         graph.update();
         assert_eq!(graph.num_nodes(), 1);
-        graph_node.process(&null_input(), &mut resources);
+        run_graph.process_block();
         graph.update();
         assert_eq!(graph.num_nodes(), 0);
     }
@@ -5088,7 +5088,6 @@ mod tests {
         };
         let mut graph = Graph::new(graph_settings);
         let resources = Resources::new(ResourcesSettings {
-            sample_rate: 44100.,
             max_wavetables: 0,
             max_buffers: 3,
             max_user_data: 0,

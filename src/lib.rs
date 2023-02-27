@@ -62,6 +62,7 @@ pub mod graph;
 pub mod prelude;
 pub mod scheduling;
 pub mod time;
+pub mod trig;
 pub mod wavetable;
 pub mod xorrng;
 
@@ -115,7 +116,6 @@ impl StopAction {
 #[derive(Copy, Clone, Debug)]
 /// Settings used to initialise [`Resources`].
 pub struct ResourcesSettings {
-    pub sample_rate: Sample,
     /// The maximum number of wavetables that can be added to the Resources. The standard wavetables will always be available regardless.
     pub max_wavetables: usize,
     /// The maximum number of buffers that can be added to the Resources
@@ -125,7 +125,6 @@ pub struct ResourcesSettings {
 impl Default for ResourcesSettings {
     fn default() -> Self {
         Self {
-            sample_rate: 44100.0,
             max_wavetables: 10,
             max_buffers: 10,
             max_user_data: 0,
@@ -178,11 +177,6 @@ pub struct Resources {
     pub buffers: SlotMap<BufferKey, Buffer>,
     pub buffer_ids: SecondaryMap<BufferKey, BufferId>,
     pub wavetables: SlotMap<WavetableKey, Wavetable>,
-    /// A precalculated value based on the sample rate and the table size. The
-    /// frequency * this number is the amount that the phase should increase one
-    /// sample. It is stored here so that it doesn't need to be stored in every
-    /// wavetable oscillator.
-    pub freq_to_phase_inc: f64,
     /// UserData is meant for data that needs to be read by many nodes and
     /// updated for all of them simultaneously. Strings are used as keys for
     /// simplicity. A HopSlotMap could be used, but it would require sending and
@@ -192,8 +186,6 @@ pub struct Resources {
     /// to make Resources user extendable, plese get in touch.
     pub user_data: HashMap<String, Box<dyn AnyData>>,
 
-    /// The sample rate of the audio process
-    pub sample_rate: Sample,
     pub rng: fastrand::Rng,
 }
 
@@ -219,16 +211,14 @@ impl Resources {
         let buffers = SlotMap::with_capacity_and_key(settings.max_buffers);
         let buffer_ids = SecondaryMap::with_capacity(settings.max_buffers);
 
-        let freq_to_phase_inc =
-            TABLE_SIZE as f64 * FRACTIONAL_PART as f64 * (1.0 / settings.sample_rate as f64);
+        // let freq_to_phase_inc =
+        //     TABLE_SIZE as f64 * FRACTIONAL_PART as f64 * (1.0 / settings.sample_rate as f64);
 
         Resources {
             buffers,
             buffer_ids,
             wavetables,
-            freq_to_phase_inc,
             user_data,
-            sample_rate: settings.sample_rate,
             rng,
         }
     }
@@ -322,27 +312,6 @@ impl Resources {
             }
         }
         None
-    }
-    /// Returns the rate with which a buffer needs to be played to sound at its original speed at the current sample rate.
-    ///
-    /// # Example:
-    /// ```
-    /// # use knyst::prelude::*;
-    /// // Create a buffer with a sample rate of 44100.0
-    /// let buffer = Buffer::new(1024, 1, 44100.0);
-    /// let mut resources = Resources::new(ResourcesSettings{
-    ///     sample_rate: 48000.,
-    ///     ..Default::default()
-    /// });
-    /// let key = resources.insert_buffer(buffer).unwrap();
-    /// assert_eq!(resources.buf_rate_scale(key), 44100.0 / 48000.0);
-    /// ```
-    pub fn buf_rate_scale(&self, buffer_key: BufferKey) -> f64 {
-        if let Some(buf) = self.buffers.get(buffer_key) {
-            buf.buf_rate_scale(self.sample_rate)
-        } else {
-            1.0
-        }
     }
 }
 

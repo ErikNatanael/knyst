@@ -304,6 +304,7 @@ pub struct WavetableOscillatorOwned {
     phase: Phase,
     wavetable: Wavetable,
     amp: Sample,
+    freq_to_phase_inc: f64,
 }
 
 impl WavetableOscillatorOwned {
@@ -314,6 +315,7 @@ impl WavetableOscillatorOwned {
             phase: Phase(0),
             wavetable,
             amp: 1.0,
+            freq_to_phase_inc: 0.0, // set to a real value in init
         }
     }
     #[must_use]
@@ -324,7 +326,7 @@ impl WavetableOscillatorOwned {
         osc
     }
     pub fn set_freq(&mut self, freq: Sample, resources: &mut Resources) {
-        self.step = (freq as f64 * resources.freq_to_phase_inc) as u32;
+        self.step = (freq as f64 * self.freq_to_phase_inc) as u32;
     }
     pub fn set_amp(&mut self, amp: Sample) {
         self.amp = amp;
@@ -365,6 +367,10 @@ impl Gen for WavetableOscillatorOwned {
     }
     fn num_inputs(&self) -> usize {
         1
+    }
+    fn init(&mut self, sample_rate: Sample) {
+        self.freq_to_phase_inc =
+            TABLE_SIZE as f64 * FRACTIONAL_PART as f64 * (1.0 / sample_rate as f64);
     }
 }
 
@@ -434,6 +440,7 @@ pub struct Oscillator {
     phase: Phase,
     wavetable: WavetableKey,
     amp: Sample,
+    freq_to_phase_inc: f64,
 }
 
 impl Oscillator {
@@ -444,6 +451,7 @@ impl Oscillator {
             phase: Phase(0),
             wavetable,
             amp: 1.0,
+            freq_to_phase_inc: 0., // set to a real value in init
         }
     }
     #[must_use]
@@ -460,7 +468,7 @@ impl Oscillator {
     }
     #[inline]
     pub fn set_freq(&mut self, freq: Sample, resources: &mut Resources) {
-        self.step = (freq as f64 * resources.freq_to_phase_inc) as u32;
+        self.step = (freq as f64 * self.freq_to_phase_inc) as u32;
     }
     #[inline]
     pub fn set_amp(&mut self, amp: Sample) {
@@ -505,5 +513,9 @@ impl Gen for Oscillator {
     }
     fn num_inputs(&self) -> usize {
         1
+    }
+    fn init(&mut self, sample_rate: Sample) {
+        self.freq_to_phase_inc =
+            TABLE_SIZE as f64 * FRACTIONAL_PART as f64 * (1.0 / sample_rate as f64);
     }
 }

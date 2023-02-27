@@ -28,10 +28,7 @@ fn main() -> Result<()> {
 
     let sample_rate = backend.sample_rate() as f32;
     let block_size = backend.block_size().unwrap_or(64);
-    let resources = Resources::new(ResourcesSettings {
-        sample_rate,
-        ..Default::default()
-    });
+    let resources = Resources::new(ResourcesSettings::default());
     let top_level_graph = Graph::new(GraphSettings {
         block_size,
         sample_rate,

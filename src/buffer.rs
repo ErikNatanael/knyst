@@ -322,7 +322,7 @@ impl Gen for BufferReader {
                 if let Some(buffer) = &mut resources.buffers.get(buffer_key) {
                     // Initialise the base rate if it hasn't been set
                     if self.base_rate == 0.0 {
-                        self.base_rate = buffer.buf_rate_scale(resources.sample_rate);
+                        self.base_rate = buffer.buf_rate_scale(ctx.sample_rate);
                     }
 
                     for (i, out) in ctx.outputs.get_channel_mut(0).iter_mut().enumerate() {
@@ -438,7 +438,7 @@ impl Gen for BufferReaderMulti {
             if let Some(buffer) = &mut resources.buffers.get(self.buffer_key) {
                 // Initialise the base rate if it hasn't been set
                 if self.base_rate == 0.0 {
-                    self.base_rate = buffer.buf_rate_scale(resources.sample_rate);
+                    self.base_rate = buffer.buf_rate_scale(ctx.sample_rate);
                 }
                 for i in 0..ctx.block_size() {
                     let samples = buffer.get_interleaved((self.read_pointer) as usize);
