@@ -3,6 +3,7 @@
 ## Current changes
 
 - Introduced a convenient and unified way of running knyst in single or multi threaded contexts through the `Controller` and `KnystCommands` (name inspired from Bevy). This was incorporated in the AudioBackend API for convenience.
+- Introduced the ability to schedule nodes to start with sample accuracy (see `Graph::push_at_time` and similar).
 - Renamed functions/methods for clarity.
   - ParameterChange::relative_duration -> ParameterChange::duration_from_now
   - Connection::clear_output_nodes -> Connection::clear_to_nodes
