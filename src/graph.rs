@@ -659,6 +659,9 @@ struct Task {
     output_buffers_first_ptr: *mut Sample,
     block_size: usize,
     num_outputs: usize,
+    /// When a node is scheduled to start a certain sample this will hold that
+    /// time in samples at the local Graph sample rate. Otherwise 0.
+    start_node_at_sample: u64,
 }
 impl Task {
     fn init_constants(&mut self) {
@@ -679,8 +682,12 @@ impl Task {
             }
         }
     }
-    fn run(&mut self, graph_inputs: &NodeBufferRef, resources: &mut Resources) -> GenState {
-        // let node = unsafe { &mut *self.node_ptr };
+    fn run(
+        &mut self,
+        graph_inputs: &NodeBufferRef,
+        resources: &mut Resources,
+        sample_time_at_block_start: u64,
+    ) -> GenState {
         // Copy all inputs
         for (from, to) in &self.inputs_to_copy {
             unsafe {
@@ -697,19 +704,47 @@ impl Task {
                 );
             }
         }
-        // Process node
-        // node.process(&self.input_buffers, resources)
-        let mut outputs = NodeBufferRef {
-            buf: self.output_buffers_first_ptr,
-            num_channels: self.num_outputs,
-            block_size: self.block_size,
-        };
-        let ctx = GenContext {
-            inputs: &self.input_buffers,
-            outputs: &mut outputs,
-        };
-        assert!(!self.gen.is_null());
-        unsafe { (*self.gen).process(ctx, resources) }
+        if self.start_node_at_sample <= sample_time_at_block_start {
+            // Process node
+            let mut outputs = NodeBufferRef {
+                buf: self.output_buffers_first_ptr,
+                num_channels: self.num_outputs,
+                block_size: self.block_size,
+                block_start_offset: 0,
+            };
+            let ctx = GenContext {
+                inputs: &self.input_buffers,
+                outputs: &mut outputs,
+            };
+            assert!(!self.gen.is_null());
+            unsafe { (*self.gen).process(ctx, resources) }
+        } else if ((self.start_node_at_sample - sample_time_at_block_start) as usize)
+            < self.block_size
+        {
+            // The node should start running this block, but only part of the block
+            let new_block_size =
+                self.block_size - (self.start_node_at_sample - sample_time_at_block_start) as usize;
+
+            // Process node
+            let mut outputs = NodeBufferRef {
+                buf: self.output_buffers_first_ptr,
+                num_channels: self.num_outputs,
+                block_size: self.block_size,
+                block_start_offset: 0,
+            };
+            let partial_inputs =
+                unsafe { self.input_buffers.to_partial_block_size(new_block_size) };
+            let mut partial_outputs = unsafe { outputs.to_partial_block_size(new_block_size) };
+            let ctx = GenContext {
+                inputs: &partial_inputs,
+                outputs: &mut partial_outputs,
+            };
+            assert!(!self.gen.is_null());
+            unsafe { (*self.gen).process(ctx, resources) }
+        } else {
+            // It's not time to run the node yet, just continue
+            GenState::Continue
+        }
     }
 }
 
@@ -910,16 +945,20 @@ pub struct NodeBufferRef {
     buf: *mut Sample,
     num_channels: usize,
     block_size: usize,
+    block_start_offset: usize,
 }
 impl NodeBufferRef {
-    /// Produces a buffer with 0 channels that you cannot read from or write to, but it may be useful as a first input to a node that has no inputs.
+    /// Produces a buffer with 0 channels that you cannot read from or write to,
+    /// but it may be useful as a first input to a node that has no inputs.
     pub fn null_buffer() -> Self {
         Self {
             buf: std::ptr::null_mut(),
             num_channels: 0,
             block_size: 0,
+            block_start_offset: 0,
         }
     }
+    /// Write a value to a single sample
     #[inline]
     pub fn write(&mut self, value: f32, channel: usize, sample_index: usize) {
         assert!(channel < self.num_channels);
@@ -929,17 +968,23 @@ impl NodeBufferRef {
             std::slice::from_raw_parts_mut(self.buf, self.num_channels * self.block_size)
         };
         unsafe {
-            *buffer_slice.get_unchecked_mut(channel * self.block_size + sample_index) = value
+            *buffer_slice.get_unchecked_mut(
+                channel * self.block_size + sample_index + self.block_start_offset,
+            ) = value
         };
     }
-    /// Decouples the lifetime of the returned slice from self so that slices to different channels can be returned.
+    /// Decouples the lifetime of the returned slice from self so that slices to
+    /// different channels can be returned.
+    ///
+    /// Safety: We guarantee that the channels don't overlap. Getting multiple
+    /// mutable references to the same channel this way is, however, UB.
     #[inline]
     pub fn get_channel_mut<'a, 'b>(&'a mut self, channel: usize) -> &'b mut [f32] {
         assert!(channel < self.num_channels);
         assert!(!self.buf.is_null());
         let channel_offset = channel * self.block_size;
         let buffer_channel_slice = unsafe {
-            let ptr_at_channel = self.buf.add(channel_offset);
+            let ptr_at_channel = self.buf.add(channel_offset + self.block_start_offset);
             std::slice::from_raw_parts_mut(ptr_at_channel, self.block_size)
         };
         buffer_channel_slice
@@ -950,11 +995,12 @@ impl NodeBufferRef {
         assert!(!self.buf.is_null());
         let channel_offset = channel * self.block_size;
         let buffer_channel_slice = unsafe {
-            let ptr_at_channel = self.buf.add(channel_offset);
+            let ptr_at_channel = self.buf.add(channel_offset + self.block_start_offset);
             std::slice::from_raw_parts(ptr_at_channel, self.block_size)
         };
         buffer_channel_slice
     }
+    /// Adds the given value to the selected sample
     #[inline]
     pub fn add(&mut self, value: f32, channel: usize, sample_index: usize) {
         assert!(channel < self.num_channels);
@@ -963,11 +1009,13 @@ impl NodeBufferRef {
         unsafe {
             let buffer_slice =
                 std::slice::from_raw_parts_mut(self.buf, self.num_channels * self.block_size);
-            let sample =
-                (*buffer_slice).get_unchecked_mut(channel * self.block_size + sample_index);
+            let sample = (*buffer_slice).get_unchecked_mut(
+                channel * self.block_size + sample_index + self.block_start_offset,
+            );
             *sample += value
         };
     }
+    /// Read one sample from a channel
     #[inline]
     pub fn read(&self, channel: usize, sample_index: usize) -> Sample {
         assert!(channel < self.num_channels);
@@ -976,22 +1024,25 @@ impl NodeBufferRef {
         unsafe {
             let buffer_slice =
                 std::slice::from_raw_parts_mut(self.buf, self.num_channels * self.block_size);
-            *(*buffer_slice).get_unchecked(channel * self.block_size + sample_index)
+            *(*buffer_slice)
+                .get_unchecked(channel * self.block_size + sample_index + self.block_start_offset)
         }
     }
+    /// Fill a channel with one and the same value
     #[inline]
     fn fill_channel(&mut self, value: f32, channel: usize) {
         assert!(channel < self.num_channels);
         assert!(!self.buf.is_null());
         let channel_offset = channel * self.block_size;
         let buffer_channel_slice = unsafe {
-            let ptr_at_channel = self.buf.add(channel_offset);
+            let ptr_at_channel = self.buf.add(channel_offset + self.block_start_offset);
             std::slice::from_raw_parts_mut(ptr_at_channel, self.block_size)
         };
         for sample in buffer_channel_slice {
             *sample = value;
         }
     }
+    /// Fill all channels in the buffer with one and the same value
     #[inline]
     fn fill(&mut self, value: f32) {
         assert!(!self.buf.is_null());
@@ -1005,13 +1056,30 @@ impl NodeBufferRef {
     fn ptr_to_sample(&mut self, channel: usize, sample_index: usize) -> *mut Sample {
         assert!(channel < self.num_channels);
         assert!(sample_index < self.block_size);
-        unsafe { self.buf.add(channel * self.block_size + sample_index) }
+        unsafe {
+            self.buf
+                .add(channel * self.block_size + sample_index + self.block_start_offset)
+        }
     }
+    /// returns the number of channels
     pub fn channels(&self) -> usize {
         self.num_channels
     }
+    /// returns the block size for the buffer
     pub fn block_size(&self) -> usize {
         self.block_size
+    }
+    /// Create a version of self where the block is offset from the start. This
+    /// is useful for starting a node some way into a block.
+    ///
+    /// Safety: You mustn't use the original NodeBufferRef before this one is dropped.
+    unsafe fn to_partial_block_size(&mut self, new_block_size: usize) -> Self {
+        Self {
+            buf: self.buf,
+            num_channels: self.num_channels,
+            block_size: new_block_size,
+            block_start_offset: self.block_size - new_block_size,
+        }
     }
 }
 
@@ -1400,6 +1468,16 @@ impl Graph {
     pub fn push(&mut self, to_node: impl Into<GenOrGraphEnum>) -> NodeAddress {
         self.push_to_graph(to_node, self.id).unwrap()
     }
+    /// Push something implementing [`Gen`] or a [`Graph`] to self creating a
+    /// new node whose address is returned. The node will start at `start_time`.
+    pub fn push_at_time(
+        &mut self,
+        to_node: impl Into<GenOrGraphEnum>,
+        start_time: Superseconds,
+    ) -> NodeAddress {
+        self.push_to_graph_at_time(to_node, self.id, start_time)
+            .unwrap()
+    }
     /// Push something implementing [`Gen`] or a [`Graph`] to the graph with the
     /// id provided, creating a new node whose address is returned.
     pub fn push_to_graph(
@@ -1409,6 +1487,23 @@ impl Graph {
     ) -> Result<NodeAddress, PushError> {
         let mut new_node_address = NodeAddress::new();
         self.push_with_existing_address_to_graph(to_node, &mut new_node_address, graph_id)?;
+        Ok(new_node_address)
+    }
+    /// Push something implementing [`Gen`] or a [`Graph`] to the graph with the
+    /// id provided, creating a new node whose address is returned.
+    pub fn push_to_graph_at_time(
+        &mut self,
+        to_node: impl Into<GenOrGraphEnum>,
+        graph_id: GraphId,
+        start_time: Superseconds,
+    ) -> Result<NodeAddress, PushError> {
+        let mut new_node_address = NodeAddress::new();
+        self.push_with_existing_address_to_graph_at_time(
+            to_node,
+            &mut new_node_address,
+            graph_id,
+            start_time,
+        )?;
         Ok(new_node_address)
     }
     /// Push something implementing [`Gen`] or a [`Graph`] to self, storing its
@@ -1421,6 +1516,18 @@ impl Graph {
         self.push_with_existing_address_to_graph(to_node, node_address, self.id)
             .unwrap()
     }
+    /// Push something implementing [`Gen`] or a [`Graph`] to self, storing its
+    /// address in the NodeAddress provided. The node will start processing at
+    /// the `start_time`.
+    pub fn push_with_existing_address_at_time(
+        &mut self,
+        to_node: impl Into<GenOrGraphEnum>,
+        node_address: &mut NodeAddress,
+        start_time: Superseconds,
+    ) {
+        self.push_with_existing_address_to_graph_at_time(to_node, node_address, self.id, start_time)
+            .unwrap()
+    }
     /// Push something implementing [`Gen`] or a [`Graph`] to the graph with the
     /// id provided, storing its address in the NodeAddress provided.
     pub fn push_with_existing_address_to_graph(
@@ -1429,9 +1536,29 @@ impl Graph {
         node_address: &mut NodeAddress,
         graph_id: GraphId,
     ) -> Result<(), PushError> {
+        self.push_with_existing_address_to_graph_at_time(
+            to_node,
+            node_address,
+            graph_id,
+            Superseconds::ZERO,
+        )
+    }
+    /// Push something implementing [`Gen`] or a [`Graph`] to the graph with the
+    /// id provided, storing its address in the NodeAddress provided. The node
+    /// will start processing at the `start_time`.
+    pub fn push_with_existing_address_to_graph_at_time(
+        &mut self,
+        to_node: impl Into<GenOrGraphEnum>,
+        node_address: &mut NodeAddress,
+        graph_id: GraphId,
+        start_time: Superseconds,
+    ) -> Result<(), PushError> {
         if graph_id == self.id {
             let (graph, gen) = to_node.into().components();
-            self.push_node(Node::new(gen.name(), gen), node_address);
+            let mut node = Node::new(gen.name(), gen);
+            let start_sample_time = start_time.to_samples(self.sample_rate as u64);
+            node.start_at_sample(start_sample_time);
+            self.push_node(node, node_address);
             if let Some(mut graph) = graph {
                 // Important: we must start the scheduler here if the current
                 // graph is started, otherwise it will never start.
@@ -2780,6 +2907,7 @@ impl Graph {
                 buf: first_sample,
                 num_channels: num_inputs,
                 block_size: self.block_size,
+                block_start_offset: 0,
             };
             // Collect inputs into the node's input buffer
             let input_edges = &self.node_input_edges[node_key];
@@ -2826,6 +2954,7 @@ impl Graph {
                 output_buffers_first_ptr: node.output_buffers_first_ptr,
                 block_size: node.block_size,
                 num_outputs: node.num_outputs,
+                start_node_at_sample: node.start_node_at_sample,
             });
         }
         tasks
@@ -3078,7 +3207,7 @@ impl Gen for GraphGen {
                             i += 1;
                         }
                     }
-                    match task.run(ctx.inputs, resources) {
+                    match task.run(ctx.inputs, resources, self.sample_counter) {
                         GenState::Continue => (),
                         GenState::FreeSelf => {
                             // We don't care if it fails since if it does the
@@ -3552,6 +3681,7 @@ struct Node {
     block_size: usize,
     num_outputs: usize,
     gen: *mut (dyn Gen + Send),
+    start_node_at_sample: u64,
 }
 
 unsafe impl Send for Node {}
@@ -3575,7 +3705,11 @@ impl Node {
             output_buffers_first_ptr,
             num_outputs,
             block_size,
+            start_node_at_sample: 0,
         }
+    }
+    fn start_at_sample(&mut self, sample_time: u64) {
+        self.start_node_at_sample = sample_time;
     }
     // pub fn name(&self) -> &'static str {
     //     self.name
@@ -3613,6 +3747,7 @@ impl Node {
             buf: self.output_buffers_first_ptr,
             num_channels: self.num_outputs,
             block_size: self.block_size,
+            block_start_offset: 0,
         };
         let ctx = GenContext {
             inputs: input_buffers,
@@ -3630,6 +3765,7 @@ impl Node {
             buf: self.output_buffers_first_ptr,
             num_channels: self.num_outputs,
             block_size: self.block_size,
+            block_start_offset: 0,
         }
     }
     pub fn num_inputs(&self) -> usize {
@@ -3731,6 +3867,7 @@ impl RunGraph {
                     buf: input_buffer_ptr,
                     num_channels: graph_node.num_inputs(),
                     block_size: graph_node.block_size,
+                    block_start_offset: 0,
                 };
                 let musical_time_map = Arc::new(RwLock::new(MusicalTimeMap::new()));
                 //                TODO: Start the scheduler of the Graph
@@ -4997,6 +5134,85 @@ mod tests {
                 run_graph.graph_output_buffers().read(0, i),
                 *cycling_vec.next().unwrap()
             );
+        }
+    }
+    #[test]
+    fn start_nodes_with_sample_precision() {
+        const SR: u64 = 44100;
+        const BLOCK_SIZE: usize = 8;
+        let graph_settings = GraphSettings {
+            block_size: BLOCK_SIZE,
+            sample_rate: SR as f32,
+            num_outputs: 2,
+            ..Default::default()
+        };
+        let mut graph = Graph::new(graph_settings);
+        let mut counter0 = 0.;
+        // push before starting the graph
+        let n0 = graph.push_at_time(
+            gen(move |ctx, _resources| {
+                for sample in ctx.outputs.get_channel_mut(0) {
+                    *sample = counter0;
+                    counter0 += 1.0;
+                }
+                GenState::Continue
+            })
+            .output("out"),
+            Superseconds::from_samples(1, SR),
+        );
+        graph.connect(n0.to_graph_out()).unwrap();
+        let mut counter1 = 0.;
+        let n1 = graph.push_at_time(
+            gen(move |ctx, _resources| {
+                for sample in ctx.outputs.get_channel_mut(0) {
+                    *sample = counter1 * -1. - 1.;
+                    counter1 += 1.0;
+                }
+                GenState::Continue
+            })
+            .output("out"),
+            Superseconds::from_samples(2, SR),
+        );
+        graph.connect(n1.to_graph_out()).unwrap();
+        let mut run_graph = test_run_graph(&mut graph, RunGraphSettings::default());
+        run_graph.process_block();
+
+        for i in 0..BLOCK_SIZE {
+            assert_eq!(run_graph.graph_output_buffers().get_channel(0)[i], 0.)
+        }
+        // push after starting the graph
+        let mut counter2 = 0.;
+        let n2 = graph.push_at_time(
+            gen(move |ctx, _resources| {
+                for sample in ctx.outputs.get_channel_mut(0) {
+                    *sample = counter2;
+                    counter2 += 1.;
+                }
+                GenState::Continue
+            })
+            .output("out"),
+            Superseconds::from_samples(3 + BLOCK_SIZE as u64, SR),
+        );
+        let mut counter3 = 0.;
+        let n3 = graph.push_at_time(
+            gen(move |ctx, _resources| {
+                for sample in ctx.outputs.get_channel_mut(0) {
+                    *sample = counter3 * -1. - 1.;
+                    counter3 += 1.0;
+                }
+                GenState::Continue
+            })
+            .output("out"),
+            Superseconds::from_samples(4 + BLOCK_SIZE as u64, SR),
+        );
+        graph.connect(n2.to_graph_out()).unwrap();
+        graph.connect(n3.to_graph_out()).unwrap();
+        graph.update();
+        for _ in 0..2 {
+            run_graph.process_block();
+            for i in 0..BLOCK_SIZE {
+                assert_eq!(run_graph.graph_output_buffers().get_channel(0)[i], 0.)
+            }
         }
     }
 }
