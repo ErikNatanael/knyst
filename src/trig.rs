@@ -35,7 +35,7 @@ impl Gen for OnceTrig {
         ctx: graph::GenContext,
         _resources: &mut crate::Resources,
     ) -> graph::GenState {
-        let out = ctx.outputs.get_channel_mut(0);
+        let out = ctx.outputs.split_mut().next().unwrap();
         if self.0 {
             for o in out.iter_mut() {
                 *o = 0.
@@ -71,7 +71,7 @@ impl Gen for IntervalTrig {
         _resources: &mut crate::Resources,
     ) -> graph::GenState {
         let intervals_in_seconds = ctx.inputs.get_channel(0);
-        let output = ctx.outputs.get_channel_mut(0);
+        let output = ctx.outputs.split_mut().next().unwrap();
         for (interval, trig_out) in intervals_in_seconds.iter().zip(output.iter_mut()) {
             let interval_sample = *interval * ctx.sample_rate;
             *trig_out = if self.counter >= interval_sample as u64 {

@@ -311,6 +311,9 @@ impl Gen for BufferReader {
         resources: &mut crate::Resources,
     ) -> crate::graph::GenState {
         let mut stop_sample = None;
+
+        let mut outputs = ctx.outputs.split_mut();
+        let output0 = outputs.next().unwrap();
         if !self.finished {
             if let IdOrKey::Id(id) = self.buffer_key {
                 match resources.buffer_key_from_id(id) {
@@ -325,7 +328,7 @@ impl Gen for BufferReader {
                         self.base_rate = buffer.buf_rate_scale(ctx.sample_rate);
                     }
 
-                    for (i, out) in ctx.outputs.get_channel_mut(0).iter_mut().enumerate() {
+                    for (i, out) in output0.iter_mut().enumerate() {
                         let samples = buffer.get_interleaved((self.read_pointer) as usize);
                         *out = samples[0];
                         // println!("out: {}", sample);
@@ -352,8 +355,7 @@ impl Gen for BufferReader {
             stop_sample = Some(0);
         }
         if let Some(stop_sample) = stop_sample {
-            let output = ctx.outputs.get_channel_mut(0);
-            for out in output[stop_sample..].iter_mut() {
+            for out in output0[stop_sample..].iter_mut() {
                 *out = 0.;
             }
             self.stop_action.to_gen_state(stop_sample)
@@ -467,7 +469,8 @@ impl Gen for BufferReaderMulti {
             stop_sample = Some(0);
         }
         if let Some(stop_sample) = stop_sample {
-            let output = ctx.outputs.get_channel_mut(0);
+            let mut outputs = ctx.outputs.split_mut();
+            let output = outputs.next().unwrap();
             for out in output[stop_sample..].iter_mut() {
                 *out = 0.;
             }

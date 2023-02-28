@@ -965,7 +965,7 @@ impl NodeBufferRef {
     #[inline]
     pub fn write(&mut self, value: f32, channel: usize, sample_index: usize) {
         assert!(channel < self.num_channels);
-        assert!(sample_index < self.block_size);
+        assert!(sample_index < self.block_size - self.block_start_offset);
         assert!(!self.buf.is_null());
         let buffer_slice = unsafe {
             std::slice::from_raw_parts_mut(self.buf, self.num_channels * self.block_size)
@@ -980,9 +980,10 @@ impl NodeBufferRef {
     /// different channels can be returned.
     ///
     /// Safety: We guarantee that the channels don't overlap. Getting multiple
-    /// mutable references to the same channel this way is, however, UB.
+    /// mutable references to the same channel this way is, however, UB. Use
+    /// `split_mut` for an iterator to all channels instead.
     #[inline]
-    pub fn get_channel_mut<'a, 'b>(&'a mut self, channel: usize) -> &'b mut [f32] {
+    unsafe fn get_channel_mut<'a, 'b>(&'a mut self, channel: usize) -> &'b mut [f32] {
         assert!(channel < self.num_channels);
         assert!(!self.buf.is_null());
         let channel_offset = channel * self.block_size;
@@ -999,7 +1000,7 @@ impl NodeBufferRef {
         let channel_offset = channel * self.block_size;
         let buffer_channel_slice = unsafe {
             let ptr_at_channel = self.buf.add(channel_offset + self.block_start_offset);
-            std::slice::from_raw_parts(ptr_at_channel, self.block_size)
+            std::slice::from_raw_parts(ptr_at_channel, self.block_size - self.block_start_offset)
         };
         buffer_channel_slice
     }
@@ -1007,7 +1008,7 @@ impl NodeBufferRef {
     #[inline]
     pub fn add(&mut self, value: f32, channel: usize, sample_index: usize) {
         assert!(channel < self.num_channels);
-        assert!(sample_index < self.block_size);
+        assert!(sample_index < self.block_size - self.block_start_offset);
         assert!(!self.buf.is_null());
         unsafe {
             let buffer_slice =
@@ -1022,7 +1023,7 @@ impl NodeBufferRef {
     #[inline]
     pub fn read(&self, channel: usize, sample_index: usize) -> Sample {
         assert!(channel < self.num_channels);
-        assert!(sample_index < self.block_size);
+        assert!(sample_index < self.block_size - self.block_start_offset);
         assert!(!self.buf.is_null());
         unsafe {
             let buffer_slice =
@@ -1039,7 +1040,10 @@ impl NodeBufferRef {
         let channel_offset = channel * self.block_size;
         let buffer_channel_slice = unsafe {
             let ptr_at_channel = self.buf.add(channel_offset + self.block_start_offset);
-            std::slice::from_raw_parts_mut(ptr_at_channel, self.block_size)
+            std::slice::from_raw_parts_mut(
+                ptr_at_channel,
+                self.block_size - self.block_start_offset,
+            )
         };
         for sample in buffer_channel_slice {
             *sample = value;
@@ -1070,7 +1074,17 @@ impl NodeBufferRef {
     }
     /// returns the block size for the buffer
     pub fn block_size(&self) -> usize {
-        self.block_size
+        self.block_size - self.block_start_offset
+    }
+    /// Returns an iterator to the channels in this NodeBufferRef
+    pub fn split_mut(&mut self) -> NodeBufferRefSplitMut {
+        NodeBufferRefSplitMut {
+            buf: self.buf,
+            num_channels: self.num_channels,
+            block_size: self.block_size,
+            block_start_offset: self.block_start_offset,
+            _phantom_data: std::marker::PhantomData,
+        }
     }
     /// Create a version of self where the block is offset from the start. This
     /// is useful for starting a node some way into a block.
@@ -1080,9 +1094,42 @@ impl NodeBufferRef {
         Self {
             buf: self.buf,
             num_channels: self.num_channels,
-            block_size: new_block_size,
+            block_size: self.block_size,
             block_start_offset: self.block_size - new_block_size,
         }
+    }
+}
+/// A variant of a NodeBufferRef that can yield &mut[Sample] to all the channels.
+pub struct NodeBufferRefSplitMut<'a> {
+    buf: *mut Sample,
+    num_channels: usize,
+    block_size: usize,
+    block_start_offset: usize,
+    _phantom_data: std::marker::PhantomData<&'a mut ()>,
+}
+impl<'a> Iterator for NodeBufferRefSplitMut<'a> {
+    type Item = &'a mut [Sample];
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.num_channels == 0 {
+            return None;
+        }
+        assert!(!self.buf.is_null());
+        let buffer_channel_slice = unsafe {
+            let channel_start_ptr = self.buf.add(self.block_start_offset);
+            std::slice::from_raw_parts_mut(
+                channel_start_ptr,
+                self.block_size - self.block_start_offset,
+            )
+        };
+        unsafe {
+            self.buf = self.buf.add(self.block_size);
+        }
+        self.num_channels -= 1;
+        Some(buffer_channel_slice)
+    }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.num_channels, Some(self.num_channels))
     }
 }
 
@@ -1112,8 +1159,9 @@ type ProcessFn = Box<dyn FnMut(GenContext, &mut Resources) -> GenState + Send>;
 /// use knyst::prelude::*;
 /// use fastapprox::fast::tanh;
 /// let closure_gen = gen(move |ctx, _resources| {
-///     let out0 = ctx.outputs.get_channel_mut(0);
-///     let out1 = ctx.outputs.get_channel_mut(1);
+///     let mut outputs = ctx.outputs.split_mut();
+///     let out0 = outputs.next().unwrap();
+///     let out1 = outputs.next().unwrap();
 ///     for ((((o0, o1), i0), i1), dist) in out0
 ///         .iter_mut()
 ///         .zip(out1.iter_mut())
@@ -3242,7 +3290,11 @@ impl Gen for GraphGen {
                     let input_values = output_task
                         .input_buffers
                         .get_channel(output_task.input_index);
-                    let output = ctx.outputs.get_channel_mut(output_task.graph_output_index);
+                    // Safety: We always drop the&mut refernce before requesting
+                    // another one so we cannot hold mutliple references to the
+                    // same channnel.
+                    let output =
+                        unsafe { ctx.outputs.get_channel_mut(output_task.graph_output_index) };
                     for i in 0..self.block_size {
                         let value = input_values[i];
                         // Since many nodes may write to the same output we
@@ -3252,9 +3304,8 @@ impl Gen for GraphGen {
                     }
                 }
                 if let Some(from_relative_sample_nr) = do_empty_buffer {
-                    for channel in 0..ctx.outputs.channels() {
-                        let output = ctx.outputs.get_channel_mut(channel);
-                        for sample in &mut output[from_relative_sample_nr..] {
+                    for channel in ctx.outputs.split_mut() {
+                        for sample in &mut channel[from_relative_sample_nr..] {
                             *sample = 0.0;
                         }
                     }
@@ -3263,7 +3314,8 @@ impl Gen for GraphGen {
                     let num_channels = ctx.inputs.channels().min(ctx.outputs.channels());
                     for channel in 0..num_channels {
                         let input = ctx.inputs.get_channel(channel);
-                        let output = ctx.outputs.get_channel_mut(channel);
+                        // Safety: We are only holding one &mut to a channel at a time.
+                        let output = unsafe { ctx.outputs.get_channel_mut(channel) };
                         // TODO: Check if the input is constant or not first. Only non-constant inputs should be passed through (because it's "mending" the connection)
                         for (i, o) in input[from_relative_sample_nr..]
                             .iter()
@@ -3283,7 +3335,8 @@ impl Gen for GraphGen {
                 let num_channels = ctx.inputs.channels().min(ctx.outputs.channels());
                 for channel in 0..num_channels {
                     let input = ctx.inputs.get_channel(channel);
-                    let output = ctx.outputs.get_channel_mut(channel);
+                    // Safety: We are only holding a &mut to one channel at a time.
+                    let output = unsafe { ctx.outputs.get_channel_mut(channel) };
                     // TODO: Check if the input is constant or not first. Only non-constant inputs should be passed through (because it's "mending" the connection)
                     for (i, o) in input.iter().zip(output.iter_mut()) {
                         *o = *i;
@@ -4931,7 +4984,8 @@ mod tests {
         let mult = graph.push(Mult);
         let five = graph.push(
             gen(move |ctx, _resources| {
-                for o0 in ctx.outputs.get_channel_mut(0) {
+                let out_chan = ctx.outputs.split_mut().next().unwrap();
+                for o0 in out_chan {
                     *o0 = 5.;
                 }
                 GenState::Continue
@@ -4940,7 +4994,8 @@ mod tests {
         );
         let nine = graph.push(
             gen(move |ctx, _resources| {
-                for o0 in ctx.outputs.get_channel_mut(0) {
+                let out_chan = ctx.outputs.split_mut().next().unwrap();
+                for o0 in out_chan {
                     *o0 = 9.;
                 }
                 GenState::Continue
@@ -4997,7 +5052,7 @@ mod tests {
         );
         let five = graph.push(
             gen(move |ctx, _resources| {
-                for o0 in ctx.outputs.get_channel_mut(0) {
+                for o0 in ctx.outputs.split_mut().next().unwrap() {
                     *o0 = 5.;
                 }
                 GenState::Continue
@@ -5006,7 +5061,7 @@ mod tests {
         );
         let nine = graph.push(
             gen(move |ctx, _resources| {
-                for o0 in ctx.outputs.get_channel_mut(0) {
+                for o0 in ctx.outputs.split_mut().next().unwrap() {
                     *o0 = 9.;
                 }
                 GenState::Continue
@@ -5150,7 +5205,8 @@ mod tests {
         // push before starting the graph
         let n0 = graph.push_at_time(
             gen(move |ctx, _resources| {
-                for sample in ctx.outputs.get_channel_mut(0) {
+                let out_chan = ctx.outputs.split_mut().next().unwrap();
+                for sample in out_chan {
                     *sample = counter0;
                     counter0 += 1.0;
                 }
@@ -5163,8 +5219,8 @@ mod tests {
         let mut counter1 = 0.;
         let n1 = graph.push_at_time(
             gen(move |ctx, _resources| {
-                for sample in ctx.outputs.get_channel_mut(0) {
-                    *sample = counter1 * -1. - 1.;
+                for i in 0..ctx.outputs.block_size() {
+                    ctx.outputs.write(counter1 * -1. - 1., 0, i);
                     counter1 += 1.0;
                 }
                 GenState::Continue
@@ -5183,9 +5239,9 @@ mod tests {
         let mut counter2 = 0.;
         let n2 = graph.push_at_time(
             gen(move |ctx, _resources| {
-                for sample in ctx.outputs.get_channel_mut(0) {
-                    *sample = counter2;
-                    counter2 += 1.;
+                for i in 0..ctx.outputs.block_size() {
+                    ctx.outputs.write(counter2, 0, i);
+                    counter2 += 1.0;
                 }
                 GenState::Continue
             })
@@ -5195,8 +5251,8 @@ mod tests {
         let mut counter3 = 0.;
         let n3 = graph.push_at_time(
             gen(move |ctx, _resources| {
-                for sample in ctx.outputs.get_channel_mut(0) {
-                    *sample = counter3 * -1. - 1.;
+                for i in 0..ctx.outputs.block_size() {
+                    ctx.outputs.write(counter3 * -1. - 1., 0, i);
                     counter3 += 1.0;
                 }
                 GenState::Continue

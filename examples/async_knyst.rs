@@ -293,13 +293,15 @@ fn fundsp_reverb_gen(sample_rate: f64, mix: f32) -> ClosureGen {
     gen(move |ctx, _resources| {
         let in0 = ctx.inputs.get_channel(0);
         let in1 = ctx.inputs.get_channel(1);
-        let out0 = ctx.outputs.get_channel_mut(0);
-        let out1 = ctx.outputs.get_channel_mut(1);
+        let block_size = ctx.block_size();
+        let mut outputs = ctx.outputs.split_mut();
+        let out0 = outputs.next().unwrap();
+        let out1 = outputs.next().unwrap();
         // With an f32 fundsp AudioUnit we can pass input/output buffers
         // straight to the fundsp process method to avoid copying.
         let mut output = [out0, out1];
         let input = [in0, in1];
-        fundsp_graph.process(ctx.block_size(), input.as_slice(), output.as_mut_slice());
+        fundsp_graph.process(block_size, input.as_slice(), output.as_mut_slice());
         GenState::Continue
     })
     .output("out0")

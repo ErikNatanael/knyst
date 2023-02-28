@@ -412,7 +412,9 @@ impl Gen for EnvelopeGen {
         let mut stop_sample = None;
         for ((i, out), &release_gate) in ctx
             .outputs
-            .get_channel_mut(0)
+            .split_mut()
+            .next()
+            .unwrap()
             .iter_mut()
             .enumerate()
             .zip(release_gate_in.iter())
