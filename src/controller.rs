@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 use crate::{
     buffer::Buffer,
     graph::{
-        Connection, ConnectionError, Gen, GenOrGraph, GenOrGraphEnum, Graph, GraphId, NodeAddress,
+        Connection, ConnectionError, GenOrGraph, GenOrGraphEnum, Graph, GraphId, NodeAddress,
         ParameterChange,
     },
     BufferId, KnystError, ResourcesCommand, ResourcesResponse,

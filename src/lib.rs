@@ -52,8 +52,6 @@ use slotmap::{SecondaryMap, SlotMap};
 use std::{collections::HashMap, hash::Hash, sync::atomic::AtomicU64};
 use wavetable::{Wavetable, WavetableKey};
 
-use crate::wavetable::{FRACTIONAL_PART, TABLE_SIZE};
-
 pub mod audio_backend;
 pub mod buffer;
 pub mod controller;

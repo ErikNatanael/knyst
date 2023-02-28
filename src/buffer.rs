@@ -90,7 +90,6 @@ impl Buffer {
     pub fn from_sound_file(path: impl Into<PathBuf>) -> Result<Self, BufferError> {
         let path = path.into();
         let mut buffer = Vec::new();
-        let mut codec_params = None;
         let inp_file = File::open(&path).expect("Buffer: failed to open file!");
         // hint to the format registry of the decoder what file format it might be
         let mut hint = Hint::new();
@@ -107,7 +106,12 @@ impl Buffer {
         let mut sample_buf = None;
 
         // Probe the media source stream for metadata and get the format reader.
-        match symphonia::default::get_probe().format(&hint, mss, &format_opts, &metadata_opts) {
+        let codec_params = match symphonia::default::get_probe().format(
+            &hint,
+            mss,
+            &format_opts,
+            &metadata_opts,
+        ) {
             Ok(probed) => {
                 let mut reader = probed.format;
                 // Find the first audio track with a known (decodeable) codec.
@@ -125,7 +129,7 @@ impl Buffer {
                 let mut decoder = symphonia::default::get_codecs()
                     .make(&track.codec_params, &decode_options)
                     .expect("unsupported codec");
-                codec_params = Some(track.codec_params.clone());
+                let codec_params = track.codec_params.clone();
                 // Store the track identifier, it will be used to filter packets.
                 let track_id = track.id;
 
@@ -142,7 +146,7 @@ impl Buffer {
                             unimplemented!();
                         }
                         Err(err) => match err {
-                            SymphoniaError::IoError(e) => {
+                            SymphoniaError::IoError(_e) => {
                                 // println!("{e}");
                                 break;
                             }
@@ -208,14 +212,16 @@ impl Buffer {
                         }
                     }
                 }
+                codec_params
             }
             Err(_err) => {
                 // The input was not supported by any format reader.
                 return Err(BufferError::FileFormatNotSupported(path));
             }
-        }
+        };
 
-        let (sampling_rate, num_channels) = if let Some(cp) = codec_params {
+        let (sampling_rate, num_channels) = {
+            let cp = codec_params;
             // println!(
             //     "channels: {}, rate: {}, num samples: {}",
             //     cp.channels.unwrap(),
@@ -229,8 +235,6 @@ impl Buffer {
                 cp.sample_rate.unwrap() as f64,
                 cp.channels.unwrap().bits().count_ones() as usize,
             )
-        } else {
-            (0.0, 1)
         };
         // TODO: Return Err if there's no audio data
         Ok(Self::from_vec_interleaved(

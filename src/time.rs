@@ -157,10 +157,10 @@ impl ops::MulAssign<Superseconds> for Superseconds {
     }
 }
 
+#[cfg(test)]
 mod tests {
-    use std::time::Duration;
-
     use super::{Superseconds, SUBSAMPLE_TESIMALS_PER_SECOND};
+    use std::time::Duration;
 
     #[test]
     fn convert_to_u64_and_back() {

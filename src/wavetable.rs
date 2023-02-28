@@ -325,7 +325,7 @@ impl WavetableOscillatorOwned {
         osc.step = ((freq / sample_rate) * TABLE_SIZE as f32) as u32;
         osc
     }
-    pub fn set_freq(&mut self, freq: Sample, resources: &mut Resources) {
+    pub fn set_freq(&mut self, freq: Sample, _resources: &mut Resources) {
         self.step = (freq as f64 * self.freq_to_phase_inc) as u32;
     }
     pub fn set_amp(&mut self, amp: Sample) {
@@ -467,7 +467,7 @@ impl Oscillator {
         osc
     }
     #[inline]
-    pub fn set_freq(&mut self, freq: Sample, resources: &mut Resources) {
+    pub fn set_freq(&mut self, freq: Sample, _resources: &mut Resources) {
         self.step = (freq as f64 * self.freq_to_phase_inc) as u32;
     }
     #[inline]

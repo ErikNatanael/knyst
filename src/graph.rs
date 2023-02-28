@@ -31,7 +31,6 @@
 #[cfg(loom)]
 use loom::sync::atomic::Ordering;
 
-use crate::controller;
 use crate::scheduling::{MusicalTime, MusicalTimeMap};
 use crate::time::Superseconds;
 
@@ -1637,9 +1636,6 @@ impl Graph {
                     // Return the error unless it's a GraphNotFound in which case we continue trying
                     Err(e) => match e {
                         PushError::GraphNotFound(returned_to_node) => to_node = returned_to_node,
-                        _ => {
-                            return Err(e);
-                        }
                     },
                 }
             }
@@ -3513,7 +3509,7 @@ impl Scheduler {
             Scheduler::Running {
                 start_ts,
                 sample_rate,
-                max_duration_to_send,
+                max_duration_to_send: _,
                 scheduling_queue,
                 latency_in_samples: latency,
                 musical_time_map,
@@ -3521,9 +3517,6 @@ impl Scheduler {
                 match time {
                     TimeKind::DurationFromNow(duration_from_now) => {
                         let timestamp = ((start_ts.elapsed() + duration_from_now).as_secs_f64()
-                            * *sample_rate as f64
-                            + *latency) as u64;
-                        let zero_timestamp = ((start_ts.elapsed()).as_secs_f64()
                             * *sample_rate as f64
                             + *latency) as u64;
                         scheduling_queue.push(ScheduledChange {
@@ -3570,14 +3563,11 @@ impl Scheduler {
     }
     fn update(&mut self, timestamp: u64, rb_producer: &mut rtrb::Producer<ScheduledChange>) {
         match self {
-            Scheduler::Stopped { scheduling_queue } => (),
+            Scheduler::Stopped { .. } => (),
             Scheduler::Running {
-                start_ts,
-                sample_rate,
                 max_duration_to_send,
                 scheduling_queue,
-                latency_in_samples: latency,
-                musical_time_map,
+                ..
             } => {
                 // scheduled updates should always be sorted before they are sent, in case there are several changes to the same thing
                 scheduling_queue.sort_unstable_by_key(|s| s.timestamp);
@@ -4342,7 +4332,7 @@ impl NaiveSine {
 }
 
 impl Gen for NaiveSine {
-    fn process(&mut self, ctx: GenContext, resources: &mut Resources) -> GenState {
+    fn process(&mut self, ctx: GenContext, _resources: &mut Resources) -> GenState {
         for i in 0..ctx.block_size() {
             let freq = ctx.inputs.read(0, i);
             let amp = ctx.inputs.read(1, i);
@@ -4385,9 +4375,6 @@ mod tests {
     };
 
     use super::*;
-    fn null_input() -> NodeBufferRef {
-        NodeBufferRef::null_buffer()
-    }
     // Outputs its input value + 1
     struct OneGen {}
     impl Gen for OneGen {
@@ -4439,9 +4426,6 @@ mod tests {
         fn num_outputs(&self) -> usize {
             1
         }
-    }
-    fn graph_node(graph: &mut Graph) -> Node {
-        graph.split_and_create_node().unwrap()
     }
     fn test_resources_settings() -> ResourcesSettings {
         ResourcesSettings::default()
