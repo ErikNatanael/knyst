@@ -25,6 +25,7 @@ struct State {
     sample_rate: f32,
 }
 
+// TODO: Tokio async parts using the musical time map for scheduling and sometimes changing the tempo
 fn main() -> Result<()> {
     let mut backend = CpalBackend::new(CpalBackendOptions::default())?;
 
@@ -95,8 +96,7 @@ fn main() -> Result<()> {
             vec![0, 17, 31],
             vec![53, 17, 31],
             vec![0, 22, 36],
-            vec![0, 22, 39],
-            vec![-5, 9, 31],
+            vec![9, 22, 45],
         ];
         let mut k = k.clone();
         std::thread::spawn(move || {
@@ -115,6 +115,8 @@ fn main() -> Result<()> {
                     node
                 })
                 .collect();
+            // Change to a new chord
+            let arpeggiation_time = 200;
             loop {
                 let new_chord = chords.choose(&mut rng).unwrap();
                 for (i, node) in harmony_nodes.iter().enumerate() {
@@ -125,6 +127,7 @@ fn main() -> Result<()> {
                         )
                         .label("freq"),
                     );
+                    std::thread::sleep(Duration::from_millis(arpeggiation_time));
                 }
 
                 std::thread::sleep(Duration::from_millis(1000));
