@@ -67,7 +67,7 @@ pub mod xorrng;
 #[derive(thiserror::Error, Debug)]
 pub enum KnystError {
     #[error("There was an error adding or removing connections between nodes: {0}")]
-    ConnectionError(#[from] graph::ConnectionError),
+    ConnectionError(#[from] graph::connection::ConnectionError),
     #[error("There was an error freeing a node: {0}")]
     FreeError(#[from] graph::FreeError),
     #[error("There was an error pushing a node: {0}]")]
@@ -75,7 +75,7 @@ pub enum KnystError {
     #[error("There was an error scheduling a change: {0}")]
     ScheduleError(#[from] graph::ScheduleError),
     #[error("There was an error with the RunGraph: {0}")]
-    RunGraphError(#[from] graph::RunGraphError),
+    RunGraphError(#[from] graph::run_graph::RunGraphError),
     #[error("Resources error : {0}")]
     ResourcesError(#[from] ResourcesError),
 }

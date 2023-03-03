@@ -71,7 +71,7 @@ pub enum AudioBackendError {
     #[error("Unable to create a node from the Graph: {0}")]
     CouldNotCreateNode(String),
     #[error(transparent)]
-    RunGraphError(#[from] crate::graph::RunGraphError),
+    RunGraphError(#[from] crate::graph::run_graph::RunGraphError),
     #[cfg(feature = "jack")]
     #[error(transparent)]
     JackError(#[from] jack::Error),
