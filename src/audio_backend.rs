@@ -200,7 +200,7 @@ mod jack_backend {
             let graph_input_buffers = self.run_graph.graph_input_buffers();
             for (i, in_port) in self.in_ports.iter().enumerate() {
                 let in_port_slice = in_port.as_slice(ps);
-                let in_buffer = graph_input_buffers.get_channel_mut(i);
+                let in_buffer = unsafe { graph_input_buffers.get_channel_mut(i) };
                 in_buffer.clone_from_slice(in_port_slice);
             }
             self.run_graph.run_resources_communication(50);

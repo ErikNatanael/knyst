@@ -2,7 +2,7 @@
 
 use slotmap::new_key_type;
 
-use crate::{Resources, Sample};
+use crate::{IdOrKey, Resources, Sample, WavetableId};
 
 use crate::graph::{Gen, GenContext, GenState};
 // use std::f64::consts::PI;
@@ -438,14 +438,14 @@ impl PhaseF32 {
 pub struct Oscillator {
     step: u32,
     phase: Phase,
-    wavetable: WavetableKey,
+    wavetable: IdOrKey<WavetableId, WavetableKey>,
     amp: Sample,
     freq_to_phase_inc: f64,
 }
 
 impl Oscillator {
     #[must_use]
-    pub fn new(wavetable: WavetableKey) -> Self {
+    pub fn new(wavetable: IdOrKey<WavetableId, WavetableKey>) -> Self {
         Oscillator {
             step: 0,
             phase: Phase(0),
@@ -456,7 +456,7 @@ impl Oscillator {
     }
     #[must_use]
     pub fn from_freq(
-        wavetable: WavetableKey,
+        wavetable: IdOrKey<WavetableId, WavetableKey>,
         sample_rate: Sample,
         freq: Sample,
         amp: Sample,
@@ -467,7 +467,7 @@ impl Oscillator {
         osc
     }
     #[inline]
-    pub fn set_freq(&mut self, freq: Sample, _resources: &mut Resources) {
+    pub fn set_freq(&mut self, freq: Sample) {
         self.step = (freq as f64 * self.freq_to_phase_inc) as u32;
     }
     #[inline]
@@ -478,27 +478,32 @@ impl Oscillator {
     pub fn reset_phase(&mut self) {
         self.phase.0 = 0;
     }
-    #[inline]
-    #[must_use]
-    fn next(&mut self, resources: &mut Resources) -> Sample {
-        // Use the phase to index into the wavetable
-        let sample = if let Some(wt) = resources.wavetables.get(self.wavetable) {
-            wt.get(self.phase) * self.amp
-        } else {
-            eprintln!("Wavetable doesn't exist: {:?}", self.wavetable);
-            0.0
-        };
-        self.phase.increase(self.step);
-        sample
-    }
 }
 impl Gen for Oscillator {
     fn process(&mut self, ctx: GenContext, resources: &mut Resources) -> GenState {
         let output = ctx.outputs.split_mut().next().unwrap();
         let freq_buf = ctx.inputs.get_channel(0);
-        for (&freq, o) in freq_buf.iter().zip(output.iter_mut()) {
-            self.set_freq(freq, resources);
-            *o = self.next(resources);
+        let wt_key = match self.wavetable {
+            IdOrKey::Id(id) => match resources.wavetable_key_from_id(id) {
+                Some(key) => {
+                    self.wavetable = IdOrKey::Key(key);
+                    key
+                }
+                None => {
+                    output.fill(0.0);
+                    return GenState::Continue;
+                }
+            },
+            IdOrKey::Key(key) => key,
+        };
+        if let Some(wt) = resources.wavetables.get(wt_key) {
+            for (&freq, o) in freq_buf.iter().zip(output.iter_mut()) {
+                self.set_freq(freq);
+                self.phase.increase(self.step);
+                *o = wt.get(self.phase) * self.amp
+            }
+        } else {
+            output.fill(0.0);
         }
         GenState::Continue
     }

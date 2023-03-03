@@ -4,9 +4,10 @@ use knyst::{
     controller::{self, KnystCommands},
     graph::{ClosureGen, Mult, NodeAddress},
     prelude::*,
-    wavetable::{Wavetable, WavetableOscillatorOwned},
+    wavetable::{Oscillator, Wavetable, WavetableOscillatorOwned},
+    WavetableId,
 };
-use rand::{seq::SliceRandom, thread_rng, Rng};
+use rand::{seq::SliceRandom, thread_rng};
 use std::io::Write;
 use std::time::Duration;
 
@@ -19,6 +20,7 @@ static ROOT_FREQ: f32 = 200.;
 struct State {
     potential_reverb_inputs: Vec<NodeAddress>,
     reverb_node: Option<NodeAddress>,
+    harmony_wavetable_id: WavetableId,
     block_size: usize,
     sample_rate: f32,
 }
@@ -73,11 +75,18 @@ fn main() -> Result<()> {
 
     // Store the nodes that would be connected to the reverb if it's toggled on.
     let potential_reverb_inputs = vec![sub_graph, amp];
+
+    let mut harmony_wavetable = Wavetable::sine();
+    harmony_wavetable.add_odd_harmonics(8, 1.3);
+    harmony_wavetable.normalize();
+    let harmony_wavetable_id = k.insert_wavetable(harmony_wavetable);
+
     let mut state = State {
         potential_reverb_inputs,
         reverb_node: None,
         block_size,
         sample_rate,
+        harmony_wavetable_id,
     };
 
     // Have a background thread play some harmony
@@ -92,15 +101,10 @@ fn main() -> Result<()> {
         let mut k = k.clone();
         std::thread::spawn(move || {
             let mut rng = thread_rng();
-            let mut harmony_wavetable = Wavetable::sine();
-            harmony_wavetable.add_odd_harmonics(8, 1.3);
-            harmony_wavetable.normalize();
             let harmony_nodes: Vec<NodeAddress> = (0..chords[0].len())
                 .map(|_| {
-                    let node = k.push_to_graph(
-                        WavetableOscillatorOwned::new(harmony_wavetable.clone()),
-                        sub_graph_id,
-                    );
+                    let node =
+                        k.push_to_graph(Oscillator::new(harmony_wavetable_id.into()), sub_graph_id);
                     let amp = k.push_to_graph(Mult, sub_graph_id);
 
                     k.connect(constant(400.).to(&node).to_label("freq"));
@@ -143,14 +147,17 @@ fn main() -> Result<()> {
                 termion::event::Key::Char('q') => break,
                 // Else print the pressed key
                 termion::event::Key::Char(c) => {
-                    write!(
-                        stdout,
-                        "{}{}Play your keyboard, q: quit, key pressed: {:?}",
-                        termion::clear::All,
-                        termion::cursor::Goto(1, 1),
-                        key
-                    )
-                    .unwrap();
+                    let lines = [
+                        "Play your keyboard",
+                        "q: quit",
+                        "m: load and play sound file",
+                        "n: toggle reverb",
+                        "b: replace wavetable for harmony notes",
+                    ];
+                    write!(stdout, "{}", termion::clear::All,).unwrap();
+                    for (y, line) in lines.into_iter().enumerate() {
+                        write!(stdout, "{}{line}", termion::cursor::Goto(1, y as u16 + 1)).unwrap();
+                    }
 
                     if !handle_special_keys(c, k.clone(), &mut state) {
                         // Change the frequency of the nodes based on what key was pressed
@@ -254,6 +261,17 @@ fn handle_special_keys(c: char, mut k: KnystCommands, state: &mut State) -> bool
                     state.reverb_node = Some(reverb_node);
                 }
             }
+            true
+        }
+        'b' => {
+            let mut new_harmony_wavetable = Wavetable::sine();
+            new_harmony_wavetable.add_odd_harmonics(
+                rand::random::<usize>() % 16 + 1,
+                rand::random::<f32>() + 1.0,
+            );
+            new_harmony_wavetable.fill_sine(rand::random::<usize>() % 16 + 4, 1.0);
+            new_harmony_wavetable.normalize();
+            k.replace_wavetable(state.harmony_wavetable_id, new_harmony_wavetable);
             true
         }
         _ => false,

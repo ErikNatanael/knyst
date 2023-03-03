@@ -6,7 +6,8 @@ use crate::{
         connection::ConnectionError, Connection, GenOrGraph, GenOrGraphEnum, Graph, GraphId,
         NodeAddress, ParameterChange,
     },
-    BufferId, KnystError, ResourcesCommand, ResourcesResponse,
+    wavetable::Wavetable,
+    BufferId, KnystError, ResourcesCommand, ResourcesResponse, WavetableId,
 };
 use crossbeam_channel::{unbounded, Receiver, Sender};
 
@@ -108,6 +109,29 @@ impl KnystCommands {
                 id: buffer_id,
                 buffer,
             }))
+            .unwrap();
+    }
+    pub fn insert_wavetable(&mut self, wavetable: Wavetable) -> WavetableId {
+        let id = WavetableId::new();
+        self.sender
+            .send(Command::ResourcesCommand(
+                ResourcesCommand::InsertWavetable { id, wavetable },
+            ))
+            .unwrap();
+        id
+    }
+    pub fn remove_wavetable(&mut self, wavetable_id: WavetableId) {
+        self.sender
+            .send(Command::ResourcesCommand(
+                ResourcesCommand::RemoveWavetable { id: wavetable_id },
+            ))
+            .unwrap();
+    }
+    pub fn replace_wavetable(&mut self, id: WavetableId, wavetable: Wavetable) {
+        self.sender
+            .send(Command::ResourcesCommand(
+                ResourcesCommand::ReplaceWavetable { id, wavetable },
+            ))
             .unwrap();
     }
 }
@@ -279,6 +303,21 @@ impl Controller {
                     }
                 }
                 ResourcesResponse::ReplaceBuffer(res) => {
+                    if let Err(e) = res {
+                        (*self.error_handler)(e.into())
+                    }
+                }
+                ResourcesResponse::InsertWavetable(res) => {
+                    if let Err(e) = res {
+                        (*self.error_handler)(e.into())
+                    }
+                }
+                ResourcesResponse::RemoveWavetable(res) => {
+                    if let Err(e) = res {
+                        (*self.error_handler)(e.into())
+                    }
+                }
+                ResourcesResponse::ReplaceWavetable(res) => {
                     if let Err(e) = res {
                         (*self.error_handler)(e.into())
                     }

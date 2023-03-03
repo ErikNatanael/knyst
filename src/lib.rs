@@ -140,6 +140,10 @@ pub enum ResourcesError {
     ReplaceBufferKeyInvalid(Buffer),
     #[error("The id supplied does not match any buffer.")]
     BufferIdNotFound(BufferId),
+    #[error("The id supplied does not match any wavetable.")]
+    WavetableIdNotFound(WavetableId),
+    #[error("The key for replacement did not exist.")]
+    ReplaceWavetableKeyInvalid(Wavetable),
 }
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
@@ -164,6 +168,22 @@ impl BufferId {
 
 /// Get a unique id for a Graph from this by using `fetch_add`
 pub(crate) static NEXT_BUFFER_ID: AtomicU64 = AtomicU64::new(0);
+pub(crate) static NEXT_WAVETABLE_ID: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct WavetableId(IdType);
+
+impl WavetableId {
+    pub fn new() -> Self {
+        Self(NEXT_WAVETABLE_ID.fetch_add(1, std::sync::atomic::Ordering::Release))
+    }
+}
+
+impl From<WavetableId> for IdOrKey<WavetableId, WavetableKey> {
+    fn from(value: WavetableId) -> Self {
+        IdOrKey::Id(value)
+    }
+}
 
 /// Common resources for all Nodes in a Graph and all its sub Graphs:
 /// - [`Wavetable`]
@@ -175,6 +195,7 @@ pub struct Resources {
     pub buffers: SlotMap<BufferKey, Buffer>,
     pub buffer_ids: SecondaryMap<BufferKey, BufferId>,
     pub wavetables: SlotMap<WavetableKey, Wavetable>,
+    pub wavetable_ids: SecondaryMap<WavetableKey, WavetableId>,
     /// UserData is meant for data that needs to be read by many nodes and
     /// updated for all of them simultaneously. Strings are used as keys for
     /// simplicity. A HopSlotMap could be used, but it would require sending and
@@ -188,14 +209,36 @@ pub struct Resources {
 }
 
 pub enum ResourcesCommand {
-    InsertBuffer { id: BufferId, buffer: Buffer },
-    RemoveBuffer { id: BufferId },
-    ReplaceBuffer { id: BufferId, buffer: Buffer },
+    InsertBuffer {
+        id: BufferId,
+        buffer: Buffer,
+    },
+    RemoveBuffer {
+        id: BufferId,
+    },
+    ReplaceBuffer {
+        id: BufferId,
+        buffer: Buffer,
+    },
+    InsertWavetable {
+        id: WavetableId,
+        wavetable: Wavetable,
+    },
+    RemoveWavetable {
+        id: WavetableId,
+    },
+    ReplaceWavetable {
+        id: WavetableId,
+        wavetable: Wavetable,
+    },
 }
 pub enum ResourcesResponse {
     InsertBuffer(Result<BufferKey, ResourcesError>),
     RemoveBuffer(Result<Option<Buffer>, ResourcesError>),
     ReplaceBuffer(Result<Buffer, ResourcesError>),
+    InsertWavetable(Result<WavetableKey, ResourcesError>),
+    RemoveWavetable(Result<Option<Wavetable>, ResourcesError>),
+    ReplaceWavetable(Result<Wavetable, ResourcesError>),
 }
 
 impl Resources {
@@ -206,6 +249,7 @@ impl Resources {
         let rng = fastrand::Rng::new();
         // Add standard wavetables to the arena
         let wavetables = SlotMap::with_capacity_and_key(settings.max_wavetables);
+        let wavetable_ids = SecondaryMap::with_capacity(settings.max_wavetables);
         let buffers = SlotMap::with_capacity_and_key(settings.max_buffers);
         let buffer_ids = SecondaryMap::with_capacity(settings.max_buffers);
 
@@ -216,6 +260,7 @@ impl Resources {
             buffers,
             buffer_ids,
             wavetables,
+            wavetable_ids,
             user_data,
             rng,
         }
@@ -233,6 +278,26 @@ impl Resources {
                 Some(key) => ResourcesResponse::ReplaceBuffer(self.replace_buffer(key, buffer)),
                 None => ResourcesResponse::RemoveBuffer(Err(ResourcesError::BufferIdNotFound(id))),
             },
+            ResourcesCommand::InsertWavetable { id, wavetable } => {
+                ResourcesResponse::InsertWavetable(self.insert_wavetable_with_id(wavetable, id))
+            }
+            ResourcesCommand::RemoveWavetable { id } => match self.wavetable_key_from_id(id) {
+                Some(key) => ResourcesResponse::RemoveWavetable(Ok(self.remove_wavetable(key))),
+                None => {
+                    ResourcesResponse::RemoveWavetable(Err(ResourcesError::WavetableIdNotFound(id)))
+                }
+            },
+
+            ResourcesCommand::ReplaceWavetable { id, wavetable } => {
+                match self.wavetable_key_from_id(id) {
+                    Some(key) => {
+                        ResourcesResponse::ReplaceWavetable(self.replace_wavetable(key, wavetable))
+                    }
+                    None => ResourcesResponse::RemoveWavetable(Err(
+                        ResourcesError::WavetableIdNotFound(id),
+                    )),
+                }
+            }
         }
     }
     /// Insert any kind of data using [`AnyData`].
@@ -254,19 +319,40 @@ impl Resources {
     pub fn get_user_data(&mut self, key: &String) -> Option<&mut Box<dyn AnyData>> {
         self.user_data.get_mut(key)
     }
-
-    pub fn insert_wavetable(
+    pub fn insert_wavetable_with_id(
         &mut self,
         wavetable: Wavetable,
+        wavetable_id: WavetableId,
     ) -> Result<WavetableKey, ResourcesError> {
         if self.wavetables.len() < self.wavetables.capacity() {
-            Ok(self.wavetables.insert(wavetable))
+            let wavetable_key = self.wavetables.insert(wavetable);
+            self.wavetable_ids.insert(wavetable_key, wavetable_id);
+            Ok(wavetable_key)
         } else {
             Err(ResourcesError::WavetablesFull(wavetable))
         }
     }
+    pub fn insert_wavetable(
+        &mut self,
+        wavetable: Wavetable,
+    ) -> Result<WavetableKey, ResourcesError> {
+        self.insert_wavetable_with_id(wavetable, WavetableId::new())
+    }
     pub fn remove_wavetable(&mut self, wavetable_key: WavetableKey) -> Option<Wavetable> {
         self.wavetables.remove(wavetable_key)
+    }
+    pub fn replace_wavetable(
+        &mut self,
+        wavetable_key: WavetableKey,
+        wavetable: Wavetable,
+    ) -> Result<Wavetable, ResourcesError> {
+        match self.wavetables.get_mut(wavetable_key) {
+            Some(map_wavetable) => {
+                let old_wavetable = std::mem::replace(map_wavetable, wavetable);
+                Ok(old_wavetable)
+            }
+            None => Err(ResourcesError::ReplaceWavetableKeyInvalid(wavetable)),
+        }
     }
     pub fn insert_buffer(&mut self, buf: Buffer) -> Result<BufferKey, ResourcesError> {
         self.insert_buffer_with_id(buf, BufferId::new())
@@ -306,6 +392,14 @@ impl Resources {
     pub fn buffer_key_from_id(&self, buf_id: BufferId) -> Option<BufferKey> {
         for (key, &id) in self.buffer_ids.iter() {
             if id == buf_id {
+                return Some(key);
+            }
+        }
+        None
+    }
+    pub fn wavetable_key_from_id(&self, wavetable_id: WavetableId) -> Option<WavetableKey> {
+        for (key, &id) in self.wavetable_ids.iter() {
+            if id == wavetable_id {
                 return Some(key);
             }
         }
