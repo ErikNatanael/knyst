@@ -21,9 +21,6 @@ pub struct RunGraph {
     output_node_buffer_ref: NodeBufferRef,
     resources_command_receiver: rtrb::Consumer<crate::ResourcesCommand>,
     resources_response_sender: rtrb::Producer<crate::ResourcesResponse>,
-    /// The MusicalTimeMap that is shared between all sub Graphs running through
-    /// this RunGraph. Stored here so that the user can get access to changing it.
-    musical_time_map: Arc<RwLock<MusicalTimeMap>>,
 }
 
 impl RunGraph {
@@ -92,7 +89,6 @@ impl RunGraph {
                         input_buffer_ptr,
                         input_node_buffer_ref,
                         output_node_buffer_ref,
-                        musical_time_map,
                         resources_command_receiver,
                         resources_response_sender,
                     },

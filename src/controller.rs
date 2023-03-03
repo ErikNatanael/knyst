@@ -6,6 +6,7 @@ use crate::{
         connection::ConnectionError, Connection, GenOrGraph, GenOrGraphEnum, Graph, GraphId,
         NodeAddress, ParameterChange,
     },
+    scheduling::MusicalTimeMap,
     wavetable::Wavetable,
     BufferId, KnystError, ResourcesCommand, ResourcesResponse, WavetableId,
 };
@@ -25,7 +26,7 @@ enum Command {
     ScheduleChange(ParameterChange),
     FreeDisconnectedNodes,
     ResourcesCommand(ResourcesCommand),
-    // TODO: Commands to change a Resources
+    ChangeMusicalTimeMap(Box<dyn FnOnce(&mut MusicalTimeMap) + Send>),
 }
 
 impl Command {}
@@ -132,6 +133,14 @@ impl KnystCommands {
             .send(Command::ResourcesCommand(
                 ResourcesCommand::ReplaceWavetable { id, wavetable },
             ))
+            .unwrap();
+    }
+    pub fn change_musical_time_map(
+        &mut self,
+        change_fn: impl FnOnce(&mut MusicalTimeMap) + Send + 'static,
+    ) {
+        self.sender
+            .send(Command::ChangeMusicalTimeMap(Box::new(change_fn)))
             .unwrap();
     }
 }
@@ -263,6 +272,10 @@ impl Controller {
                     },
                 }
             }
+            Command::ChangeMusicalTimeMap(change_fn) => self
+                .top_level_graph
+                .change_musical_time_map(change_fn)
+                .map_err(|e| From::from(e)),
         };
 
         if let Err(e) = result {

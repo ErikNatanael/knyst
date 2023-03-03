@@ -435,6 +435,8 @@ pub enum ScheduleError {
     InputLabelNotFound(&'static str),
     #[error("No scheduler was created for the Graph so the change cannot be scheduled. This is likely because this Graph was not yet added to another Graph or split into a Node.")]
     SchedulerNotCreated,
+    #[error("A lock for writing to the MusicalTimeMap cannot be acquired.")]
+    MusicalTimeMapCannotBeWrittenTo,
 }
 
 pub enum GenOrGraphEnum {
@@ -2217,6 +2219,16 @@ impl Graph {
             None
         }
     }
+    pub fn change_musical_time_map(
+        &mut self,
+        change_fn: impl FnOnce(&mut MusicalTimeMap),
+    ) -> Result<(), ScheduleError> {
+        if let Some(ggc) = &mut self.graph_gen_communicator {
+            ggc.scheduler.change_musical_time_map(change_fn)
+        } else {
+            Err(ScheduleError::SchedulerNotCreated)
+        }
+    }
     fn depth_first_search(
         &self,
         visited: &mut HashSet<NodeKey>,
@@ -2753,6 +2765,23 @@ impl Scheduler {
                     }
                 }
             }
+        }
+    }
+    pub fn change_musical_time_map(
+        &mut self,
+        change_fn: impl FnOnce(&mut MusicalTimeMap),
+    ) -> Result<(), ScheduleError> {
+        match self {
+            Scheduler::Stopped { .. } => Err(ScheduleError::SchedulerNotCreated),
+            Scheduler::Running {
+                musical_time_map, ..
+            } => match musical_time_map.write() {
+                Ok(mut mtm) => {
+                    (change_fn)(&mut (*mtm));
+                    Ok(())
+                }
+                Err(_) => Err(ScheduleError::MusicalTimeMapCannotBeWrittenTo),
+            },
         }
     }
     /// Schedules a change to be applied at the time of calling the function + the latency setting.
