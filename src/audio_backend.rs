@@ -99,6 +99,7 @@ mod jack_backend {
     use crate::graph::{RunGraph, RunGraphSettings};
     use crate::KnystError;
     use crate::{graph::Graph, Resources};
+    use assert_no_alloc::*;
     enum JackClient {
         Passive(jack::Client),
         Active(jack::AsyncClient<JackNotifications, JackProcess>),
@@ -197,22 +198,24 @@ mod jack_backend {
 
     impl jack::ProcessHandler for JackProcess {
         fn process(&mut self, _: &jack::Client, ps: &jack::ProcessScope) -> jack::Control {
-            let graph_input_buffers = self.run_graph.graph_input_buffers();
-            for (i, in_port) in self.in_ports.iter().enumerate() {
-                let in_port_slice = in_port.as_slice(ps);
-                let in_buffer = unsafe { graph_input_buffers.get_channel_mut(i) };
-                in_buffer.clone_from_slice(in_port_slice);
-            }
-            self.run_graph.run_resources_communication(50);
-            self.run_graph.process_block();
+            assert_no_alloc(|| {
+                let graph_input_buffers = self.run_graph.graph_input_buffers();
+                for (i, in_port) in self.in_ports.iter().enumerate() {
+                    let in_port_slice = in_port.as_slice(ps);
+                    let in_buffer = unsafe { graph_input_buffers.get_channel_mut(i) };
+                    in_buffer.clone_from_slice(in_port_slice);
+                }
+                self.run_graph.run_resources_communication(50);
+                self.run_graph.process_block();
 
-            let graph_output_buffers = self.run_graph.graph_output_buffers();
-            for (i, out_port) in self.out_ports.iter_mut().enumerate() {
-                let out_buffer = graph_output_buffers.get_channel(i);
-                let out_port_slice = out_port.as_mut_slice(ps);
-                out_port_slice.clone_from_slice(out_buffer);
-            }
-            jack::Control::Continue
+                let graph_output_buffers = self.run_graph.graph_output_buffers();
+                for (i, out_port) in self.out_ports.iter_mut().enumerate() {
+                    let out_buffer = graph_output_buffers.get_channel(i);
+                    let out_port_slice = out_port.as_mut_slice(ps);
+                    out_port_slice.clone_from_slice(out_buffer);
+                }
+                jack::Control::Continue
+            })
         }
     }
 
@@ -310,6 +313,7 @@ pub mod cpal_backend {
     use crate::graph::{RunGraph, RunGraphSettings};
     use crate::KnystError;
     use crate::{graph::Graph, Resources};
+    use assert_no_alloc::*;
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
     pub struct CpalBackendOptions {
@@ -431,20 +435,22 @@ pub mod cpal_backend {
             config,
             move |output: &mut [T], _: &cpal::OutputCallbackInfo| {
                 // TODO: When CPAL support duplex streams, copy inputs to graph inputs here.
-                for frame in output.chunks_mut(channels) {
-                    if sample_counter >= graph_block_size {
-                        run_graph.run_resources_communication(50);
-                        run_graph.process_block();
-                        sample_counter = 0;
+                assert_no_alloc(|| {
+                    for frame in output.chunks_mut(channels) {
+                        if sample_counter >= graph_block_size {
+                            run_graph.run_resources_communication(50);
+                            run_graph.process_block();
+                            sample_counter = 0;
+                        }
+                        let buffer = run_graph.graph_output_buffers();
+                        for (channel_i, out) in frame.iter_mut().enumerate() {
+                            let value: T =
+                                cpal::Sample::from::<f32>(&buffer.read(channel_i, sample_counter));
+                            *out = value;
+                        }
+                        sample_counter += 1;
                     }
-                    let buffer = run_graph.graph_output_buffers();
-                    for (channel_i, out) in frame.iter_mut().enumerate() {
-                        let value: T =
-                            cpal::Sample::from::<f32>(&buffer.read(channel_i, sample_counter));
-                        *out = value;
-                    }
-                    sample_counter += 1;
-                }
+                })
             },
             err_fn,
         )?;
