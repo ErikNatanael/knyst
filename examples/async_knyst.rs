@@ -2,14 +2,15 @@ use anyhow::Result;
 use knyst::{
     audio_backend::{CpalBackend, CpalBackendOptions},
     controller::{self, KnystCommands},
+    envelope::Envelope,
     graph::{ClosureGen, Mult, NodeAddress},
     prelude::*,
     wavetable::{Oscillator, Wavetable, WavetableOscillatorOwned},
     WavetableId,
 };
-use rand::{seq::SliceRandom, thread_rng};
-use std::io::Write;
-use std::time::Duration;
+use rand::{random, seq::SliceRandom, thread_rng, Rng};
+use std::{io::Write, sync::atomic::AtomicBool};
+use std::{sync::Arc, time::Duration};
 
 use termion;
 use termion::input::TermRead;
@@ -23,6 +24,7 @@ struct State {
     harmony_wavetable_id: WavetableId,
     block_size: usize,
     sample_rate: f32,
+    tokio_trigger: Arc<AtomicBool>,
 }
 
 // TODO: Tokio async parts using the musical time map for scheduling and sometimes changing the tempo
@@ -82,14 +84,6 @@ fn main() -> Result<()> {
     harmony_wavetable.normalize();
     let harmony_wavetable_id = k.insert_wavetable(harmony_wavetable);
 
-    let mut state = State {
-        potential_reverb_inputs,
-        reverb_node: None,
-        block_size,
-        sample_rate,
-        harmony_wavetable_id,
-    };
-
     // Have a background thread play some harmony
     {
         let chords = vec![
@@ -134,6 +128,24 @@ fn main() -> Result<()> {
             }
         });
     }
+
+    // Start the tokio subsystem
+    let tokio_trigger = Arc::new(AtomicBool::new(false));
+
+    {
+        let k = k.clone();
+        let trigger = tokio_trigger.clone();
+        std::thread::spawn(move || tokio_knyst(k, trigger));
+    }
+    let mut state = State {
+        potential_reverb_inputs,
+        reverb_node: None,
+        block_size,
+        sample_rate,
+        harmony_wavetable_id,
+        tokio_trigger,
+    };
+
     // Set terminal to raw mode to allow reading stdin one key at a time
     let mut stdout = std::io::stdout().into_raw_mode().unwrap();
 
@@ -156,6 +168,7 @@ fn main() -> Result<()> {
                         "m: load and play sound file",
                         "n: toggle reverb",
                         "b: replace wavetable for harmony notes",
+                        "v: trigger a little melody using async",
                     ];
                     write!(stdout, "{}", termion::clear::All,).unwrap();
                     for (y, line) in lines.into_iter().enumerate() {
@@ -277,6 +290,12 @@ fn handle_special_keys(c: char, mut k: KnystCommands, state: &mut State) -> bool
             k.replace_wavetable(state.harmony_wavetable_id, new_harmony_wavetable);
             true
         }
+        'v' => {
+            state
+                .tokio_trigger
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+            true
+        }
         _ => false,
     }
 }
@@ -329,4 +348,71 @@ fn fundsp_reverb_gen(sample_rate: f64, mix: f32) -> ClosureGen {
     .output("out1")
     .input("in0")
     .input("in1")
+}
+
+// Start a tokio async runtime to demonstrate that it works. This is an
+// alternative to using standard threads.
+#[tokio::main]
+async fn tokio_knyst(k: KnystCommands, mut trigger: Arc<AtomicBool>) {
+    let mut rng = thread_rng();
+    loop {
+        receive_trigger(&mut trigger).await;
+        let k = k.clone();
+        let speed = rng.gen_range(0.2..0.4_f32);
+        tokio::spawn(async move {
+            play_a_little_tune(k, speed).await;
+        });
+    }
+}
+
+async fn receive_trigger(trigger: &mut Arc<AtomicBool>) {
+    while !trigger.load(std::sync::atomic::Ordering::SeqCst) {
+        tokio::time::sleep(tokio::time::Duration::from_millis(1)).await;
+    }
+    trigger.store(false, std::sync::atomic::Ordering::SeqCst);
+}
+
+async fn play_a_little_tune(mut k: KnystCommands, speed: f32) {
+    let melody = vec![
+        (22, 1.),
+        (31, 1.),
+        (36, 1.),
+        (45, 1.),
+        (53, 0.25),
+        (58, 0.25),
+        (53, 0.25),
+        (48, 0.25),
+        (53, 3.),
+    ];
+    for (degree_53, beats) in melody {
+        let freq = degree_53_to_hz(degree_53 as f32 + 53., ROOT_FREQ);
+        spawn_note(&mut k, freq, beats * speed).await;
+        tokio::time::sleep(tokio::time::Duration::from_secs_f32(beats * speed)).await;
+    }
+}
+
+async fn spawn_note(k: &mut KnystCommands, freq: f32, length_seconds: f32) {
+    let mut settings = k.default_graph_settings();
+    settings.num_outputs = 1;
+    settings.num_inputs = 0;
+    let mut note_graph = Graph::new(settings);
+    let mut wavetable = Wavetable::new();
+    let num_harmonics = (15000. / freq) as usize;
+    wavetable.add_saw(num_harmonics, 1.0);
+    let sig = note_graph.push(WavetableOscillatorOwned::new(wavetable.clone()));
+    note_graph
+        .connect(constant(freq).to(&sig).to_label("freq"))
+        .unwrap();
+    let env = Envelope {
+        points: vec![(0.15, 0.05), (0.07, 0.1), (0.0, length_seconds)],
+        stop_action: StopAction::FreeGraph,
+        ..Default::default()
+    };
+    let env = note_graph.push(env.to_gen());
+    let amp = note_graph.push(Mult);
+    note_graph.connect(sig.to(&amp)).unwrap();
+    note_graph.connect(env.to(&amp).to_index(1)).unwrap();
+    note_graph.connect(amp.to_graph_out()).unwrap();
+    let note_graph = k.push(note_graph);
+    k.connect(note_graph.to_graph_out().channels(2));
 }
