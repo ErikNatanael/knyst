@@ -95,7 +95,7 @@ pub enum AudioBackendError {
 #[cfg(feature = "jack")]
 mod jack_backend {
     use crate::audio_backend::{AudioBackend, AudioBackendError};
-    use crate::controller::{self, Controller, KnystCommands};
+    use crate::controller::Controller;
     use crate::graph::{RunGraph, RunGraphSettings};
     use crate::KnystError;
     use crate::{graph::Graph, Resources};

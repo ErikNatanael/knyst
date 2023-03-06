@@ -43,6 +43,7 @@ impl Gen for OnceTrig {
         } else {
             // If we haven't triggered yet, send a trigger on the first sample and then nothing.
             out[0] = 1.0;
+            self.0 = true;
             for o in out.iter_mut().skip(1) {
                 *o = 0.
             }
@@ -61,7 +62,7 @@ impl Gen for OnceTrig {
 }
 
 pub struct IntervalTrig {
-    counter: u64,
+    counter: Vec<Sample>,
 }
 
 impl Gen for IntervalTrig {
@@ -72,14 +73,22 @@ impl Gen for IntervalTrig {
     ) -> graph::GenState {
         let intervals_in_seconds = ctx.inputs.get_channel(0);
         let output = ctx.outputs.split_mut().next().unwrap();
-        for (interval, trig_out) in intervals_in_seconds.iter().zip(output.iter_mut()) {
+        let mut counter_subtract = 0.0;
+        for ((interval, trig_out), count) in intervals_in_seconds
+            .iter()
+            .zip(output.iter_mut())
+            .zip(self.counter.iter_mut())
+        {
             let interval_sample = *interval * ctx.sample_rate;
-            *trig_out = if self.counter >= interval_sample as u64 {
-                self.counter = 0;
+            *trig_out = if (*count - counter_subtract) >= interval_sample {
+                counter_subtract += interval_sample;
                 1.0
             } else {
                 0.0
             };
+        }
+        for (i, count) in self.counter.iter_mut().enumerate() {
+            *count += i as f32 - counter_subtract;
         }
         GenState::Continue
     }
@@ -94,5 +103,16 @@ impl Gen for IntervalTrig {
     }
     fn output_desc(&self, _output: usize) -> &'static str {
         "trig"
+    }
+
+    fn init(&mut self, block_size: usize, _sample_rate: graph::Sample) {
+        self.counter = vec![0.0; block_size];
+        for (i, count) in self.counter.iter_mut().enumerate() {
+            *count += i as f32;
+        }
+    }
+
+    fn name(&self) -> &'static str {
+        "IntervalTrig"
     }
 }

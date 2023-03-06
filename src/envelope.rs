@@ -31,6 +31,7 @@ type Point = (f32, f32);
 
 use crate::{
     graph::{Gen, GenContext, GenState, Sample},
+    trig::is_trigger,
     StopAction,
 };
 
@@ -253,10 +254,14 @@ impl EnvelopeGen {
         self.next_index = 1;
     }
     /// Initialises the envelope based on the current value and the first point
-    pub fn start_from_current(&mut self) {
+    pub fn restart_from_current(&mut self) {
+        // If we're playing, grab the current value. If not the end value is
+        // already stored in self.source_value
+        if self.playing {
+            self.source_value = self.current_value();
+        }
         self.playing = true;
         self.waiting_for_release = false;
-        self.source_value = self.current_value();
         self.target_value = self.points[0].0;
         self.source_target_diff = self.target_value - self.source_value;
         self.segment_duration = self.points[0].1;
@@ -408,19 +413,24 @@ impl Gen for EnvelopeGen {
         ctx: GenContext,
         _resources: &mut crate::Resources,
     ) -> crate::graph::GenState {
-        let release_gate_in = ctx.inputs.get_channel(0);
+        let release_trigger_in = ctx.inputs.get_channel(0);
+        let restart_trigger_in = ctx.inputs.get_channel(1);
         let mut stop_sample = None;
-        for ((i, out), &release_gate) in ctx
+        for (((i, out), &release_trig), &restart_trig) in ctx
             .outputs
             .split_mut()
             .next()
             .unwrap()
             .iter_mut()
             .enumerate()
-            .zip(release_gate_in.iter())
+            .zip(release_trigger_in.iter())
+            .zip(restart_trigger_in.iter())
         {
-            if release_gate > 0. {
+            if is_trigger(release_trig) {
                 self.release();
+            }
+            if is_trigger(restart_trig) {
+                self.restart_from_current();
             }
             *out = self.next_sample();
             if !self.playing() && stop_sample.is_none() {
@@ -456,7 +466,8 @@ impl Gen for EnvelopeGen {
 
     fn input_desc(&self, input: usize) -> &'static str {
         match input {
-            0 => "release_gate",
+            0 => "release_trig",
+            1 => "restart_trig",
             _ => "",
         }
     }

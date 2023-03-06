@@ -2,13 +2,14 @@ use anyhow::Result;
 use knyst::{
     audio_backend::{CpalBackend, CpalBackendOptions},
     controller::{self, KnystCommands},
-    envelope::Envelope,
+    envelope::{Curve, Envelope},
     graph::{ClosureGen, Mult, NodeAddress},
     prelude::*,
+    trig::OnceTrig,
     wavetable::{Oscillator, Wavetable, WavetableOscillatorOwned},
     WavetableId,
 };
-use rand::{random, seq::SliceRandom, thread_rng, Rng};
+use rand::{seq::SliceRandom, thread_rng, Rng};
 use std::{io::Write, sync::atomic::AtomicBool};
 use std::{sync::Arc, time::Duration};
 
@@ -25,9 +26,10 @@ struct State {
     block_size: usize,
     sample_rate: f32,
     tokio_trigger: Arc<AtomicBool>,
+    lead_env_address: NodeAddress,
 }
 
-// TODO: Tokio async parts using the musical time map for scheduling and sometimes changing the tempo
+// TODO: Use the musical time map for scheduling and sometimes change the tempo
 fn main() -> Result<()> {
     let mut backend = CpalBackend::new(CpalBackendOptions::default())?;
 
@@ -58,9 +60,15 @@ fn main() -> Result<()> {
     let mod_amp = k.push(Mult);
     k.connect(modulator.to(&mod_amp));
     k.connect(constant(0.25).to(&mod_amp).to_index(1));
+    let env = Envelope {
+        points: vec![(0.25, 0.02), (0.125, 0.1), (0.0, 0.5)],
+        curves: vec![Curve::Linear, Curve::Linear, Curve::Exponential(2.0)],
+        ..Default::default()
+    };
+    let env = k.push(env.to_gen());
     let amp = k.push(Mult);
     k.connect(node0.to(&amp));
-    k.connect(constant(0.25).to(&amp).to_index(1));
+    k.connect(env.to(&amp).to_index(1));
     k.connect(mod_amp.to(&node0).to_label("freq"));
     k.connect(amp.to_graph_out().channels(2));
 
@@ -103,7 +111,7 @@ fn main() -> Result<()> {
 
                     k.connect(constant(400.).to(&node).to_label("freq"));
                     k.connect(node.to(&amp));
-                    k.connect(constant(0.05).to(&amp).to_index(1));
+                    k.connect(constant(0.02).to(&amp).to_index(1));
                     k.connect(amp.to_graph_out());
                     k.connect(amp.to_graph_out().to_index(1));
                     node
@@ -144,6 +152,7 @@ fn main() -> Result<()> {
         sample_rate,
         harmony_wavetable_id,
         tokio_trigger,
+        lead_env_address: env.clone(),
     };
 
     // Set terminal to raw mode to allow reading stdin one key at a time
@@ -185,6 +194,9 @@ fn main() -> Result<()> {
                         k.schedule_change(
                             ParameterChange::now(mod_amp.clone(), new_freq * 0.1).i(1),
                         );
+                        // Trigger the envelope to restart
+                        let trig = k.push(OnceTrig::new());
+                        k.connect(trig.to(&state.lead_env_address).to_label("restart_trig"));
                     }
 
                     stdout.lock().flush().unwrap();
