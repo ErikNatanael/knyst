@@ -14,7 +14,7 @@
 //! };
 //! let mut graph = Graph::new(graph_settings);
 //! // Adding a node gives you an address to that node
-//! let sine_node_address = graph.push_gen(WavetableOscillatorOwned::new(Wavetable::sine()));
+//! let sine_node_address = graph.push(WavetableOscillatorOwned::new(Wavetable::sine()));
 //! // Connecting the node to the graph output
 //! graph.connect(sine_node_address.to_graph_out())?;
 //! // You need to commit changes if the graph is running.
@@ -31,14 +31,28 @@
 #[cfg(loom)]
 use loom::sync::atomic::Ordering;
 
-// #[cfg(not(loom))]
+pub mod connection;
+mod graph_gen;
+mod node;
+pub mod run_graph;
+pub use connection::Connection;
+use connection::ConnectionError;
+use node::Node;
+pub use node::NodeBufferRef;
+pub use run_graph::{RunGraph, RunGraphSettings};
+
+use crate::scheduling::MusicalTimeMap;
+use crate::time::{Superbeats, Superseconds};
+use rtrb::RingBuffer;
+use slotmap::{new_key_type, SecondaryMap, SlotMap};
+
 use std::cell::UnsafeCell;
 use std::collections::{HashMap, HashSet};
 use std::mem;
 #[cfg(not(loom))]
 use std::sync::atomic::Ordering;
 use std::sync::atomic::{AtomicBool, AtomicU64};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
 use super::Resources;
@@ -51,7 +65,7 @@ use super::Resources;
 /// depth-first search from the graph output. Nodes not connected to the graph output will still be run
 /// because this is the most intuitive behaviour.
 ///
-/// Each node contains a trait object on the heap with the sound generating object, a Box<dyn Gen> Each
+/// Each node contains a trait object on the heap with the sound generating object, a `Box<dyn Gen>` Each
 /// edge/connection specifies between which output/input of the nodes data is mapped.
 
 pub type Sample = f32;
@@ -59,22 +73,116 @@ pub type GraphId = u64;
 
 /// Get a unique id for a Graph from this by using `fetch_add`
 static NEXT_GRAPH_ID: AtomicU64 = AtomicU64::new(0);
+/// NodeAddresses need to be unique and hashable and this unique number makes it so.
+static NEXT_ADDRESS_ID: AtomicU64 = AtomicU64::new(0);
 
 /// An address to a specific Node. The graph_id is constant indepentently of where the graph is (inside some
 /// other graph), so it always points to a specific Node in a specific Graph.
 #[derive(Copy, Clone, Debug, PartialEq, Hash, Eq)]
-pub struct NodeAddress {
-    graph_id: GraphId,
+pub struct RawNodeAddress {
     key: NodeKey,
+    graph_id: GraphId,
+}
+
+/// A handle to an address to a specific node. This handle will be updated with
+/// the node key and the graph id once those are available. This means that a
+/// handle can be created before the node is inserted into a [`Graph`]
+#[derive(Clone, Debug)]
+pub struct NodeAddress {
+    unique_id: u64,
+    graph_id: Arc<RwLock<Option<GraphId>>>,
+    node_key: Arc<RwLock<Option<NodeKey>>>,
+}
+
+impl PartialEq for NodeAddress {
+    fn eq(&self, other: &Self) -> bool {
+        self.unique_id == other.unique_id
+    }
+}
+impl Eq for NodeAddress {}
+
+impl std::hash::Hash for NodeAddress {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.unique_id.hash(state);
+    }
+}
+
+impl From<RawNodeAddress> for NodeAddress {
+    fn from(raw_address: RawNodeAddress) -> Self {
+        let mut a = NodeAddress::new();
+        a.set_graph_id(raw_address.graph_id);
+        a.set_node_key(raw_address.key);
+        a
+    }
 }
 
 impl NodeAddress {
-    pub fn to(&self, sink_node: NodeAddress) -> Connection {
+    pub fn new() -> Self {
+        Self {
+            unique_id: NEXT_ADDRESS_ID.fetch_add(1, Ordering::Relaxed),
+            graph_id: Arc::new(RwLock::new(None)),
+            node_key: Arc::new(RwLock::new(None)),
+        }
+    }
+
+    fn set_node_key(&mut self, node_key: NodeKey) {
+        match self.node_key.write() {
+            Ok(mut lock) => *lock = Some(node_key),
+            Err(e) => {
+                panic!(
+                    "NodeAddress internal node_key RwLock was poisoned. This is unacceptable. {e}"
+                );
+            }
+        }
+    }
+    fn set_graph_id(&mut self, graph_id: GraphId) {
+        match self.graph_id.write() {
+            Ok(mut lock) => *lock = Some(graph_id),
+            Err(e) => {
+                panic!(
+                    "NodeAddress internal graph_id RwLock was poisoned. This is unacceptable. {e}"
+                );
+            }
+        }
+    }
+    fn node_key(&self) -> Option<NodeKey> {
+        match self.node_key.read() {
+            Ok(data) => *data,
+            Err(e) => {
+                panic!(
+                    "NodeAddress internal node_key RwLock was poisoned. This is unacceptable. {e}"
+                );
+            }
+        }
+    }
+    pub fn graph_id(&self) -> Option<GraphId> {
+        match self.graph_id.read() {
+            Ok(data) => *data,
+            Err(e) => {
+                panic!(
+                    "NodeAddress internal graph_id RwLock was poisoned. This is unacceptable. {e}"
+                );
+            }
+        }
+    }
+    pub fn to_raw(&self) -> Option<RawNodeAddress> {
+        match (self.node_key(), self.graph_id()) {
+            (Some(node_key), Some(graph_id)) => Some(RawNodeAddress {
+                key: node_key,
+                graph_id,
+            }),
+            _ => None,
+        }
+    }
+}
+
+impl NodeAddress {
+    pub fn to(&self, sink_node: &NodeAddress) -> Connection {
         Connection::Node {
-            source: *self,
+            source: self.clone(),
             from_index: Some(0),
             from_label: None,
-            sink: sink_node,
+            sink: sink_node.clone(),
             to_index: None,
             to_label: None,
             channels: 1,
@@ -83,19 +191,19 @@ impl NodeAddress {
     }
     pub fn to_graph_out(&self) -> Connection {
         Connection::GraphOutput {
-            source: *self,
+            source: self.clone(),
             from_index: Some(0),
             from_label: None,
             to_index: 0,
             channels: 1,
         }
     }
-    pub fn feedback_to(&self, sink_node: NodeAddress) -> Connection {
+    pub fn feedback_to(&self, sink_node: &NodeAddress) -> Connection {
         Connection::Node {
-            source: *self,
+            source: self.clone(),
             from_index: Some(0),
             from_label: None,
-            sink: sink_node,
+            sink: sink_node.clone(),
             to_index: None,
             to_label: None,
             channels: 1,
@@ -117,13 +225,7 @@ impl GraphInput {
     }
 }
 
-// graph.connect(sine.to(GraphOut))
-// graph.connect(sine.to(GRAPH_OUT))
-// graph.connect(sine.to_graph_out())
-// graph.connect(GraphIn::to(sine).from_index(1).to_label("freq"))
-// graph.connect(GRAPH_IN.to(sine).from_index(1).to_label("freq"))
-
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct ParameterChange {
     pub time: TimeKind,
     pub node: NodeAddress,
@@ -133,16 +235,25 @@ pub struct ParameterChange {
 }
 
 impl ParameterChange {
-    pub fn absolute_samples(node: NodeAddress, value: Sample, absolute_timestamp: u64) -> Self {
+    pub fn beats(node: NodeAddress, value: Sample, beats: Superbeats) -> Self {
         Self {
             node,
             value,
-            time: TimeKind::AbsoluteSample(absolute_timestamp),
+            time: TimeKind::Beats(beats),
             input_index: None,
             input_label: None,
         }
     }
-    pub fn relative_duration(node: NodeAddress, value: Sample, from_now: Duration) -> Self {
+    pub fn superseconds(node: NodeAddress, value: Sample, superseconds: Superseconds) -> Self {
+        Self {
+            node,
+            value,
+            time: TimeKind::Superseconds(superseconds),
+            input_index: None,
+            input_label: None,
+        }
+    }
+    pub fn duration_from_now(node: NodeAddress, value: Sample, from_now: Duration) -> Self {
         Self {
             node,
             value,
@@ -155,7 +266,7 @@ impl ParameterChange {
         Self {
             node,
             value,
-            time: TimeKind::DurationFromNow(Duration::from_millis(0)),
+            time: TimeKind::Immediately,
             input_index: None,
             input_label: None,
         }
@@ -180,350 +291,10 @@ impl ParameterChange {
 
 #[derive(Clone, Copy)]
 pub enum TimeKind {
+    Beats(Superbeats),
     DurationFromNow(Duration),
-    AbsoluteSample(u64),
-}
-
-/// Connection provides a convenient API for creating connections between nodes in a
-/// graph. When used for nodes in a running graph, the shadow engine will translate the
-/// Connection to a RtConnection which contains the full Path for finding the correct Graph
-/// as fast as possible.
-///
-/// A node can have any number of connections to/from other nodes or outputs.
-/// Multiple constant values will result in the sum of all the constants.
-#[derive(Clone, Copy)]
-pub enum Connection {
-    /// node to node
-    Node {
-        source: NodeAddress,
-        from_index: Option<usize>,
-        from_label: Option<&'static str>,
-        sink: NodeAddress,
-        /// if input_index and input_label are both None, the default is index 0
-        to_index: Option<usize>,
-        to_label: Option<&'static str>,
-        /// default: 1
-        channels: usize,
-        feedback: bool,
-    },
-    /// constant to node
-    Constant {
-        value: Sample,
-        sink: Option<NodeAddress>,
-        to_index: Option<usize>,
-        to_label: Option<&'static str>,
-    },
-    /// node to graph output
-    GraphOutput {
-        source: NodeAddress,
-        from_index: Option<usize>,
-        from_label: Option<&'static str>,
-        to_index: usize,
-        channels: usize,
-    },
-    /// graph input to node
-    GraphInput {
-        sink: NodeAddress,
-        from_index: usize,
-        /// if input_index and input_label are both None, the default is index 0
-        to_index: Option<usize>,
-        to_label: Option<&'static str>,
-        channels: usize,
-    },
-    Clear {
-        node: NodeAddress,
-        /// connections to this node
-        input_nodes: bool,
-        /// constant input values of this node
-        input_constants: bool,
-        /// connections from this node to other nodes
-        output_nodes: bool,
-        /// connections from this node to the graph output(s)
-        graph_outputs: bool,
-        /// connections from the graph inputs to the node
-        graph_inputs: bool,
-    },
-}
-
-pub fn constant(value: Sample) -> Connection {
-    Connection::Constant {
-        value,
-        sink: None,
-        to_index: None,
-        to_label: None,
-    }
-}
-impl Connection {
-    pub fn graph_output(source_node: NodeAddress) -> Self {
-        Self::GraphOutput {
-            source: source_node,
-            from_index: Some(0),
-            from_label: None,
-            to_index: 0,
-            channels: 1,
-        }
-    }
-    pub fn graph_input(sink_node: NodeAddress) -> Self {
-        Self::GraphInput {
-            sink: sink_node,
-            from_index: 0,
-            to_index: None,
-            to_label: None,
-            channels: 1,
-        }
-    }
-    pub fn clear_constants(node: NodeAddress) -> Self {
-        Self::Clear {
-            node,
-            input_constants: true,
-            input_nodes: false,
-            output_nodes: false,
-            graph_outputs: false,
-            graph_inputs: false,
-        }
-    }
-    pub fn clear_inputs(node: NodeAddress) -> Self {
-        Self::Clear {
-            node,
-            input_constants: false,
-            input_nodes: true,
-            output_nodes: false,
-            graph_outputs: false,
-            graph_inputs: false,
-        }
-    }
-    pub fn clear_node_outputs(node: NodeAddress) -> Self {
-        Self::Clear {
-            node,
-            input_constants: false,
-            input_nodes: false,
-            output_nodes: true,
-            graph_outputs: false,
-            graph_inputs: false,
-        }
-    }
-    pub fn clear_graph_outputs(node: NodeAddress) -> Self {
-        Self::Clear {
-            node,
-            input_constants: false,
-            input_nodes: false,
-            output_nodes: false,
-            graph_outputs: true,
-            graph_inputs: false,
-        }
-    }
-    pub fn clear_graph_inputs(node: NodeAddress) -> Self {
-        Self::Clear {
-            node,
-            input_constants: false,
-            input_nodes: false,
-            output_nodes: false,
-            graph_outputs: false,
-            graph_inputs: true,
-        }
-    }
-    /// Sets the source of a Connection. Only valid for Connection::Node and
-    /// Connection::GraphOutput. On other variants it does nothing.
-    pub fn from(mut self, source_node: NodeAddress) -> Self {
-        match &mut self {
-            Connection::Node { source, .. } => {
-                *source = source_node;
-            }
-            Connection::GraphInput { .. } => {}
-            Connection::Constant { .. } => {}
-            Connection::GraphOutput { source, .. } => {
-                *source = source_node;
-            }
-            Connection::Clear { .. } => {}
-        }
-        self
-    }
-    /// Sets the source of a Connection. Does nothing on a
-    /// Connection::GraphOutput or Connection::Clear.
-    pub fn to(mut self, sink_node: NodeAddress) -> Self {
-        match &mut self {
-            Connection::Node { sink, .. } => {
-                *sink = sink_node;
-            }
-            Connection::GraphInput { sink, .. } => {
-                *sink = sink_node;
-            }
-            Connection::Constant { sink, .. } => {
-                *sink = Some(sink_node);
-            }
-            Connection::GraphOutput { .. } => {}
-            Connection::Clear { .. } => {}
-        }
-        self
-    }
-    pub fn to_label(mut self, label: &'static str) -> Self {
-        match &mut self {
-            Connection::Node {
-                to_label: input_label,
-                to_index,
-                ..
-            } => {
-                *input_label = Some(label);
-                *to_index = None;
-            }
-            Connection::Constant {
-                to_label: input_label,
-                ..
-            } => {
-                *input_label = Some(label);
-            }
-            Connection::GraphOutput { .. } => {}
-            Connection::GraphInput {
-                to_label: input_label,
-                to_index,
-                ..
-            } => {
-                *input_label = Some(label);
-                *to_index = None;
-            }
-            Connection::Clear { .. } => {}
-        }
-        self
-    }
-    /// Shortcut for `to_label`
-    pub fn tl(self, label: &'static str) -> Self {
-        self.to_label(label)
-    }
-    pub fn to_index(mut self, index: usize) -> Self {
-        match &mut self {
-            Connection::Node {
-                to_index: input_index,
-                to_label,
-                ..
-            } => {
-                *input_index = Some(index);
-                *to_label = None;
-            }
-            Connection::Constant {
-                to_index: input_index,
-                ..
-            } => {
-                *input_index = Some(index);
-            }
-            Connection::GraphOutput { to_index, .. } => {
-                *to_index = index;
-            }
-            Connection::Clear { .. } => {}
-            Connection::GraphInput {
-                to_index, to_label, ..
-            } => {
-                *to_index = Some(index);
-                *to_label = None;
-            }
-        }
-        self
-    }
-    pub fn get_to_index(&self) -> Option<usize> {
-        match &self {
-            Connection::Node {
-                to_index: input_index,
-                ..
-            } => *input_index,
-            Connection::Constant {
-                to_index: input_index,
-                ..
-            } => *input_index,
-            Connection::GraphOutput { to_index, .. } => Some(*to_index),
-            Connection::Clear { .. } => None,
-            Connection::GraphInput { to_index, .. } => *to_index,
-        }
-    }
-    /// Shortcut for `to_index`
-    pub fn ti(self, index: usize) -> Self {
-        self.to_index(index)
-    }
-    pub fn from_index(mut self, index: usize) -> Self {
-        match &mut self {
-            Connection::Node {
-                from_index,
-                from_label,
-                ..
-            } => {
-                *from_index = Some(index);
-                *from_label = None;
-            }
-            Connection::Constant { .. } => {}
-            Connection::GraphOutput {
-                from_index,
-                from_label,
-                ..
-            } => {
-                *from_index = Some(index);
-                *from_label = None;
-            }
-            Connection::GraphInput { from_index, .. } => {
-                *from_index = index;
-            }
-            Connection::Clear { .. } => {}
-        }
-        self
-    }
-    pub fn from_label(mut self, label: &'static str) -> Self {
-        match &mut self {
-            Connection::Node {
-                from_index,
-                from_label,
-                ..
-            } => {
-                *from_label = Some(label);
-                *from_index = None;
-            }
-            Connection::Constant { .. } => {}
-            Connection::GraphOutput {
-                from_index,
-                from_label,
-                ..
-            } => {
-                *from_label = Some(label);
-                *from_index = None;
-            }
-            Connection::GraphInput { .. } => {}
-            Connection::Clear { .. } => {}
-        }
-        self
-    }
-    pub fn channels(mut self, num_channels: usize) -> Self {
-        match &mut self {
-            Connection::Node { channels, .. } => {
-                *channels = num_channels;
-            }
-            Connection::Constant { .. } => {}
-            Connection::GraphOutput { channels, .. } => {
-                *channels = num_channels;
-            }
-            Connection::GraphInput { channels, .. } => {
-                *channels = num_channels;
-            }
-            Connection::Clear { .. } => {}
-        }
-        self
-    }
-    pub fn feedback(mut self, activate: bool) -> Self {
-        match &mut self {
-            Connection::Node { feedback, .. } => {
-                *feedback = activate;
-            }
-            Connection::Constant { .. } => {}
-            Connection::GraphOutput { .. } => {}
-            Connection::GraphInput { .. } => {}
-            Connection::Clear { .. } => {}
-        }
-        self
-    }
-    pub fn get_source_node(&self) -> Option<NodeAddress> {
-        match self {
-            Connection::Node { source, .. } => Some(*source),
-            Connection::GraphOutput { source, .. } => Some(*source),
-            Connection::GraphInput { .. }
-            | Connection::Constant { .. }
-            | Connection::Clear { .. } => None,
-        }
-    }
+    Superseconds(Superseconds),
+    Immediately,
 }
 
 /// One task to complete, for the node graph Safety: Uses raw pointers to nodes
@@ -546,6 +317,9 @@ struct Task {
     output_buffers_first_ptr: *mut Sample,
     block_size: usize,
     num_outputs: usize,
+    /// When a node is scheduled to start a certain sample this will hold that
+    /// time in samples at the local Graph sample rate. Otherwise 0.
+    start_node_at_sample: u64,
 }
 impl Task {
     fn init_constants(&mut self) {
@@ -566,8 +340,13 @@ impl Task {
             }
         }
     }
-    fn run(&mut self, graph_inputs: &NodeBufferRef, resources: &mut Resources) -> GenState {
-        // let node = unsafe { &mut *self.node_ptr };
+    fn run(
+        &mut self,
+        graph_inputs: &NodeBufferRef,
+        resources: &mut Resources,
+        sample_rate: Sample,
+        sample_time_at_block_start: u64,
+    ) -> GenState {
         // Copy all inputs
         for (from, to) in &self.inputs_to_copy {
             unsafe {
@@ -576,7 +355,7 @@ impl Task {
         }
         // Copy all graph inputs
         for (graph_input_index, node_input_index) in &self.graph_inputs_to_copy {
-            for i in 0..self.input_buffers.block_size {
+            for i in 0..self.input_buffers.block_size() {
                 self.input_buffers.write(
                     graph_inputs.read(*graph_input_index, i),
                     *node_input_index,
@@ -584,19 +363,47 @@ impl Task {
                 );
             }
         }
-        // Process node
-        // node.process(&self.input_buffers, resources)
-        let mut outputs = NodeBufferRef {
-            buf: self.output_buffers_first_ptr,
-            num_channels: self.num_outputs,
-            block_size: self.block_size,
-        };
-        let ctx = GenContext {
-            inputs: &self.input_buffers,
-            outputs: &mut outputs,
-        };
-        assert!(!self.gen.is_null());
-        unsafe { (*self.gen).process(ctx, resources) }
+        if self.start_node_at_sample <= sample_time_at_block_start {
+            // Process node
+            let mut outputs = NodeBufferRef::new(
+                self.output_buffers_first_ptr,
+                self.num_outputs,
+                self.block_size,
+            );
+            let ctx = GenContext {
+                inputs: &self.input_buffers,
+                outputs: &mut outputs,
+                sample_rate,
+            };
+            assert!(!self.gen.is_null());
+            unsafe { (*self.gen).process(ctx, resources) }
+        } else if ((self.start_node_at_sample - sample_time_at_block_start) as usize)
+            < self.block_size
+        {
+            // The node should start running this block, but only part of the block
+            let new_block_size =
+                self.block_size - (self.start_node_at_sample - sample_time_at_block_start) as usize;
+
+            // Process node
+            let mut outputs = NodeBufferRef::new(
+                self.output_buffers_first_ptr,
+                self.num_outputs,
+                self.block_size,
+            );
+            let partial_inputs =
+                unsafe { self.input_buffers.to_partial_block_size(new_block_size) };
+            let mut partial_outputs = unsafe { outputs.to_partial_block_size(new_block_size) };
+            let ctx = GenContext {
+                inputs: &partial_inputs,
+                outputs: &mut partial_outputs,
+                sample_rate,
+            };
+            assert!(!self.gen.is_null());
+            unsafe { (*self.gen).process(ctx, resources) }
+        } else {
+            // It's not time to run the node yet, just continue
+            GenState::Continue
+        }
     }
 }
 
@@ -612,26 +419,10 @@ struct OutputTask {
 }
 unsafe impl Send for OutputTask {}
 
-#[derive(thiserror::Error, Debug, PartialEq)]
-pub enum ConnectionError {
-    #[error("The nodes that you are trying to connect are in different graphs. Nodes can only be connected within a graph.")]
-    DifferentGraphs,
-    #[error("The graph containing the NodeAdress provided was not found. The node itself may or may not exist.")]
-    GraphNotFound,
-    #[error("The NodeAddress does not exist. The Node may have been freed already.")]
-    NodeNotFound,
-    #[error("The given input label (`{0}`) is not available for the given node.")]
-    InvalidInputLabel(&'static str),
-    #[error("The given output label (`{0}`) is not available for the given node.")]
-    InvalidOutputLabel(&'static str),
-    #[error("You are trying to connect a node to itself. This can only be done using a feedback connection.")]
-    SameNode,
-    #[error("The sink node for the connection is not set and is required.")]
-    SinkNotSet,
-    #[error("You are trying to connect to channels that don't exist, either through direct indexing or a too high `channels` value for the input.")]
-    ChannelOutOfBounds,
-    #[error("The connection change required freeing a node, but the node could not be freed.")]
-    NodeFree(#[from] FreeError),
+#[derive(thiserror::Error, Debug)]
+pub enum PushError {
+    #[error("The target graph was not found. The GenOrGraph that was pushed is returned.")]
+    GraphNotFound(GenOrGraphEnum),
 }
 
 #[derive(thiserror::Error, Debug, PartialEq)]
@@ -641,7 +432,7 @@ pub enum FreeError {
     #[error("The NodeAddress does not exist. The Node may have been freed already.")]
     NodeNotFound,
     #[error("The free action required making a new connection, but the connection failed.")]
-    ConnectionError(#[from] Box<ConnectionError>),
+    ConnectionError(#[from] Box<connection::ConnectionError>),
 }
 #[derive(thiserror::Error, Debug, PartialEq, Eq)]
 pub enum ScheduleError {
@@ -653,7 +444,49 @@ pub enum ScheduleError {
     InputLabelNotFound(&'static str),
     #[error("No scheduler was created for the Graph so the change cannot be scheduled. This is likely because this Graph was not yet added to another Graph or split into a Node.")]
     SchedulerNotCreated,
+    #[error("A lock for writing to the MusicalTimeMap cannot be acquired.")]
+    MusicalTimeMapCannotBeWrittenTo,
 }
+
+pub enum GenOrGraphEnum {
+    Gen(Box<dyn Gen + Send>),
+    Graph(Graph),
+}
+
+impl std::fmt::Debug for GenOrGraphEnum {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            GenOrGraphEnum::Gen(gen) => write!(f, "Gen: {}", gen.name()),
+            GenOrGraphEnum::Graph(graph) => write!(f, "Graph: {}, {}", graph.id, graph.name),
+        }
+    }
+}
+
+impl GenOrGraphEnum {
+    fn components(self) -> (Option<Graph>, Box<dyn Gen + Send>) {
+        match self {
+            GenOrGraphEnum::Gen(boxed_gen) => (None, boxed_gen),
+            GenOrGraphEnum::Graph(graph) => graph.components(),
+        }
+    }
+}
+
+impl<T: GenOrGraph> From<T> for GenOrGraphEnum {
+    fn from(value: T) -> Self {
+        value.into_gen_or_graph_enum()
+    }
+}
+// impl GenOrGraph for GenOrGraphEnum {
+//     fn components(self) -> (Option<Graph>, Box<dyn Gen + Send>) {
+//         match self {
+//             GenOrGraphEnum::Gen(boxed_gen) => (None, boxed_gen),
+//             GenOrGraphEnum::Graph(graph) => graph.components(),
+//         }
+//     }
+//     fn into_gen_or_graph_enum(self) -> GenOrGraphEnum {
+//         self
+//     }
+// }
 
 /// This trait is not meant to be implemented by users. In almost all situations
 /// you instead want to implement the [`Gen`] trait.
@@ -662,13 +495,25 @@ pub enum ScheduleError {
 /// a Graph using the same API.
 pub trait GenOrGraph {
     fn components(self) -> (Option<Graph>, Box<dyn Gen + Send>);
+    fn into_gen_or_graph_enum(self) -> GenOrGraphEnum;
 }
 
 impl<T: Gen + Send + 'static> GenOrGraph for T {
     fn components(self) -> (Option<Graph>, Box<dyn Gen + Send>) {
         (None, Box::new(self))
     }
+    fn into_gen_or_graph_enum(self) -> GenOrGraphEnum {
+        GenOrGraphEnum::Gen(Box::new(self))
+    }
 }
+// impl<T: Gen + Send> GenOrGraph for Box<T> {
+//     fn components(self) -> (Option<Graph>, Box<dyn Gen + Send>) {
+//         (None, self)
+//     }
+//     fn into_gen_or_graph_enum(self) -> GenOrGraphEnum {
+//         GenOrGraphEnum::Gen(self)
+//     }
+// }
 impl GenOrGraph for Graph {
     fn components(mut self) -> (Option<Graph>, Box<dyn Gen + Send>) {
         if self.block_size() != self.block_size() {
@@ -679,7 +524,10 @@ impl GenOrGraph for Graph {
         }
         // Create the GraphGen from the new Graph
         let gen = self.create_graph_gen().unwrap();
-        (Some(self), Box::new(gen))
+        (Some(self), gen)
+    }
+    fn into_gen_or_graph_enum(self) -> GenOrGraphEnum {
+        GenOrGraphEnum::Graph(self)
     }
 }
 
@@ -700,7 +548,7 @@ pub trait Gen {
     fn num_outputs(&self) -> usize;
     /// Initialize buffers etc.
     /// Default: noop
-    fn init(&mut self, _sample_rate: Sample) {}
+    fn init(&mut self, _block_size: usize, _sample_rate: Sample) {}
     /// Return a label for a given input channel index. This sets the label in the [`Connection`] API.
     fn input_desc(&self, _input: usize) -> &'static str {
         ""
@@ -715,137 +563,16 @@ pub trait Gen {
     }
 }
 
-/// Wrapper around a buffer of output samples. Panics at improper usage.
-///
-/// The number of channels corresponds to the number of inputs/outputs specified
-/// for the [`Gen`] this is given to. Trying to access channels outside of what
-/// has been declared will result in a panic at runtime.
-///
-/// The NodeBuffer does not own the data it points to, it is just a wrapper
-/// around a pointer to the buffer to make accessing it more convenient.
-///
-/// The samples are stored in a `*mut [Sample]` layout out one channel after the
-/// other as if it was a `*mut[*mut [Sample]]`. In benchmarks this was as fast as
-/// iterating over multiple `&mut[Sample]`
-///
-pub struct NodeBufferRef {
-    buf: *mut Sample,
-    num_channels: usize,
-    block_size: usize,
-}
-impl NodeBufferRef {
-    /// Produces a buffer with 0 channels that you cannot read from or write to, but it may be useful as a first input to a node that has no inputs.
-    pub fn null_buffer() -> Self {
-        Self {
-            buf: std::ptr::null_mut(),
-            num_channels: 0,
-            block_size: 0,
-        }
-    }
-    #[inline]
-    pub fn write(&mut self, value: f32, channel: usize, sample_index: usize) {
-        assert!(channel < self.num_channels);
-        assert!(sample_index < self.block_size);
-        assert!(!self.buf.is_null());
-        let buffer_slice = unsafe {
-            std::slice::from_raw_parts_mut(self.buf, self.num_channels * self.block_size)
-        };
-        unsafe {
-            *buffer_slice.get_unchecked_mut(channel * self.block_size + sample_index) = value
-        };
-    }
-    /// Decouples the lifetime of the returned slice from self so that slices to different channels can be returned.
-    #[inline]
-    pub fn get_channel_mut<'a, 'b>(&'a mut self, channel: usize) -> &'b mut [f32] {
-        assert!(channel < self.num_channels);
-        assert!(!self.buf.is_null());
-        let channel_offset = channel * self.block_size;
-        let buffer_channel_slice = unsafe {
-            let ptr_at_channel = self.buf.add(channel_offset);
-            std::slice::from_raw_parts_mut(ptr_at_channel, self.block_size)
-        };
-        buffer_channel_slice
-    }
-    #[inline]
-    pub fn get_channel(&self, channel: usize) -> &[f32] {
-        assert!(channel < self.num_channels);
-        assert!(!self.buf.is_null());
-        let channel_offset = channel * self.block_size;
-        let buffer_channel_slice = unsafe {
-            let ptr_at_channel = self.buf.add(channel_offset);
-            std::slice::from_raw_parts(ptr_at_channel, self.block_size)
-        };
-        buffer_channel_slice
-    }
-    #[inline]
-    pub fn add(&mut self, value: f32, channel: usize, sample_index: usize) {
-        assert!(channel < self.num_channels);
-        assert!(sample_index < self.block_size);
-        assert!(!self.buf.is_null());
-        unsafe {
-            let buffer_slice =
-                std::slice::from_raw_parts_mut(self.buf, self.num_channels * self.block_size);
-            let sample =
-                (*buffer_slice).get_unchecked_mut(channel * self.block_size + sample_index);
-            *sample += value
-        };
-    }
-    #[inline]
-    pub fn read(&self, channel: usize, sample_index: usize) -> Sample {
-        assert!(channel < self.num_channels);
-        assert!(sample_index < self.block_size);
-        assert!(!self.buf.is_null());
-        unsafe {
-            let buffer_slice =
-                std::slice::from_raw_parts_mut(self.buf, self.num_channels * self.block_size);
-            *(*buffer_slice).get_unchecked(channel * self.block_size + sample_index)
-        }
-    }
-    #[inline]
-    fn fill_channel(&mut self, value: f32, channel: usize) {
-        assert!(channel < self.num_channels);
-        assert!(!self.buf.is_null());
-        let channel_offset = channel * self.block_size;
-        let buffer_channel_slice = unsafe {
-            let ptr_at_channel = self.buf.add(channel_offset);
-            std::slice::from_raw_parts_mut(ptr_at_channel, self.block_size)
-        };
-        for sample in buffer_channel_slice {
-            *sample = value;
-        }
-    }
-    #[inline]
-    fn fill(&mut self, value: f32) {
-        assert!(!self.buf.is_null());
-        let buffer_slice = unsafe {
-            std::slice::from_raw_parts_mut(self.buf, self.num_channels * self.block_size)
-        };
-        for sample in buffer_slice {
-            *sample = value;
-        }
-    }
-    fn ptr_to_sample(&mut self, channel: usize, sample_index: usize) -> *mut Sample {
-        assert!(channel < self.num_channels);
-        assert!(sample_index < self.block_size);
-        unsafe { self.buf.add(channel * self.block_size + sample_index) }
-    }
-    pub fn channels(&self) -> usize {
-        self.num_channels
-    }
-    pub fn block_size(&self) -> usize {
-        self.block_size
-    }
-}
-
 /// Gives access to the inputs and outputs buffers of a node for processing.
 pub struct GenContext<'a, 'b> {
     pub inputs: &'a NodeBufferRef,
     pub outputs: &'b mut NodeBufferRef,
+    pub sample_rate: Sample,
 }
 impl<'a, 'b> GenContext<'a, 'b> {
     /// Returns the current block size
     pub fn block_size(&self) -> usize {
-        self.outputs.block_size
+        self.outputs.block_size()
     }
 }
 
@@ -862,8 +589,9 @@ type ProcessFn = Box<dyn FnMut(GenContext, &mut Resources) -> GenState + Send>;
 /// use knyst::prelude::*;
 /// use fastapprox::fast::tanh;
 /// let closure_gen = gen(move |ctx, _resources| {
-///     let out0 = ctx.outputs.get_channel_mut(0);
-///     let out1 = ctx.outputs.get_channel_mut(1);
+///     let mut outputs = ctx.outputs.split_mut();
+///     let out0 = outputs.next().unwrap();
+///     let out1 = outputs.next().unwrap();
 ///     for ((((o0, o1), i0), i1), dist) in out0
 ///         .iter_mut()
 ///         .zip(out1.iter_mut())
@@ -945,8 +673,6 @@ impl Gen for ClosureGen {
         self.outputs.len()
     }
 
-    fn init(&mut self, _sample_rate: Sample) {}
-
     fn input_desc(&self, input: usize) -> &'static str {
         self.inputs.get(input).unwrap_or(&"")
     }
@@ -990,8 +716,9 @@ new_key_type! {
 }
 
 /// Pass to Graph::new to set the options the Graph is created with in an ergonomic and clear way.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct GraphSettings {
+    pub name: String,
     /// The number of inputs to the Graph
     pub num_inputs: usize,
     /// The maximum number of inputs to a Node contained in the Graph
@@ -1008,13 +735,12 @@ pub struct GraphSettings {
     /// Ring buffers are used pass information back and forth between the audio
     /// thread (GraphGen) and the Graph.
     pub ring_buffer_size: usize,
-    /// How much time is added to every *relative* scheduling event to ensure the Change has time to travel to the GraphGen.
-    pub latency: Duration,
 }
 
 impl Default for GraphSettings {
     fn default() -> Self {
         GraphSettings {
+            name: String::from(""),
             num_inputs: 0,
             num_outputs: 2,
             max_node_inputs: 8,
@@ -1022,7 +748,6 @@ impl Default for GraphSettings {
             num_nodes: 1024,
             sample_rate: 48000.,
             ring_buffer_size: 100,
-            latency: Duration::from_millis(4),
         }
     }
 }
@@ -1043,7 +768,7 @@ impl Drop for OwnedRawBuffer {
 /// [`Gen`]s in a different [`Graph`].
 ///
 /// To run a [`Graph`] it has to be split so that parts of it are mirrored in a
-/// `GraphGen` (private). This is done internally when calling [`Graph::push_graph`].
+/// `GraphGen` (private). This is done internally when calling [`Graph::push`]ing a [`Graph`].
 /// You can also do it yourself using a [`RunGraph`]. The [`Graph`] behaves
 /// slightly differently when split:
 ///
@@ -1072,18 +797,15 @@ impl Drop for OwnedRawBuffer {
 ///     ..Default::default()
 /// };
 /// let mut graph = Graph::new(graph_settings);
-/// let resources = Resources::new(ResourcesSettings {
-///     sample_rate: 44100.,
-///     ..Default::default()
-/// });
-/// let mut run_graph = RunGraph::new(&mut graph, resources)?;
+/// let resources = Resources::new(ResourcesSettings::default());
+/// let (mut run_graph, _, _) = RunGraph::new(&mut graph, resources, RunGraphSettings::default())?;
 /// // Adding a node gives you an address to that node
-/// let sine_node_address = graph.push_gen(WavetableOscillatorOwned::new(Wavetable::sine()));
+/// let sine_node_address = graph.push(WavetableOscillatorOwned::new(Wavetable::sine()));
 /// // Connecting the node to the graph output
 /// graph.connect(sine_node_address.to_graph_out())?;
 /// // Set the frequency of the oscillator to 220 Hz. This will
 /// // be converted to a scheduled change because the graph is running.
-/// graph.connect(constant(220.0).to(sine_node_address).to_label("freq"))?;
+/// graph.connect(constant(220.0).to(&sine_node_address).to_label("freq"))?;
 /// // You need to commit changes if the graph is running.
 /// graph.commit_changes();
 /// // You also need to update the scheduler to send messages to the audio thread.
@@ -1095,6 +817,7 @@ impl Drop for OwnedRawBuffer {
 /// ```
 pub struct Graph {
     id: GraphId,
+    name: String,
     nodes: Arc<UnsafeCell<SlotMap<NodeKey, Node>>>,
     node_keys_to_free_when_safe: Vec<(NodeKey, Arc<AtomicBool>)>,
     node_keys_pending_removal: HashSet<NodeKey>,
@@ -1116,6 +839,8 @@ pub struct Graph {
     output_edges: Vec<Edge>,
     /// The edges from the graph inputs to nodes, one Vec per node. `source` in the edge is really the sink here.
     graph_input_edges: SecondaryMap<NodeKey, Vec<Edge>>,
+    /// If changes have been made that require recalculating the graph this will be set to true.
+    recalculation_required: bool,
     num_inputs: usize,
     num_outputs: usize,
     block_size: usize,
@@ -1128,8 +853,6 @@ pub struct Graph {
     inputs_buffers_ptr: Arc<OwnedRawBuffer>,
     max_node_inputs: usize,
     graph_gen_communicator: Option<GraphGenCommunicator>,
-    /// The duration added to all changes scheduled to a relative time so that they have time to travel to the GraphGen.
-    latency: Duration,
 }
 
 impl Default for Graph {
@@ -1141,6 +864,7 @@ impl Default for Graph {
 impl Graph {
     pub fn new(options: GraphSettings) -> Self {
         let GraphSettings {
+            name,
             num_inputs,
             num_outputs,
             max_node_inputs,
@@ -1148,7 +872,6 @@ impl Graph {
             num_nodes,
             sample_rate,
             ring_buffer_size,
-            latency,
         } = options;
         let inputs_buffers_ptr = Box::<[Sample]>::into_raw(
             vec![0.0 as Sample; block_size * max_node_inputs].into_boxed_slice(),
@@ -1163,6 +886,7 @@ impl Graph {
         let graph_input_edges = SecondaryMap::with_capacity(num_nodes);
         Self {
             id,
+            name,
             nodes,
             node_input_edges,
             node_input_index_to_name: SecondaryMap::with_capacity(num_nodes),
@@ -1183,12 +907,12 @@ impl Graph {
             num_outputs,
             block_size,
             sample_rate,
-            latency,
             initiated: false,
             inputs_buffers_ptr,
             max_node_inputs,
             ring_buffer_size,
             graph_gen_communicator: None,
+            recalculation_required: false,
         }
     }
     /// Create a node that will run this graph. This will fail if a Node or Gen has already been created from the Graph since only one Gen is allowed to exist per Graph.
@@ -1197,8 +921,9 @@ impl Graph {
     fn split_and_create_node(&mut self) -> Result<Node, String> {
         let block_size = self.block_size();
         let graph_gen = self.create_graph_gen()?;
-        let mut node = Node::new("graph", Box::new(graph_gen));
+        let mut node = Node::new("graph", graph_gen);
         node.init(block_size, self.sample_rate);
+        self.recalculation_required = true;
         Ok(node)
     }
 
@@ -1208,48 +933,167 @@ impl Graph {
     pub fn num_outputs(&self) -> usize {
         self.num_outputs
     }
+    /// Return a [`GraphSettings`] matching this [`Graph`]
+    pub fn graph_settings(&self) -> GraphSettings {
+        GraphSettings {
+            name: self.name.clone(),
+            num_inputs: self.num_inputs,
+            max_node_inputs: self.max_node_inputs,
+            num_outputs: self.num_outputs,
+            block_size: self.block_size,
+            num_nodes: self.get_nodes().capacity(),
+            sample_rate: self.sample_rate,
+            ring_buffer_size: self.ring_buffer_size,
+        }
+    }
     /// Returns a number including both active nodes and nodes waiting to be safely freed
     pub fn num_stored_nodes(&self) -> usize {
         self.get_nodes().len()
     }
-    pub fn push(&mut self, to_node: impl GenOrGraph) -> NodeAddress {
-        let (graph, gen) = to_node.components();
-        let address = self.push_node(Node::new(gen.name(), gen));
-        if let Some(graph) = graph {
-            self.graphs_per_node.insert(address.key, graph);
+    pub fn id(&self) -> GraphId {
+        self.id
+    }
+    /// Push something implementing [`Gen`] or a [`Graph`] to self creating a
+    /// new node whose address is returned.
+    pub fn push(&mut self, to_node: impl Into<GenOrGraphEnum>) -> NodeAddress {
+        self.push_to_graph(to_node, self.id).unwrap()
+    }
+    /// Push something implementing [`Gen`] or a [`Graph`] to self creating a
+    /// new node whose address is returned. The node will start at `start_time`.
+    pub fn push_at_time(
+        &mut self,
+        to_node: impl Into<GenOrGraphEnum>,
+        start_time: Superseconds,
+    ) -> NodeAddress {
+        self.push_to_graph_at_time(to_node, self.id, start_time)
+            .unwrap()
+    }
+    /// Push something implementing [`Gen`] or a [`Graph`] to the graph with the
+    /// id provided, creating a new node whose address is returned.
+    pub fn push_to_graph(
+        &mut self,
+        to_node: impl Into<GenOrGraphEnum>,
+        graph_id: GraphId,
+    ) -> Result<NodeAddress, PushError> {
+        let mut new_node_address = NodeAddress::new();
+        self.push_with_existing_address_to_graph(to_node, &mut new_node_address, graph_id)?;
+        Ok(new_node_address)
+    }
+    /// Push something implementing [`Gen`] or a [`Graph`] to the graph with the
+    /// id provided, creating a new node whose address is returned.
+    pub fn push_to_graph_at_time(
+        &mut self,
+        to_node: impl Into<GenOrGraphEnum>,
+        graph_id: GraphId,
+        start_time: Superseconds,
+    ) -> Result<NodeAddress, PushError> {
+        let mut new_node_address = NodeAddress::new();
+        self.push_with_existing_address_to_graph_at_time(
+            to_node,
+            &mut new_node_address,
+            graph_id,
+            start_time,
+        )?;
+        Ok(new_node_address)
+    }
+    /// Push something implementing [`Gen`] or a [`Graph`] to self, storing its
+    /// address in the NodeAddress provided.
+    pub fn push_with_existing_address(
+        &mut self,
+        to_node: impl Into<GenOrGraphEnum>,
+        node_address: &mut NodeAddress,
+    ) {
+        self.push_with_existing_address_to_graph(to_node, node_address, self.id)
+            .unwrap()
+    }
+    /// Push something implementing [`Gen`] or a [`Graph`] to self, storing its
+    /// address in the NodeAddress provided. The node will start processing at
+    /// the `start_time`.
+    pub fn push_with_existing_address_at_time(
+        &mut self,
+        to_node: impl Into<GenOrGraphEnum>,
+        node_address: &mut NodeAddress,
+        start_time: Superseconds,
+    ) {
+        self.push_with_existing_address_to_graph_at_time(to_node, node_address, self.id, start_time)
+            .unwrap()
+    }
+    /// Push something implementing [`Gen`] or a [`Graph`] to the graph with the
+    /// id provided, storing its address in the NodeAddress provided.
+    pub fn push_with_existing_address_to_graph(
+        &mut self,
+        to_node: impl Into<GenOrGraphEnum>,
+        node_address: &mut NodeAddress,
+        graph_id: GraphId,
+    ) -> Result<(), PushError> {
+        self.push_with_existing_address_to_graph_at_time(
+            to_node,
+            node_address,
+            graph_id,
+            Superseconds::ZERO,
+        )
+    }
+    /// Push something implementing [`Gen`] or a [`Graph`] to the graph with the
+    /// id provided, storing its address in the NodeAddress provided. The node
+    /// will start processing at the `start_time`.
+    pub fn push_with_existing_address_to_graph_at_time(
+        &mut self,
+        to_node: impl Into<GenOrGraphEnum>,
+        node_address: &mut NodeAddress,
+        graph_id: GraphId,
+        start_time: Superseconds,
+    ) -> Result<(), PushError> {
+        if graph_id == self.id {
+            let (graph, gen) = to_node.into().components();
+            let mut node = Node::new(gen.name(), gen);
+            let start_sample_time = start_time.to_samples(self.sample_rate as u64);
+            node.start_at_sample(start_sample_time);
+            self.push_node(node, node_address);
+            if let Some(mut graph) = graph {
+                // Important: we must start the scheduler here if the current
+                // graph is started, otherwise it will never start.
+                if let Some(ggc) = &mut self.graph_gen_communicator {
+                    if let Scheduler::Running {
+                        start_ts,
+                        latency_in_samples,
+                        musical_time_map,
+                        ..
+                    } = &mut ggc.scheduler
+                    {
+                        let latency =
+                            Duration::from_secs_f64(*latency_in_samples / self.sample_rate as f64);
+                        graph.start_scheduler(latency, start_ts.clone(), musical_time_map.clone());
+                    }
+                }
+                self.graphs_per_node
+                    .insert(node_address.node_key().unwrap(), graph);
+            }
+            Ok(())
+        } else {
+            // Try to find the graph containing the node by asking all the graphs in this graph to free the node
+            let mut to_node = to_node.into();
+            for (_key, graph) in &mut self.graphs_per_node {
+                match graph.push_with_existing_address_to_graph(to_node, node_address, graph_id) {
+                    Ok(_) => return Ok(()),
+                    // Return the error unless it's a GraphNotFound in which case we continue trying
+                    Err(e) => match e {
+                        PushError::GraphNotFound(returned_to_node) => to_node = returned_to_node,
+                    },
+                }
+            }
+            Err(PushError::GraphNotFound(to_node))
         }
-        address
     }
-    /// Add a graph as a node in this graph. This will allow you to change the Graph you added later on as needed.
-    #[deprecated(since = "0.3.1", note = "please use `push` instead")]
-    pub fn push_graph(&mut self, mut graph: Graph) -> NodeAddress {
-        if graph.block_size() != self.block_size() {
-            panic!("Warning: You are pushing a graph with a different block size. The library is not currently equipped to handle this. In a future version this will work seamlesly.")
-        }
-        if graph.sample_rate != self.sample_rate {
-            eprintln!("Warning: You are pushing a graph with a different sample rate. This is currently allowed, but expect bugs unless you deal with resampling manually.")
-        }
-        // Create the GraphGen from the new Graph
-        let gen = graph.create_graph_gen().unwrap();
-        // Add the GraphGen to this Graph as a Node
-        let address = self.push_gen_private(gen);
-        // Add the Graph to this Graph's graph list
-        self.graphs_per_node.insert(address.key, graph);
-        address
-    }
-    /// Add anything that implements Gen to this Graph as a node.
-    #[deprecated(since = "0.3.1", note = "please use `push` instead")]
-    pub fn push_gen<G: Gen + Send + 'static>(&mut self, gen: G) -> NodeAddress {
-        self.push_node(Node::new(gen.name(), Box::new(gen)))
-    }
-    /// Convert a Gen to a Node and add it to the Graph. Used to be public, but now it is private in favour of `Graph::push()`
-    fn push_gen_private<G: Gen + Send + 'static>(&mut self, gen: G) -> NodeAddress {
-        self.push_node(Node::new(gen.name(), Box::new(gen)))
-    }
-    /// Add a node to this Graph. The Node will be (re)initialised with the correct block size for this Graph.
+    /// Add a node to this Graph. The Node will be (re)initialised with the
+    /// correct block size for this Graph.
     ///
-    /// Making it not public means Graphs cannot be accidentally added, but a Node<Graph> can still be created for the top level one if preferred.
-    fn push_node(&mut self, mut node: Node) -> NodeAddress {
+    /// Provide a [`NodeAddress`] so that a pre-created async NodeAddress can be
+    /// connected to this node. A new NodeAddress can also be passed in. Either
+    /// way, it will be connected to this node.
+    ///
+    /// Making it not public means Graphs cannot be accidentally added, but a
+    /// Node<Graph> can still be created for the top level one if preferred.
+    fn push_node(&mut self, mut node: Node, node_address: &mut NodeAddress) {
         if node.num_inputs() > self.max_node_inputs {
             eprintln!("Warning: You are trying to add a node with more inputs than the maximum for this Graph. Try increasing the maximum number of node inputs in the GraphSettings.");
         }
@@ -1257,6 +1101,7 @@ impl Graph {
         if nodes.capacity() == nodes.len() {
             eprintln!("Error: Trying to push a node into a Graph that is at capacity. Try increasing the number of node slots and make sure you free the nodes you don't need.");
         }
+        self.recalculation_required = true;
         let input_index_to_name = node.input_indices_to_names();
         let input_name_to_index = input_index_to_name
             .iter()
@@ -1282,20 +1127,23 @@ impl Graph {
             .insert(key, output_index_to_name);
         self.node_output_name_to_index
             .insert(key, output_name_to_index);
-        NodeAddress {
-            graph_id: self.id,
-            key,
-        }
+
+        node_address.set_graph_id(self.id);
+        node_address.set_node_key(key);
     }
     /// Remove all nodes in this graph and all its subgraphs that are not connected to anything.
     pub fn free_disconnected_nodes(&mut self) -> Result<(), FreeError> {
         // The easiest way to do it would be to store disconnected nodes after
         // calculating the node order of the graph. (i.e. all the nodes that
         // weren't visited)
+        // TODO: This method should be infallible because any error is an internal bug.
 
         let disconnected_nodes = std::mem::take(&mut self.disconnected_nodes);
+        if disconnected_nodes.len() > 0 {
+            self.recalculation_required = true;
+        }
         for node in disconnected_nodes {
-            match self.free_node(NodeAddress {
+            match self.free_node(RawNodeAddress {
                 key: node,
                 graph_id: self.id,
             }) {
@@ -1308,7 +1156,7 @@ impl Graph {
     /// Remove the node and connect its input edges to the sinks of its output edges
     pub fn free_node_mend_connections(
         &mut self,
-        node: impl Into<NodeAddress>,
+        node: impl Into<RawNodeAddress>,
     ) -> Result<(), FreeError> {
         // For every input of the node, connect the nodes connected
         // to it to all the nodes taking input from the corresponding output.
@@ -1324,24 +1172,29 @@ impl Graph {
             if !self.get_nodes_mut().contains_key(node.key) {
                 return Err(FreeError::NodeNotFound);
             }
+            self.recalculation_required = true;
+
             let num_inputs = self.node_input_index_to_name.get(node.key).expect("Since the key exists in the Graph it should have a corresponding node_input_index_to_name Vec").len();
             let num_outputs= self.node_output_index_to_name.get(node.key).expect("Since the key exists in the Graph it should have a corresponding node_output_index_to_name Vec").len();
             let inputs_to_bridge = num_inputs.min(num_outputs);
+            // First collect all the connections that should be bridged so that they are in one place
             let mut outputs = vec![vec![]; inputs_to_bridge];
             for (destination_node_key, edge_vec) in &self.node_input_edges {
                 for edge in edge_vec {
                     if edge.source == node.key && edge.from_output_index < inputs_to_bridge {
                         outputs[edge.from_output_index].push(Connection::Node {
-                            source: NodeAddress {
+                            source: RawNodeAddress {
                                 graph_id: self.id,
                                 key: node.key,
-                            },
+                            }
+                            .into(),
                             from_index: Some(edge.from_output_index),
                             from_label: None,
-                            sink: NodeAddress {
+                            sink: RawNodeAddress {
                                 graph_id: self.id,
                                 key: destination_node_key,
-                            },
+                            }
+                            .into(),
                             to_index: Some(edge.to_input_index),
                             to_label: None,
                             channels: 1,
@@ -1355,10 +1208,11 @@ impl Graph {
                     && graph_output.from_output_index < inputs_to_bridge
                 {
                     outputs[graph_output.from_output_index].push(Connection::GraphOutput {
-                        source: NodeAddress {
+                        source: RawNodeAddress {
                             graph_id: self.id,
                             key: node.key,
-                        },
+                        }
+                        .into(),
                         from_index: Some(graph_output.from_output_index),
                         from_label: None,
                         to_index: graph_output.to_input_index,
@@ -1387,10 +1241,11 @@ impl Graph {
             {
                 if graph_input.to_input_index < inputs_to_bridge {
                     graph_inputs[graph_input.to_input_index].push(Connection::GraphInput {
-                        sink: NodeAddress {
+                        sink: RawNodeAddress {
                             graph_id: self.id,
                             key: node.key,
-                        },
+                        }
+                        .into(),
                         from_index: graph_input.from_output_index,
                         to_index: Some(graph_input.to_input_index),
                         to_label: None,
@@ -1402,11 +1257,24 @@ impl Graph {
             for (inputs, outputs) in inputs.into_iter().zip(outputs.iter()) {
                 for input in inputs {
                     for output in outputs {
-                        let connection = output;
-                        self.connect(connection.from(NodeAddress {
-                            key: input.source,
-                            graph_id: self.id,
-                        }))
+                        // We are not certain that the input node has as many
+                        // outputs as the node being freed.
+                        let num_node_outputs =
+                            self.get_nodes().get(input.source).unwrap().num_outputs();
+                        let mut connection = output.clone();
+                        if let Some(connection_from_index) = connection.get_from_index() {
+                            connection =
+                                connection.from_index(connection_from_index % num_node_outputs)
+                        }
+                        self.connect(
+                            connection.from(
+                                &RawNodeAddress {
+                                    key: input.source,
+                                    graph_id: self.id,
+                                }
+                                .into(),
+                            ),
+                        )
                         .expect("Mended connections should be guaranteed to succeed");
                     }
                 }
@@ -1414,10 +1282,10 @@ impl Graph {
             for (graph_inputs, outputs) in graph_inputs.into_iter().zip(outputs.iter()) {
                 for input in graph_inputs {
                     for output in outputs {
-                        let connection = input;
+                        let connection = input.clone();
                         match self.connect(
                             connection
-                                .to(output.get_source_node().unwrap())
+                                .to(&output.get_source_node().unwrap())
                                 .to_index(output.get_to_index().unwrap()),
                         ) {
                             Ok(_) => (),
@@ -1443,13 +1311,15 @@ impl Graph {
         }
     }
     /// Remove the node and any edges to/from the node. This may lead to other nodes being disconnected from the output and therefore not be run, but they will not be freed.
-    pub fn free_node(&mut self, node: impl Into<NodeAddress>) -> Result<(), FreeError> {
+    pub fn free_node(&mut self, node: impl Into<RawNodeAddress>) -> Result<(), FreeError> {
         let node = node.into();
         if node.graph_id == self.id {
             // Does the Node exist?
             if !self.get_nodes_mut().contains_key(node.key) {
                 return Err(FreeError::NodeNotFound);
             }
+
+            self.recalculation_required = true;
 
             // Remove all edges leading to the node
             self.node_input_edges.remove(node.key);
@@ -1483,7 +1353,7 @@ impl Graph {
             if let Some(&feedback_node) = self.node_feedback_node_key.get(node.key) {
                 // The node that is being freed has a feedback node attached to it. Free that as well.
                 let graph_id = self.id;
-                nodes_to_free.insert(NodeAddress {
+                nodes_to_free.insert(RawNodeAddress {
                     graph_id,
                     key: feedback_node,
                 });
@@ -1504,7 +1374,7 @@ impl Graph {
                     if feedback_edges.is_empty() {
                         // The feedback node has no more edges to it: free it
                         let graph_id = self.id;
-                        nodes_to_free.insert(NodeAddress {
+                        nodes_to_free.insert(RawNodeAddress {
                             graph_id,
                             key: feedback_key,
                         });
@@ -1554,54 +1424,73 @@ impl Graph {
         Ok(())
     }
 
+    fn start_scheduler(
+        &mut self,
+        latency: Duration,
+        start_ts: Instant,
+        musical_time_map: Arc<RwLock<MusicalTimeMap>>,
+    ) {
+        if let Some(ggc) = &mut self.graph_gen_communicator {
+            ggc.scheduler.start(
+                self.sample_rate,
+                self.block_size,
+                latency,
+                start_ts,
+                musical_time_map.clone(),
+            );
+        }
+        for (_key, graph) in &mut self.graphs_per_node {
+            graph.start_scheduler(latency, start_ts, musical_time_map.clone());
+        }
+    }
+
     pub fn schedule_change(&mut self, change: ParameterChange) -> Result<(), ScheduleError> {
-        if change.node.graph_id == self.id {
-            // Does the Node exist?
-            if !self.get_nodes_mut().contains_key(change.node.key) {
-                return Err(ScheduleError::NodeNotFound);
-            }
-            let index = if let Some(label) = change.input_label {
-                if let Some(label_index) = self.node_input_name_to_index[change.node.key].get(label)
-                {
-                    *label_index
-                } else {
-                    return Err(ScheduleError::InputLabelNotFound(label));
+        if let Some(raw_node_address) = change.node.to_raw() {
+            if raw_node_address.graph_id == self.id {
+                // Does the Node exist?
+                if !self.get_nodes_mut().contains_key(raw_node_address.key) {
+                    return Err(ScheduleError::NodeNotFound);
                 }
-            } else if let Some(index) = change.input_index {
-                index
-            } else {
-                0
-            };
-            if let Some(ggc) = &mut self.graph_gen_communicator {
-                // The GraphGen has been created so we have to be more careful
-                let change_kind = ScheduledChangeKind::Constant {
-                    index,
-                    value: change.value,
-                };
-                match change.time {
-                    TimeKind::DurationFromNow(d) => {
-                        ggc.scheduler
-                            .schedule_local_time(change.node.key, change_kind, d)
+                let index = if let Some(label) = change.input_label {
+                    if let Some(label_index) =
+                        self.node_input_name_to_index[raw_node_address.key].get(label)
+                    {
+                        *label_index
+                    } else {
+                        return Err(ScheduleError::InputLabelNotFound(label));
                     }
-                    TimeKind::AbsoluteSample(absolute_timestamp) => ggc
-                        .scheduler
-                        .schedule_absolute_sample(change.node.key, change_kind, absolute_timestamp),
+                } else if let Some(index) = change.input_index {
+                    index
+                } else {
+                    0
+                };
+                if let Some(ggc) = &mut self.graph_gen_communicator {
+                    // The GraphGen has been created so we have to be more careful
+                    let change_kind = ScheduledChangeKind::Constant {
+                        index,
+                        value: change.value,
+                    };
+                    ggc.scheduler
+                        .schedule(raw_node_address.key, change_kind, change.time);
+                } else {
+                    return Err(ScheduleError::SchedulerNotCreated);
                 }
             } else {
-                return Err(ScheduleError::SchedulerNotCreated);
+                // Try to find the graph containing the node by asking all the graphs in this graph to free the node
+                for (_key, graph) in &mut self.graphs_per_node {
+                    match graph.schedule_change(change.clone()) {
+                        Ok(_) => return Ok(()),
+                        Err(e) => match e {
+                            ScheduleError::GraphNotFound => (),
+                            _ => return Err(e),
+                        },
+                    }
+                }
+                return Err(ScheduleError::GraphNotFound);
             }
         } else {
-            // Try to find the graph containing the node by asking all the graphs in this graph to free the node
-            for (_key, graph) in &mut self.graphs_per_node {
-                match graph.schedule_change(change) {
-                    Ok(_) => return Ok(()),
-                    Err(e) => match e {
-                        ScheduleError::GraphNotFound => (),
-                        _ => return Err(e),
-                    },
-                }
-            }
-            return Err(ScheduleError::GraphNotFound);
+            // TODO: Add the change to a queue?
+            todo!();
         }
         Ok(())
     }
@@ -1609,9 +1498,9 @@ impl Graph {
     ///
     /// Disconnecting a constant means setting that constant input to 0. Disconnecting a feedback edge will remove the feedback node under the hood if there are no remaining edges to it. Disconnecting a Connection::Clear will do the same thing as "connecting" it: clear edges according to its parameters.
     pub fn disconnect(&mut self, connection: Connection) -> Result<(), ConnectionError> {
-        let mut try_disconnect_in_child_graphs = |connection| {
+        let mut try_disconnect_in_child_graphs = |connection: Connection| {
             for (_key, graph) in &mut self.graphs_per_node {
-                match graph.disconnect(connection) {
+                match graph.disconnect(connection.clone()) {
                     Ok(_) => return Ok(()),
                     Err(e) => match &e {
                         ConnectionError::NodeNotFound => {
@@ -1629,20 +1518,30 @@ impl Graph {
 
         match connection {
             Connection::Node {
-                source,
+                ref source,
                 from_index,
                 from_label,
-                sink,
+                ref sink,
                 to_index: input_index,
                 to_label: input_label,
                 channels,
                 feedback,
             } => {
+                let source = if let Some(raw_source) = source.to_raw() {
+                    raw_source
+                } else {
+                    return Err(ConnectionError::SourceNodeNotPushed);
+                };
+                let sink = if let Some(raw_sink) = sink.to_raw() {
+                    raw_sink
+                } else {
+                    return Err(ConnectionError::SinkNodeNotPushed);
+                };
                 if source.graph_id != sink.graph_id {
                     return Err(ConnectionError::DifferentGraphs);
                 }
                 if source.graph_id != self.id {
-                    return try_disconnect_in_child_graphs(connection);
+                    return try_disconnect_in_child_graphs(connection.clone());
                 }
                 if source.key == sink.key {
                     return Err(ConnectionError::SameNode);
@@ -1743,7 +1642,7 @@ impl Graph {
                     }
 
                     if feedback_edge_list.is_empty() {
-                        self.free_node(NodeAddress {
+                        self.free_node(RawNodeAddress {
                             key: feedback_node,
                             graph_id: self.id,
                         })?;
@@ -1752,13 +1651,18 @@ impl Graph {
             }
             Connection::Constant {
                 value: _,
-                sink,
+                ref sink,
                 to_index: input_index,
                 to_label: input_label,
             } => {
                 if let Some(sink) = sink {
+                    let sink = if let Some(raw_sink) = sink.to_raw() {
+                        raw_sink
+                    } else {
+                        return Err(ConnectionError::SinkNodeNotPushed);
+                    };
                     if sink.graph_id != self.id {
-                        return try_disconnect_in_child_graphs(connection);
+                        return try_disconnect_in_child_graphs(connection.clone());
                     }
 
                     let input = if input_index.is_some() {
@@ -1781,12 +1685,13 @@ impl Graph {
                         0
                     };
                     if let Some(ggc) = &mut self.graph_gen_communicator {
-                        ggc.scheduler.schedule_asap(
+                        ggc.scheduler.schedule(
                             sink.key,
                             ScheduledChangeKind::Constant {
                                 index: input,
                                 value: 0.0,
                             },
+                            TimeKind::Immediately,
                         );
                     } else {
                         // No GraphGen exists so we can set the constant directly.
@@ -1797,14 +1702,19 @@ impl Graph {
                 }
             }
             Connection::GraphOutput {
-                source,
+                ref source,
                 from_index,
                 from_label,
                 to_index,
                 channels,
             } => {
+                let source = if let Some(raw_source) = source.to_raw() {
+                    raw_source
+                } else {
+                    return Err(ConnectionError::SinkNodeNotPushed);
+                };
                 if source.graph_id != self.id {
-                    return try_disconnect_in_child_graphs(connection);
+                    return try_disconnect_in_child_graphs(connection.clone());
                 }
                 if channels + to_index > self.num_outputs {
                     return Err(ConnectionError::ChannelOutOfBounds);
@@ -1846,14 +1756,19 @@ impl Graph {
                 }
             }
             Connection::GraphInput {
-                sink,
+                ref sink,
                 from_index,
                 to_index,
                 to_label,
                 channels,
             } => {
+                let sink = if let Some(raw_sink) = sink.to_raw() {
+                    raw_sink
+                } else {
+                    return Err(ConnectionError::SinkNodeNotPushed);
+                };
                 if sink.graph_id != self.id {
-                    return try_disconnect_in_child_graphs(connection);
+                    return try_disconnect_in_child_graphs(connection.clone());
                 }
                 let to_index = if to_index.is_some() {
                     if let Some(i) = to_index {
@@ -1896,15 +1811,17 @@ impl Graph {
                 return self.connect(connection);
             }
         }
+        // If no error was encountered we end up here and a recalculation is required.
+        self.recalculation_required = true;
         Ok(())
     }
     /// Create or clear a connection in the Graph. Will call child Graphs until
     /// the graph containing the nodes is found or return an error if the right
     /// Graph or Node cannot be found.
     pub fn connect(&mut self, connection: Connection) -> Result<(), ConnectionError> {
-        let mut try_connect_to_graphs = |connection| {
+        let mut try_connect_to_graphs = |connection: Connection| {
             for (_key, graph) in &mut self.graphs_per_node {
-                match graph.connect(connection) {
+                match graph.connect(connection.clone()) {
                     Ok(_) => return Ok(()),
                     Err(e) => match &e {
                         ConnectionError::NodeNotFound => {
@@ -1921,15 +1838,27 @@ impl Graph {
         };
         match connection {
             Connection::Node {
-                source,
+                ref source,
                 from_index,
                 from_label,
-                sink,
+                ref sink,
                 to_index: input_index,
                 to_label: input_label,
                 channels,
                 feedback,
             } => {
+                // Convert from NodeAddress to RawNodeAddress, returning an error if it isn't possible
+                let source = if let Some(raw_source) = source.to_raw() {
+                    raw_source
+                } else {
+                    return Err(ConnectionError::SourceNodeNotPushed);
+                };
+                let sink = if let Some(raw_sink) = sink.to_raw() {
+                    raw_sink
+                } else {
+                    return Err(ConnectionError::SinkNodeNotPushed);
+                };
+                // Check that the nodes are valid
                 if source.graph_id != sink.graph_id {
                     return Err(ConnectionError::DifferentGraphs);
                 }
@@ -1979,32 +1908,37 @@ impl Graph {
                 } else {
                     0
                 };
-                // Alternative way to get the num_inputs without accessing the node
-                if channels + to_index > self.node_input_index_to_name.get(sink.key).unwrap().len()
-                {
-                    return Err(ConnectionError::ChannelOutOfBounds);
-                }
+                // Alternative way to get the num_inputs and outputs without accessing the node
+                let num_source_outputs = self
+                    .node_output_index_to_name
+                    .get(source.key)
+                    .unwrap()
+                    .len();
+                let num_sink_inputs = self.node_input_index_to_name.get(sink.key).unwrap().len();
                 if !feedback {
                     let edge_list = &mut self.node_input_edges[sink.key];
                     for i in 0..channels {
                         edge_list.push(Edge {
-                            from_output_index: from_index + i,
+                            // wrap channels if there are too many
+                            from_output_index: (from_index + i) % num_source_outputs,
                             source: source.key,
-                            to_input_index: to_index + i,
+                            // wrap channels if there are too many
+                            to_input_index: (to_index + i) % num_sink_inputs,
                         });
                     }
                 } else {
                     // Create a feedback node if there isn't one.
-                    let feedback_node_index =
+                    let feedback_node_key =
                         if let Some(&index) = self.node_feedback_node_key.get(source.key) {
                             index
                         } else {
-                            let num_outputs = self.get_nodes_mut()[source.key].num_outputs();
-                            let feedback_node = FeedbackGen::node(num_outputs);
-                            let adress = self.push_node(feedback_node);
-                            self.feedback_node_indices.push(adress.key);
-                            self.node_feedback_node_key.insert(source.key, adress.key);
-                            adress.key
+                            let feedback_node = FeedbackGen::node(num_source_outputs);
+                            let mut feedback_node_address = NodeAddress::new();
+                            self.push_node(feedback_node, &mut feedback_node_address);
+                            let address = feedback_node_address.to_raw().unwrap();
+                            self.feedback_node_indices.push(address.key);
+                            self.node_feedback_node_key.insert(source.key, address.key);
+                            address.key
                         };
                     // Create feedback edges leading to the FeedbackNode from
                     // the source and normal edges leading from the FeedbackNode
@@ -2012,17 +1946,17 @@ impl Graph {
                     let edge_list = &mut self.node_input_edges[sink.key];
                     for i in 0..channels {
                         edge_list.push(Edge {
-                            from_output_index: from_index + i,
-                            source: feedback_node_index,
-                            to_input_index: to_index + i,
+                            from_output_index: (from_index + i) % num_source_outputs,
+                            source: feedback_node_key,
+                            to_input_index: (to_index + i) % num_sink_inputs,
                         });
                     }
-                    let edge_list = &mut self.node_feedback_edges[feedback_node_index];
+                    let edge_list = &mut self.node_feedback_edges[feedback_node_key];
                     for i in 0..channels {
                         edge_list.push(FeedbackEdge {
-                            from_output_index: from_index + i,
+                            from_output_index: (from_index + i) % num_source_outputs,
                             source: source.key,
-                            to_input_index: from_index + i,
+                            to_input_index: (from_index + i) % num_source_outputs,
                             feedback_destination: sink.key,
                         });
                     }
@@ -2030,11 +1964,18 @@ impl Graph {
             }
             Connection::Constant {
                 value,
-                sink,
+                ref sink,
                 to_index: input_index,
                 to_label: input_label,
             } => {
                 if let Some(sink) = sink {
+                    // Convert from NodeAddress to RawNodeAddress, returning an error if it isn't possible
+                    let sink = if let Some(raw_sink) = sink.to_raw() {
+                        raw_sink
+                    } else {
+                        return Err(ConnectionError::SinkNodeNotPushed);
+                    };
+                    // If the sink node does not belong in this graph, try a sub graph of this graph
                     if sink.graph_id != self.id {
                         return try_connect_to_graphs(connection);
                     }
@@ -2059,12 +2000,13 @@ impl Graph {
                         0
                     };
                     if let Some(ggc) = &mut self.graph_gen_communicator {
-                        ggc.scheduler.schedule_asap(
+                        ggc.scheduler.schedule(
                             sink.key,
                             ScheduledChangeKind::Constant {
                                 index: input,
                                 value,
                             },
+                            TimeKind::Immediately,
                         );
                     } else {
                         // No GraphGen exists so we can set the constant directly.
@@ -2075,18 +2017,33 @@ impl Graph {
                 }
             }
             Connection::GraphOutput {
-                source,
+                ref source,
                 from_index,
                 from_label,
                 to_index,
                 channels,
             } => {
+                // Convert from NodeAddress to RawNodeAddress, returning an error if it isn't possible
+                let source = if let Some(raw_source) = source.to_raw() {
+                    raw_source
+                } else {
+                    return Err(ConnectionError::SourceNodeNotPushed);
+                };
+
+                // If the source belongs in a different graph, search for the right graph among the sub graphs
                 if source.graph_id != self.id {
                     return try_connect_to_graphs(connection);
                 }
-                if channels + to_index > self.num_outputs {
-                    return Err(ConnectionError::ChannelOutOfBounds);
-                }
+
+                // TODO: Check that the source key exists first
+                let num_source_outputs = self
+                    .node_output_index_to_name
+                    .get(source.key)
+                    .unwrap()
+                    .len();
+                // if channels + to_index > self.num_outputs {
+                //     return Err(ConnectionError::ChannelOutOfBounds);
+                // }
                 let from_index = if from_index.is_some() {
                     if let Some(i) = from_index {
                         i
@@ -2109,21 +2066,29 @@ impl Graph {
                 for i in 0..channels {
                     self.output_edges.push(Edge {
                         source: source.key,
-                        from_output_index: from_index + i,
-                        to_input_index: to_index + i,
+                        from_output_index: (from_index + i) % num_source_outputs,
+                        to_input_index: (to_index + i) % self.num_outputs,
                     })
                 }
             }
             Connection::GraphInput {
-                sink,
+                ref sink,
                 from_index,
                 to_index,
                 to_label,
                 channels,
             } => {
+                // Convert from NodeAddress to RawNodeAddress, returning an error if it isn't possible
+                let sink = if let Some(raw_sink) = sink.to_raw() {
+                    raw_sink
+                } else {
+                    return Err(ConnectionError::SinkNodeNotPushed);
+                };
+
                 if sink.graph_id != self.id {
                     return try_connect_to_graphs(connection);
                 }
+                // Find the index number, potentially from the label
                 let to_index = if to_index.is_some() {
                     if let Some(i) = to_index {
                         i
@@ -2155,13 +2120,20 @@ impl Graph {
                 }
             }
             Connection::Clear {
-                node,
+                ref node,
                 input_nodes,
                 input_constants,
                 output_nodes,
                 graph_outputs,
                 graph_inputs,
             } => {
+                // Convert from NodeAddress to RawNodeAddress, returning an error if it isn't possible
+                let node = if let Some(raw_sink) = node.to_raw() {
+                    raw_sink
+                } else {
+                    return Err(ConnectionError::SinkNodeNotPushed);
+                };
+
                 if node.graph_id != self.id {
                     return try_connect_to_graphs(connection);
                 }
@@ -2184,7 +2156,7 @@ impl Graph {
                             }
                             if feedback_edges.is_empty() {
                                 let graph_id = self.id;
-                                nodes_to_free.insert(NodeAddress {
+                                nodes_to_free.insert(RawNodeAddress {
                                     graph_id,
                                     key: input_edge.source,
                                 });
@@ -2206,7 +2178,7 @@ impl Graph {
                         // The GraphGen has been created so we have to be more careful
                         for index in 0..num_node_inputs {
                             let change_kind = ScheduledChangeKind::Constant { index, value: 0.0 };
-                            ggc.scheduler.schedule_asap(node.key, change_kind);
+                            ggc.scheduler.schedule_now(node.key, change_kind);
                         }
                     } else {
                         // We are fine to set the constants on the node
@@ -2241,6 +2213,7 @@ impl Graph {
                 }
             }
         }
+        self.recalculation_required = true;
         Ok(())
     }
     fn input_index_from_label(&self, node: NodeKey, label: &'static str) -> Option<usize> {
@@ -2265,6 +2238,16 @@ impl Graph {
             Some(index)
         } else {
             None
+        }
+    }
+    pub fn change_musical_time_map(
+        &mut self,
+        change_fn: impl FnOnce(&mut MusicalTimeMap),
+    ) -> Result<(), ScheduleError> {
+        if let Some(ggc) = &mut self.graph_gen_communicator {
+            ggc.scheduler.change_musical_time_map(change_fn)
+        } else {
+            Err(ScheduleError::SchedulerNotCreated)
         }
     }
     fn depth_first_search(
@@ -2418,11 +2401,7 @@ impl Graph {
         let first_sample = self.inputs_buffers_ptr.ptr.cast::<f32>();
         for &node_key in &self.node_order {
             let num_inputs = nodes[node_key].num_inputs();
-            let mut input_buffers = NodeBufferRef {
-                buf: first_sample,
-                num_channels: num_inputs,
-                block_size: self.block_size,
-            };
+            let mut input_buffers = NodeBufferRef::new(first_sample, num_inputs, self.block_size);
             // Collect inputs into the node's input buffer
             let input_edges = &self.node_input_edges[node_key];
             let graph_input_edges = &self.graph_input_edges[node_key];
@@ -2438,8 +2417,8 @@ impl Graph {
                     let from_channel = input_edge.from_output_index;
                     let to_channel = input_edge.to_input_index;
                     inputs_to_copy.push((
-                        output_values.ptr_to_sample(from_channel, sample_index),
-                        input_buffers.ptr_to_sample(to_channel, sample_index),
+                        unsafe { output_values.ptr_to_sample(from_channel, sample_index) },
+                        unsafe { input_buffers.ptr_to_sample(to_channel, sample_index) },
                     ));
                 }
             }
@@ -2452,23 +2431,18 @@ impl Graph {
                 let mut output_values = source.output_buffers();
                 for i in 0..self.block_size {
                     inputs_to_copy.push((
-                        output_values.ptr_to_sample(feedback_edge.from_output_index, i),
-                        input_buffers.ptr_to_sample(feedback_edge.from_output_index, i),
+                        unsafe { output_values.ptr_to_sample(feedback_edge.from_output_index, i) },
+                        unsafe { input_buffers.ptr_to_sample(feedback_edge.from_output_index, i) },
                     ));
                 }
             }
             let node = &nodes[node_key];
-            tasks.push(Task {
+            tasks.push(node.to_task(
                 node_key,
                 inputs_to_copy,
                 graph_inputs_to_copy,
                 input_buffers,
-                input_constants: node.input_constants,
-                gen: node.gen,
-                output_buffers_first_ptr: node.output_buffers_first_ptr,
-                block_size: node.block_size,
-                num_outputs: node.num_outputs,
-            });
+            ));
         }
         tasks
     }
@@ -2487,7 +2461,7 @@ impl Graph {
     }
     /// Only one GraphGen can be created from a Graph, since otherwise nodes in
     /// the graph could be run multiple times.
-    fn create_graph_gen(&mut self) -> Result<GraphGen, String> {
+    fn create_graph_gen(&mut self) -> Result<Box<dyn Gen + Send>, String> {
         if self.graph_gen_communicator.is_some() {
             return Err(
                 "create_graph_gen: GraphGenCommunicator already existed for this graph".to_owned(),
@@ -2509,32 +2483,36 @@ impl Graph {
             RingBuffer::<TaskData>::new(self.ring_buffer_size);
         let (task_data_to_be_dropped_producer, task_data_to_be_dropped_consumer) =
             RingBuffer::<TaskData>::new(self.ring_buffer_size);
-        let (scheduler, schedule_receiver) = Scheduler::new(self.sample_rate, 300, self.latency);
+        let scheduler = Scheduler::new();
+
+        let scheduler_buffer_size = 300;
+        let (scheduled_change_producer, rb_consumer) = RingBuffer::new(scheduler_buffer_size);
+        let schedule_receiver = ScheduleReceiver::new(rb_consumer, scheduler_buffer_size);
 
         let graph_gen_communicator = GraphGenCommunicator {
             free_node_queue_consumer,
             scheduler,
+            scheduled_change_producer,
             task_data_to_be_dropped_consumer,
             new_task_data_producer,
             next_change_flag: task_data.applied.clone(),
             timestamp: Arc::new(AtomicU64::new(0)),
         };
 
-        let graph_gen = GraphGen {
-            current_task_data: task_data,
-            block_size: self.block_size,
-            num_outputs: self.num_outputs,
-            num_inputs: self.num_inputs,
-            graph_state: GenState::Continue,
-            sample_counter: 0,
-            timestamp: graph_gen_communicator.timestamp.clone(),
+        let graph_gen = graph_gen::make_graph_gen(
+            self.sample_rate,
+            task_data,
+            self.block_size,
+            self.num_outputs,
+            self.num_inputs,
+            graph_gen_communicator.timestamp.clone(),
             free_node_queue_producer,
             schedule_receiver,
-            _arc_nodes: self.nodes.clone(),
+            self.nodes.clone(),
             task_data_to_be_dropped_producer,
             new_task_data_consumer,
-            _arc_inputs_buffers_ptr: self.inputs_buffers_ptr.clone(),
-        };
+            self.inputs_buffers_ptr.clone(),
+        );
         self.graph_gen_communicator = Some(graph_gen_communicator);
         Ok(graph_gen)
     }
@@ -2555,12 +2533,16 @@ impl Graph {
     /// Applies the latest changes to connections and added nodes in the graph on the audio thread and updates the scheduler.
     pub fn commit_changes(&mut self) {
         if self.graph_gen_communicator.is_some() {
+            // We need to run free_old to know if there are nodes to free and hence a recalculation required.
             self.free_old();
-            self.calculate_node_order();
-            let output_tasks = self.generate_output_tasks().into_boxed_slice();
-            let tasks = self.generate_tasks().into_boxed_slice();
-            if let Some(ggc) = &mut self.graph_gen_communicator {
-                ggc.send_updated_tasks(tasks, output_tasks);
+            if self.recalculation_required {
+                self.calculate_node_order();
+                let output_tasks = self.generate_output_tasks().into_boxed_slice();
+                let tasks = self.generate_tasks().into_boxed_slice();
+                if let Some(ggc) = &mut self.graph_gen_communicator {
+                    ggc.send_updated_tasks(tasks, output_tasks);
+                }
+                self.recalculation_required = false;
             }
         }
         for (_key, graph) in &mut self.graphs_per_node {
@@ -2576,6 +2558,7 @@ impl Graph {
         for (_key, graph) in &mut self.graphs_per_node {
             graph.update();
         }
+        self.commit_changes();
     }
 
     /// Check if there are any old nodes or other resources that have been
@@ -2589,7 +2572,7 @@ impl Graph {
             vec![]
         };
         for (key, state) in free_queue {
-            let address = NodeAddress {
+            let address = RawNodeAddress {
                 graph_id: self.id,
                 key,
             };
@@ -2638,291 +2621,227 @@ impl Graph {
 /// the SlotMap alive, and the drop it when the GraphGen is dropped.
 unsafe impl Send for Graph {}
 
-impl Gen for GraphGen {
-    fn name(&self) -> &'static str {
-        "GraphGen"
-    }
-    fn process(&mut self, ctx: GenContext, resources: &mut Resources) -> GenState {
-        match self.graph_state {
-            GenState::Continue => {
-                // TODO: Support output with a different block size, i.e. local buffering and running this graph more or less often than the parent graph
-                //
-                //
-                let mut do_empty_buffer = None;
-                let mut do_mend_connections = None;
-                let num_new_task_data = self.new_task_data_consumer.slots();
-                if num_new_task_data > 0 {
-                    if let Ok(td_chunk) = self.new_task_data_consumer.read_chunk(num_new_task_data)
-                    {
-                        for td in td_chunk {
-                            // Setting `applied` to true signals that the new TaskData have been received and old data can be dropped
-                            td.applied.store(true, Ordering::SeqCst);
-                            let old_td = std::mem::replace(&mut self.current_task_data, td);
-                            match self.task_data_to_be_dropped_producer.push(old_td) {
-                            Ok(_) => (),
-                            Err(e) => eprintln!("RingBuffer for TaskData to be dropped was full. Please increase the size of the RingBuffer. The GraphGen will drop the TaskData here instead. e: {e}"),
-                        }
-                        }
-                    }
-                }
-
-                let task_data = &mut self.current_task_data;
-                let TaskData {
-                    applied: _,
-                    tasks,
-                    output_tasks,
-                } = task_data;
-
-                let changes = self.schedule_receiver.changes();
-
-                // Run the tasks
-                for task in tasks.iter_mut() {
-                    task.init_constants();
-                    // If there are any changes to the constants of the node, apply them here
-                    let mut i = 0;
-                    while i < changes.len() {
-                        let change = &changes[i];
-                        if change.key == task.node_key {
-                            let sample_to_apply = if change.timestamp < self.sample_counter {
-                                if change.timestamp != 0 {
-                                    // timestamps of 0 simply means as fast as possible. It is not an error or issue.
-                                    eprintln!("Warning: Scheduled change was applied late. Consider increasing latency.");
-                                }
-                                0
-                            } else {
-                                change.timestamp - self.sample_counter
-                            } as usize;
-                            if sample_to_apply < self.block_size {
-                                task.apply_constant_change(change, sample_to_apply);
-                                // TODO: This is inefficient since the the first
-                                // changes are the most likely to be removed,
-                                // and are the most expensive to remove. Either
-                                // the changes can be in reverse order, but then
-                                // pushing into the list always puts new changes
-                                // in the wrong place, or many changes can be
-                                // removed all at once after applying them.
-                                changes.remove(i);
-                            } else {
-                                i += 1;
-                            }
-                        } else {
-                            i += 1;
-                        }
-                    }
-                    match task.run(ctx.inputs, resources) {
-                        GenState::Continue => (),
-                        GenState::FreeSelf => {
-                            // We don't care if it fails since if it does the
-                            // node will still exist, return FreeSelf and get
-                            // added to the queue next block.
-                            self.free_node_queue_producer
-                                .push((task.node_key, GenState::FreeSelf))
-                                .ok();
-                        }
-                        GenState::FreeSelfMendConnections => {
-                            self.free_node_queue_producer
-                                .push((task.node_key, GenState::FreeSelfMendConnections))
-                                .ok();
-                        }
-                        GenState::FreeGraph(from_sample_nr) => {
-                            self.graph_state = GenState::FreeSelf;
-                            do_empty_buffer = Some(from_sample_nr);
-                        }
-                        GenState::FreeGraphMendConnections(from_sample_nr) => {
-                            self.graph_state = GenState::FreeSelfMendConnections;
-                            do_mend_connections = Some(from_sample_nr);
-                        }
-                    }
-                }
-
-                // Set the output of the graph
-                // Zero the output buffer.
-                ctx.outputs.fill(0.0);
-                for output_task in output_tasks.iter() {
-                    let input_values = output_task
-                        .input_buffers
-                        .get_channel(output_task.input_index);
-                    let output = ctx.outputs.get_channel_mut(output_task.graph_output_index);
-                    for i in 0..self.block_size {
-                        let value = input_values[i];
-                        // Since many nodes may write to the same output we
-                        // need to add the outputs together. The Node makes no promise as to the content of
-                        // the output buffer provided.
-                        output[i] += value;
-                    }
-                }
-                if let Some(from_relative_sample_nr) = do_empty_buffer {
-                    for channel in 0..ctx.outputs.channels() {
-                        let output = ctx.outputs.get_channel_mut(channel);
-                        for sample in &mut output[from_relative_sample_nr..] {
-                            *sample = 0.0;
-                        }
-                    }
-                }
-                if let Some(from_relative_sample_nr) = do_mend_connections {
-                    let num_channels = ctx.inputs.channels().min(ctx.outputs.channels());
-                    for channel in 0..num_channels {
-                        let input = ctx.inputs.get_channel(channel);
-                        let output = ctx.outputs.get_channel_mut(channel);
-                        // TODO: Check if the input is constant or not first. Only non-constant inputs should be passed through (because it's "mending" the connection)
-                        for (i, o) in input[from_relative_sample_nr..]
-                            .iter()
-                            .zip(output[from_relative_sample_nr..].iter_mut())
-                        {
-                            *o = *i;
-                        }
-                    }
-                }
-                self.sample_counter += self.block_size as u64;
-                self.timestamp.store(self.sample_counter, Ordering::SeqCst);
-            }
-            GenState::FreeSelf => {
-                ctx.outputs.fill(0.0);
-            }
-            GenState::FreeSelfMendConnections => {
-                let num_channels = ctx.inputs.channels().min(ctx.outputs.channels());
-                for channel in 0..num_channels {
-                    let input = ctx.inputs.get_channel(channel);
-                    let output = ctx.outputs.get_channel_mut(channel);
-                    // TODO: Check if the input is constant or not first. Only non-constant inputs should be passed through (because it's "mending" the connection)
-                    for (i, o) in input.iter().zip(output.iter_mut()) {
-                        *o = *i;
-                    }
-                }
-            }
-            // These are unreachable because they are converted to the FreeSelf
-            // variants at the Graph level which is this level.
-            GenState::FreeGraph(_) => unreachable!(),
-            GenState::FreeGraphMendConnections(_) => unreachable!(),
-        }
-        self.graph_state
-    }
-    fn num_inputs(&self) -> usize {
-        self.num_inputs
-    }
-    fn num_outputs(&self) -> usize {
-        self.num_outputs
-    }
-}
-
-/// This gets placed as a dyn Gen in a Node in a Graph. It's how the Graph gets
-/// run. The Graph communicates with the GraphGen in a thread safe way.
-///
-/// # Safety
-/// Using this struct is safe only if used in conjunction with the
-/// Graph. The Graph owns nodes and gives its corresponding GraphGen raw
-/// pointers to them through Tasks, but it never accesses or deallocates a node
-/// while it can be accessed by the [`GraphGen`] through a Task. The [`GraphGen`]
-/// mustn't use the _arc_nodes field; it is only there to make sure the nodes
-/// don't get dropped.
-struct GraphGen {
-    block_size: usize,
-    num_outputs: usize,
-    num_inputs: usize,
-    current_task_data: TaskData,
-    // This Arc is cloned from the Graph and exists so that if the Graph gets dropped, the GraphGen can continue on without segfaulting.
-    _arc_nodes: Arc<UnsafeCell<SlotMap<NodeKey, Node>>>,
-    // This Arc makes sure the input buffers allocation is valid for as long as it needs to be
-    _arc_inputs_buffers_ptr: Arc<OwnedRawBuffer>,
-    graph_state: GenState,
-    /// Stores the number of completed samples, updated at the end of a block
-    sample_counter: u64,
-    timestamp: Arc<AtomicU64>,
-    schedule_receiver: ScheduleReceiver,
-    free_node_queue_producer: rtrb::Producer<(NodeKey, GenState)>,
-    task_data_to_be_dropped_producer: rtrb::Producer<TaskData>,
-    new_task_data_consumer: rtrb::Consumer<TaskData>,
-}
-
-/// Safety: This impl of Send is required because of the Arc<UnsafeCell<...>> in
-/// GraphGen. The _arc_nodes field of GraphGen exists only so that the nodes
-/// won't get dropped if the Graph is dropped. The UnsafeCell will never be used
-/// to access the data from within GraphGen.
-unsafe impl Send for GraphGen {}
-
+/// The internal representation of a scheduled change to a running graph. This
+/// is what gets sent to the GraphGen.
 struct ScheduledChange {
+    /// timestamp in samples in the current Graph's sample rate
     timestamp: u64,
     key: NodeKey,
     kind: ScheduledChangeKind,
 }
+#[derive(Clone, Copy, Debug)]
 enum ScheduledChangeKind {
     Constant { index: usize, value: Sample },
 }
+// #[derive(Eq, Copy, Clone)]
+// enum AudioThreadTimestamp {
+//     Samples(u64),
+//     ASAP,
+// }
+// impl AudioThreadTimestamp {
+//     fn to_samples_from_now(&self, sample_counter: u64) -> u64 {
+//         match self {
+//             AudioThreadTimestamp::Samples(ts) => ts - sample_counter,
+//             AudioThreadTimestamp::ASAP => 0,
+//         }
+//     }
+// }
+// impl PartialEq for AudioThreadTimestamp {
+//     fn eq(&self, other: &Self) -> bool {
+//         match (self, other) {
+//             (Self::Samples(l0), Self::Samples(r0)) => l0 == r0,
+//             _ => core::mem::discriminant(self) == core::mem::discriminant(other),
+//         }
+//     }
+// }
+// impl PartialOrd for AudioThreadTimestamp {
+//     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+//         Some(match (self, other) {
+//             (Self::ASAP, Self::ASAP) => std::cmp::Ordering::Equal,
+//             (Self::ASAP, Self::Samples(_)) => std::cmp::Ordering::Less,
+//             (Self::Samples(_), Self::ASAP) => std::cmp::Ordering::More,
+//             (Self::Samples(s0), Self::Samples(s1)) => s0.partial_cmp(s1).unwrap(),
+//         })
+//     }
+// }
+// impl Ord for AudioThreadTimestamp {
+//     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+//         self.partial_cmp(other).unwrap()
+//     }
+// }
 
-struct Scheduler {
-    start_ts: Instant,
-    sample_rate: u64,
-    /// if the ts of the change is less than this number of samples in the future, send it to the GraphGen
-    max_duration_to_send: u64,
-    rb_producer: rtrb::Producer<ScheduledChange>,
-    /// Changes waiting to be sent to the GraphGen because they are too far into the future
-    scheduling_queue: Vec<ScheduledChange>,
-    latency: u64,
+/// The Scheduler handles scheduled changes and communicates parameter changes
+/// directly to the audio thread through a ring buffer.
+///
+/// Schedulers are synced so that all sub Graphs from a parent Graph have the
+/// same starting time stamp.
+///
+/// Before a Graph is running and changes scheduled will be stored in a queue.
+enum Scheduler {
+    Stopped {
+        scheduling_queue: Vec<(NodeKey, ScheduledChangeKind, TimeKind)>,
+    },
+    Running {
+        /// The starting time of the audio thread graph, relative to which time also
+        /// passes for the audio thread. This is the timestamp that is used to
+        /// convert wall clock time to number of samples since the audio thread
+        /// started.
+        start_ts: Instant,
+        sample_rate: u64,
+        /// if the ts of the change is less than this number of samples in the future, send it to the GraphGen
+        max_duration_to_send: u64,
+        /// Changes waiting to be sent to the GraphGen because they are too far into the future
+        scheduling_queue: Vec<ScheduledChange>,
+        latency_in_samples: f64,
+        musical_time_map: Arc<RwLock<MusicalTimeMap>>,
+    },
 }
-impl Scheduler {
-    fn new(sample_rate: Sample, capacity: usize, latency: Duration) -> (Self, ScheduleReceiver) {
-        let (rb_producer, rb_consumer) = RingBuffer::new(capacity);
-        (
-            Scheduler {
-                start_ts: Instant::now(),
-                sample_rate: sample_rate as u64,
-                max_duration_to_send: (sample_rate * 0.5) as u64,
-                scheduling_queue: vec![],
-                rb_producer,
-                latency: (latency.as_secs_f32() * sample_rate) as u64,
-            },
-            ScheduleReceiver::new(rb_consumer, capacity),
-        )
-    }
-    fn schedule_absolute_sample(
-        &mut self,
-        key: NodeKey,
-        change: ScheduledChangeKind,
-        absolute_timestamp: u64,
-    ) {
-        self.scheduling_queue.push(ScheduledChange {
-            timestamp: absolute_timestamp,
-            key,
-            kind: change,
-        });
-    }
-    fn schedule_asap(&mut self, key: NodeKey, change: ScheduledChangeKind) {
-        self.scheduling_queue.push(ScheduledChange {
-            timestamp: 0,
-            key,
-            kind: change,
-        });
-    }
-    fn schedule_local_time(
-        &mut self,
-        key: NodeKey,
-        change: ScheduledChangeKind,
-        duration_from_now: Duration,
-    ) {
-        let timestamp = ((self.start_ts.elapsed() + duration_from_now).as_secs_f64()
-            * self.sample_rate as f64) as u64
-            + self.latency;
-        self.scheduling_queue.push(ScheduledChange {
-            timestamp,
-            key,
-            kind: change,
-        });
-    }
-    fn update(&mut self, timestamp: u64) {
-        // scheduled updates should always be sorted before they are sent, in case there are several changes to the same thing
-        self.scheduling_queue.sort_unstable_by_key(|s| s.timestamp);
 
-        let mut i = 0;
-        while i < self.scheduling_queue.len() {
-            if timestamp > self.scheduling_queue[i].timestamp
-                || self.scheduling_queue[i].timestamp - timestamp < self.max_duration_to_send
-            {
-                let change = self.scheduling_queue.remove(i);
-                if let Err(e) = self.rb_producer.push(change) {
-                    eprintln!("Unable to push scheduled change into RingBuffer: {e}")
+impl Scheduler {
+    fn new() -> Self {
+        Scheduler::Stopped {
+            scheduling_queue: vec![],
+        }
+    }
+    fn start(
+        &mut self,
+        sample_rate: Sample,
+        block_size: usize,
+        latency: Duration,
+        audio_thread_start_ts: Instant,
+        musical_time_map: Arc<RwLock<MusicalTimeMap>>,
+    ) {
+        match self {
+            Scheduler::Stopped {
+                ref mut scheduling_queue,
+            } => {
+                // "Take" the scheduling queue out, replacing it with an empty vec which should be cheap
+                let scheduling_queue = mem::replace(scheduling_queue, vec![]);
+                // How far into the future messages are sent to the GraphGen.
+                // This needs to be at least 2 * block_size since the timestamp
+                // this is compared to is loaded atomically from the GraphGen
+                // and there might be a race condition if less than 2 blocks of
+                // events are sent.
+                let max_duration_to_send = ((sample_rate * 0.5) as u64).max(block_size as u64 * 2);
+                let mut new_scheduler = Scheduler::Running {
+                    start_ts: audio_thread_start_ts,
+                    sample_rate: sample_rate as u64,
+                    max_duration_to_send,
+                    scheduling_queue: vec![],
+                    latency_in_samples: (latency.as_secs_f64() * sample_rate as f64),
+                    musical_time_map,
+                };
+                for (node_key, change_kind, time) in scheduling_queue {
+                    new_scheduler.schedule(node_key, change_kind, time);
                 }
-            } else {
-                i += 1;
+                *self = new_scheduler;
+            }
+            Scheduler::Running { .. } => (),
+        }
+    }
+    fn schedule(&mut self, key: NodeKey, change_kind: ScheduledChangeKind, time: TimeKind) {
+        match self {
+            Scheduler::Stopped { scheduling_queue } => {
+                scheduling_queue.push((key, change_kind, time))
+            }
+            Scheduler::Running {
+                start_ts,
+                sample_rate,
+                max_duration_to_send: _,
+                scheduling_queue,
+                latency_in_samples: latency,
+                musical_time_map,
+            } => {
+                match time {
+                    TimeKind::DurationFromNow(duration_from_now) => {
+                        let timestamp = ((start_ts.elapsed() + duration_from_now).as_secs_f64()
+                            * *sample_rate as f64
+                            + *latency) as u64;
+                        scheduling_queue.push(ScheduledChange {
+                            timestamp,
+                            key,
+                            kind: change_kind,
+                        });
+                    }
+                    TimeKind::Superseconds(superseconds) => {
+                        let absolute_timestamp = superseconds.to_samples(*sample_rate);
+                        scheduling_queue.push(ScheduledChange {
+                            timestamp: absolute_timestamp,
+                            key,
+                            kind: change_kind,
+                        });
+                    }
+                    TimeKind::Beats(mt) => {
+                        // TODO: Remove unwrap, return a Result
+                        let mtm = musical_time_map.read().unwrap();
+                        let duration_from_start =
+                            Duration::from_secs_f64(mtm.musical_time_to_secs_f64(mt));
+                        let timestamp = ((duration_from_start).as_secs_f64() * *sample_rate as f64
+                            + *latency) as u64;
+                        dbg!(duration_from_start);
+                        dbg!(timestamp);
+                        scheduling_queue.push(ScheduledChange {
+                            timestamp,
+                            key,
+                            kind: change_kind,
+                        });
+                    }
+                    TimeKind::Immediately => {
+                        scheduling_queue.push(ScheduledChange {
+                            timestamp: 0,
+                            key,
+                            kind: change_kind,
+                        });
+                    }
+                }
+            }
+        }
+    }
+    pub fn change_musical_time_map(
+        &mut self,
+        change_fn: impl FnOnce(&mut MusicalTimeMap),
+    ) -> Result<(), ScheduleError> {
+        match self {
+            Scheduler::Stopped { .. } => Err(ScheduleError::SchedulerNotCreated),
+            Scheduler::Running {
+                musical_time_map, ..
+            } => match musical_time_map.write() {
+                Ok(mut mtm) => {
+                    (change_fn)(&mut (*mtm));
+                    Ok(())
+                }
+                Err(_) => Err(ScheduleError::MusicalTimeMapCannotBeWrittenTo),
+            },
+        }
+    }
+    /// Schedules a change to be applied at the time of calling the function + the latency setting.
+    fn schedule_now(&mut self, key: NodeKey, change: ScheduledChangeKind) {
+        self.schedule(key, change, TimeKind::DurationFromNow(Duration::new(0, 0)))
+    }
+    fn update(&mut self, timestamp: u64, rb_producer: &mut rtrb::Producer<ScheduledChange>) {
+        match self {
+            Scheduler::Stopped { .. } => (),
+            Scheduler::Running {
+                max_duration_to_send,
+                scheduling_queue,
+                ..
+            } => {
+                // scheduled updates should always be sorted before they are sent, in case there are several changes to the same thing
+                scheduling_queue.sort_unstable_by_key(|s| s.timestamp);
+
+                let mut i = 0;
+                while i < scheduling_queue.len() {
+                    if timestamp > scheduling_queue[i].timestamp
+                        || scheduling_queue[i].timestamp - timestamp < *max_duration_to_send
+                    {
+                        let change = scheduling_queue.remove(i);
+                        if let Err(e) = rb_producer.push(change) {
+                            eprintln!("Unable to push scheduled change into RingBuffer: {e}")
+                        }
+                    } else {
+                        i += 1;
+                    }
+                }
             }
         }
     }
@@ -2982,6 +2901,8 @@ struct GraphGenCommunicator {
     // `updates_available` every time it finishes a block. It is a u16 so that
     // when it overflows generation - some_generation_number fits in an i32.
     scheduler: Scheduler,
+    /// The ring buffer for sending scheduled changes to the audio thread
+    scheduled_change_producer: rtrb::Producer<ScheduledChange>,
     timestamp: Arc<AtomicU64>,
     next_change_flag: Arc<AtomicBool>,
     free_node_queue_consumer: rtrb::Consumer<(NodeKey, GenState)>,
@@ -3030,7 +2951,8 @@ impl GraphGenCommunicator {
     /// Run periodically to make sure the scheduler passes messages on to the GraphGen
     fn update(&mut self) {
         let timestamp = self.timestamp.load(Ordering::SeqCst);
-        self.scheduler.update(timestamp);
+        self.scheduler
+            .update(timestamp, &mut self.scheduled_change_producer);
     }
     fn get_nodes_to_free(&mut self) -> Vec<(NodeKey, GenState)> {
         let num_items = self.free_node_queue_consumer.slots();
@@ -3042,235 +2964,6 @@ impl GraphGenCommunicator {
         }
     }
 }
-
-/// Node is a very unsafe struct. Be very careful when changing it.
-///
-/// - The Gen is not allowed to be replaced.
-/// - The input_constants buffer mustn't be deallocated until the Node is dropped.
-/// - init must not be called after the Node has started being used on the audio thread.
-/// - the number of inputs/outputs of the Gen must not change.
-///
-/// It also must not be dropped while a Task exists with pointers to the buffers
-/// of the Node. Graph has a mechanism to ensure this.
-struct Node {
-    // name: &'static str,
-    /// index by input_channel
-    input_constants: *mut [Sample],
-    /// index by `output_channel * block_size + sample_index`
-    output_buffers: *mut [Sample],
-    output_buffers_first_ptr: *mut Sample,
-    block_size: usize,
-    num_outputs: usize,
-    gen: *mut (dyn Gen + Send),
-}
-
-unsafe impl Send for Node {}
-
-impl Node {
-    pub fn new(_name: &'static str, gen: Box<dyn Gen + Send>) -> Self {
-        let num_outputs = gen.num_outputs();
-        let block_size = 0;
-        let output_buffers =
-            Box::<[Sample]>::into_raw(vec![0.0; num_outputs * block_size].into_boxed_slice());
-
-        let output_buffers_first_ptr = std::ptr::null_mut();
-
-        Node {
-            // name,
-            input_constants: Box::into_raw(
-                vec![0.0 as Sample; gen.num_inputs()].into_boxed_slice(),
-            ),
-            gen: Box::into_raw(gen),
-            output_buffers,
-            output_buffers_first_ptr,
-            num_outputs,
-            block_size,
-        }
-    }
-    // pub fn name(&self) -> &'static str {
-    //     self.name
-    // }
-    /// *Allocates memory*
-    /// Allocates enough memory for the given block size
-    pub fn init(&mut self, block_size: usize, sample_rate: Sample) {
-        // Free the previous buffer
-        unsafe {
-            drop(Box::from_raw(self.output_buffers));
-        }
-        self.output_buffers =
-            Box::<[Sample]>::into_raw(vec![0.0; self.num_outputs * block_size].into_boxed_slice());
-        self.output_buffers_first_ptr = if block_size * self.num_outputs > 0 {
-            // Get the pointer to the first f32 in the block without limiting its scope or going through a reference
-            self.output_buffers.cast::<f32>()
-        } else {
-            std::ptr::null_mut()
-        };
-        self.block_size = block_size;
-        unsafe {
-            (*self.gen).init(sample_rate);
-        }
-    }
-    /// Use the embedded Gen to generate values that are placed in the
-    /// output_buffer. The Graph will have already filled the input buffer with
-    /// the correct values.
-    #[inline]
-    pub fn process(
-        &mut self,
-        input_buffers: &NodeBufferRef,
-        resources: &mut Resources,
-    ) -> GenState {
-        let mut outputs = NodeBufferRef {
-            buf: self.output_buffers_first_ptr,
-            num_channels: self.num_outputs,
-            block_size: self.block_size,
-        };
-        let ctx = GenContext {
-            inputs: input_buffers,
-            outputs: &mut outputs,
-        };
-        unsafe { (*self.gen).process(ctx, resources) }
-    }
-    pub fn set_constant(&mut self, value: Sample, input_index: usize) {
-        unsafe {
-            (*self.input_constants)[input_index] = value;
-        }
-    }
-    pub fn output_buffers(&self) -> NodeBufferRef {
-        NodeBufferRef {
-            buf: self.output_buffers_first_ptr,
-            num_channels: self.num_outputs,
-            block_size: self.block_size,
-        }
-    }
-    pub fn num_inputs(&self) -> usize {
-        // self.gen.num_inputs()
-        // Not dynamic dispatch, may be faster
-        unsafe { &*self.input_constants }.len()
-    }
-    pub fn num_outputs(&self) -> usize {
-        self.num_outputs
-    }
-    pub fn input_indices_to_names(&self) -> Vec<&'static str> {
-        let mut list = vec![];
-        for i in 0..self.num_inputs() {
-            list.push(unsafe { (*self.gen).input_desc(i) });
-        }
-        list
-    }
-    pub fn output_indices_to_names(&self) -> Vec<&'static str> {
-        let mut list = vec![];
-        for i in 0..self.num_outputs() {
-            list.push(unsafe { (*self.gen).output_desc(i) });
-        }
-        list
-    }
-}
-impl Drop for Node {
-    fn drop(&mut self) {
-        drop(unsafe { Box::from_raw(self.gen) });
-        drop(unsafe { Box::from_raw(self.input_constants) });
-        drop(unsafe { Box::from_raw(self.output_buffers) });
-    }
-}
-
-#[derive(thiserror::Error, Debug)]
-pub enum RunGraphError {
-    #[error("Unable to create a node from the Graph: {0}")]
-    CouldNodeCreateNode(String),
-}
-
-/// Wrapper around a [`Graph`] `Node` with convenience methods to run the
-/// Graph, either from an audio thread or for non-real time purposes.
-pub struct RunGraph {
-    graph_node: Node,
-    resources: Resources,
-    input_buffer_ptr: *mut f32,
-    input_buffer_length: usize,
-    input_node_buffer_ref: NodeBufferRef,
-    output_node_buffer_ref: NodeBufferRef,
-}
-
-impl RunGraph {
-    /// Prepare the necessary resources for running the graph. This will fail if
-    /// the Graph passed in has already been turned into a Node somewhere else,
-    /// for example if it has been pushed to a different Graph.
-    pub fn new(graph: &mut Graph, resources: Resources) -> Result<Self, RunGraphError> {
-        match graph.split_and_create_node() {
-            Ok(graph_node) => {
-                let input_buffer_length = graph_node.num_inputs() * graph_node.block_size;
-                let input_buffer_ptr = if input_buffer_length != 0 {
-                    let input_buffer = vec![0.0 as Sample; input_buffer_length].into_boxed_slice();
-                    let input_buffer = Box::into_raw(input_buffer);
-                    // Safety: we just created the slice of non-zero length
-                    input_buffer.cast::<f32>()
-                } else {
-                    std::ptr::null_mut()
-                };
-                let input_node_buffer_ref = NodeBufferRef {
-                    buf: input_buffer_ptr,
-                    num_channels: graph_node.num_inputs(),
-                    block_size: graph_node.block_size,
-                };
-                // Safety: The Nodes get initiated and their buffers allocated
-                // when the Graph is split and the Node is created from it.
-                // Therefore, we can safely store a reference to a buffer in
-                // that Node here. We want to store it to be able to return a
-                // reference to it instead of an owned value which includes a
-                // raw pointer.
-                let output_node_buffer_ref = graph_node.output_buffers();
-                Ok(Self {
-                    graph_node,
-                    resources,
-                    input_buffer_length,
-                    input_buffer_ptr,
-                    input_node_buffer_ref,
-                    output_node_buffer_ref,
-                })
-            }
-            Err(e) => Err(RunGraphError::CouldNodeCreateNode(e)),
-        }
-    }
-    /// Returns the input buffer that will be read as the input of the main
-    /// graph. For example, you may want to fill this with the sound inputs of
-    /// the sound card. The buffer does not get emptied automatically. If you
-    /// don't change it between calls to [`RunGraph::process_block`], its content will be static.
-    #[inline]
-    pub fn graph_input_buffers(&mut self) -> &mut NodeBufferRef {
-        &mut self.input_node_buffer_ref
-    }
-    /// Run the Graph for one block using the inputs currently stored in the
-    /// input buffer. The results can be accessed through the output buffer
-    /// through [`RunGraph::graph_output_buffers`].
-    pub fn process_block(&mut self) {
-        self.graph_node
-            .process(&self.input_node_buffer_ref, &mut self.resources);
-    }
-    /// Return a reference to the buffer holding the output of the [`Graph`].
-    /// Channels which have no [`Connection`]/graph edge to them will be 0.0.
-    pub fn graph_output_buffers(&self) -> &NodeBufferRef {
-        &self.output_node_buffer_ref
-    }
-    pub fn block_size(&self) -> usize {
-        self.output_node_buffer_ref.block_size()
-    }
-}
-
-impl Drop for RunGraph {
-    fn drop(&mut self) {
-        // Safety: The slice is allocated when the RunGraph is created with the
-        // given size, unless that size is 0 in which case no allocation is
-        // made.
-        if !self.input_buffer_ptr.is_null() {
-            unsafe {
-                drop(Box::from_raw(std::slice::from_raw_parts_mut(
-                    self.input_buffer_ptr,
-                    self.input_buffer_length,
-                )));
-            }
-        }
-    }
-}
-unsafe impl Send for RunGraph {}
 
 /// Buffers the output of a node from last block to simplify feedback nodes and
 /// make sure they work in all possible graphs.
@@ -3387,7 +3080,7 @@ impl Gen for Ramp {
         1
     }
 
-    fn init(&mut self, sample_rate: Sample) {
+    fn init(&mut self, _block_size: usize, sample_rate: Sample) {
         self.sample_rate = sample_rate;
     }
 
@@ -3424,17 +3117,14 @@ impl Gen for Ramp {
 ///     ..Default::default()
 /// };
 /// let mut graph = Graph::new(graph_settings);
-/// let resources = Resources::new(ResourcesSettings {
-///     sample_rate: 44100.,
-///     ..Default::default()
-/// });
-/// let mut run_graph = RunGraph::new(&mut graph, resources)?;
-/// let mult = graph.push_gen(Mult);
+/// let resources = Resources::new(ResourcesSettings::default());
+/// let (mut run_graph, _, _) = RunGraph::new(&mut graph, resources, RunGraphSettings::default())?;
+/// let mult = graph.push(Mult);
 /// // Connecting the node to the graph output
 /// graph.connect(mult.to_graph_out())?;
 /// // Multiply 5 by 9
-/// graph.connect(constant(5.).to(mult).to_index(0))?;
-/// graph.connect(constant(9.).to(mult).to_index(1))?;
+/// graph.connect(constant(5.).to(&mult).to_index(0))?;
+/// graph.connect(constant(9.).to(&mult).to_index(1))?;
 /// // You need to commit changes and update if the graph is running.
 /// graph.commit_changes();
 /// graph.update();
@@ -3488,10 +3178,7 @@ impl Gen for Mult {
 /// fn main() -> Result<(), Box<dyn std::error::Error>> {
 ///     let sample_rate = 44100.;
 ///     let block_size = 8;
-///     let resources = Resources::new(ResourcesSettings {
-///         sample_rate,
-///         ..Default::default()
-///     });
+///     let resources = Resources::new(ResourcesSettings::default());
 ///     let graph_settings = GraphSettings {
 ///         block_size,
 ///         sample_rate,
@@ -3499,27 +3186,27 @@ impl Gen for Mult {
 ///         ..Default::default()
 ///     };
 ///     let mut graph: Graph = Graph::new(graph_settings);
-///     let pan = graph.push_gen(PanMonoToStereo);
+///     let pan = graph.push(PanMonoToStereo);
 ///     // The signal is a constant 1.0
-///     graph.connect(constant(1.).to(pan).to_label("signal"))?;
+///     graph.connect(constant(1.).to(&pan).to_label("signal"))?;
 ///     // Pan to the left
-///     graph.connect(constant(-1.).to(pan).to_label("pan"))?;
+///     graph.connect(constant(-1.).to(&pan).to_label("pan"))?;
 ///     graph.connect(pan.to_graph_out().channels(2))?;
 ///     graph.commit_changes();
 ///     graph.update();
-///     let mut run_graph = RunGraph::new(&mut graph, resources)?;
+///     let (mut run_graph, _, _) = RunGraph::new(&mut graph, resources, RunGraphSettings::default())?;
 ///     run_graph.process_block();
 ///     assert!(run_graph.graph_output_buffers().read(0, 0) > 0.9999);
 ///     assert!(run_graph.graph_output_buffers().read(1, 0) < 0.0001);
 ///     // Pan to the right
-///     graph.connect(constant(1.).to(pan).to_label("pan"))?;
+///     graph.connect(constant(1.).to(&pan).to_label("pan"))?;
 ///     graph.commit_changes();
 ///     graph.update();
 ///     run_graph.process_block();
 ///     assert!(run_graph.graph_output_buffers().read(0, 0) < 0.0001);
 ///     assert!(run_graph.graph_output_buffers().read(1, 0) > 0.9999);
 ///     // Pan to center
-///     graph.connect(constant(0.).to(pan).to_label("pan"))?;
+///     graph.connect(constant(0.).to(&pan).to_label("pan"))?;
 ///     graph.commit_changes();
 ///     graph.update();
 ///     run_graph.process_block();
@@ -3590,11 +3277,11 @@ impl NaiveSine {
 }
 
 impl Gen for NaiveSine {
-    fn process(&mut self, ctx: GenContext, resources: &mut Resources) -> GenState {
+    fn process(&mut self, ctx: GenContext, _resources: &mut Resources) -> GenState {
         for i in 0..ctx.block_size() {
             let freq = ctx.inputs.read(0, i);
             let amp = ctx.inputs.read(1, i);
-            self.update_freq(freq, resources.sample_rate);
+            self.update_freq(freq, ctx.sample_rate);
             self.amp = amp;
             ctx.outputs.write(self.phase.cos() * self.amp, 0, i);
             self.phase += self.phase_step;
@@ -3619,731 +3306,5 @@ impl Gen for NaiveSine {
     }
 }
 
-use rtrb::RingBuffer;
-use slotmap::{new_key_type, SecondaryMap, SlotMap};
 #[cfg(test)]
-mod tests {
-
-    use std::sync::atomic::AtomicBool;
-
-    use crate::ResourcesSettings;
-
-    use super::*;
-    fn null_input() -> NodeBufferRef {
-        NodeBufferRef::null_buffer()
-    }
-    // Outputs its input value + 1
-    struct OneGen {}
-    impl Gen for OneGen {
-        fn process(&mut self, ctx: GenContext, _resources: &mut Resources) -> GenState {
-            for i in 0..ctx.block_size() {
-                ctx.outputs.write(ctx.inputs.read(0, i) + 1.0, 0, i);
-            }
-            GenState::Continue
-        }
-        fn input_desc(&self, input: usize) -> &'static str {
-            match input {
-                0 => "passthrough",
-                _ => "",
-            }
-        }
-
-        fn num_inputs(&self) -> usize {
-            1
-        }
-
-        fn num_outputs(&self) -> usize {
-            1
-        }
-    }
-    struct DummyGen {
-        counter: f32,
-    }
-    impl Gen for DummyGen {
-        fn process(&mut self, ctx: GenContext, _resources: &mut Resources) -> GenState {
-            for i in 0..ctx.block_size() {
-                self.counter += 1.;
-                ctx.outputs
-                    .write(ctx.inputs.read(0, i) + self.counter, 0, i);
-            }
-            GenState::Continue
-        }
-
-        fn input_desc(&self, input: usize) -> &'static str {
-            match input {
-                0 => "counter",
-                _ => "",
-            }
-        }
-
-        fn num_inputs(&self) -> usize {
-            1
-        }
-
-        fn num_outputs(&self) -> usize {
-            1
-        }
-    }
-    fn graph_node(graph: &mut Graph) -> Node {
-        graph.split_and_create_node().unwrap()
-    }
-    fn test_resources_settings() -> ResourcesSettings {
-        ResourcesSettings::default()
-    }
-
-    #[test]
-    fn create_graph() {
-        let mut graph: Graph = Graph::new(GraphSettings::default());
-        let node = Node::new("Dummy", Box::new(DummyGen { counter: 0.0 }));
-        let node_id = graph.push_node(node);
-        graph.connect(Connection::graph_output(node_id)).unwrap();
-        graph.init();
-        let mut resources = Resources::new(test_resources_settings());
-        let mut graph_node = graph_node(&mut graph);
-        graph_node.process(&null_input(), &mut resources);
-        assert_eq!(graph_node.output_buffers().read(0, 31), 32.0);
-    }
-    #[test]
-    fn multiple_nodes() {
-        let mut graph: Graph = Graph::new(GraphSettings {
-            block_size: 4,
-            ..Default::default()
-        });
-        let node1 = Node::new("Dummy", Box::new(DummyGen { counter: 0.0 }));
-        let node2 = Node::new("Dummy", Box::new(DummyGen { counter: 0.0 }));
-        let node3 = Node::new("Dummy", Box::new(DummyGen { counter: 0.0 }));
-        let node_id1 = graph.push_node(node1);
-        let node_id2 = graph.push_node(node2);
-        let node_id3 = graph.push_node(node3);
-        graph.connect(node_id1.to(node_id3)).unwrap();
-        graph.connect(node_id2.to(node_id3)).unwrap();
-        graph.connect(Connection::graph_output(node_id3)).unwrap();
-        let mut graph_node = graph_node(&mut graph);
-        let mut resources = Resources::new(test_resources_settings());
-        graph_node.process(&null_input(), &mut resources);
-        assert_eq!(graph_node.output_buffers().read(0, 2), 9.0);
-    }
-    #[test]
-    fn constant_inputs() {
-        const BLOCK: usize = 16;
-        let mut graph: Graph = Graph::new(GraphSettings {
-            block_size: BLOCK,
-            ..Default::default()
-        });
-        let node = Node::new("Dummy", Box::new(DummyGen { counter: 0.0 }));
-        let node_id = graph.push_node(node);
-        graph.connect(constant(0.5).to(node_id)).unwrap();
-        graph.connect(Connection::graph_output(node_id)).unwrap();
-        let resources = Resources::new(test_resources_settings());
-        let mut run_graph = RunGraph::new(&mut graph, resources).unwrap();
-        run_graph.process_block();
-        assert_eq!(run_graph.graph_output_buffers().read(0, BLOCK - 1), 16.5);
-    }
-    #[test]
-    fn graph_in_a_graph() {
-        const BLOCK: usize = 16;
-        const CONSTANT_INPUT_TO_NODE: Sample = 0.25;
-        let mut inner_graph: Graph = Graph::new(GraphSettings {
-            block_size: BLOCK,
-            ..Default::default()
-        });
-        let node = Node::new("Dummy", Box::new(DummyGen { counter: 0.0 }));
-        let node_id = inner_graph.push_node(node);
-        inner_graph
-            .connect(Connection::graph_output(node_id))
-            .unwrap();
-        let mut graph: Graph = Graph::new(GraphSettings {
-            block_size: BLOCK,
-            ..Default::default()
-        });
-        let inner_graph_node_id = graph.push(inner_graph);
-        graph
-            .connect(Connection::graph_output(inner_graph_node_id).channels(2))
-            .unwrap();
-        // Parent graphs should propagate a connection to its child graphs without issue
-        graph
-            .connect(constant(CONSTANT_INPUT_TO_NODE).to(node_id))
-            .unwrap();
-        let resources = Resources::new(test_resources_settings());
-        let mut run_graph = RunGraph::new(&mut graph, resources).unwrap();
-        graph.commit_changes();
-        graph.update();
-        run_graph.process_block();
-        assert_eq!(
-            run_graph.graph_output_buffers().read(0, BLOCK - 2),
-            (BLOCK - 1) as Sample + CONSTANT_INPUT_TO_NODE
-        );
-    }
-    #[test]
-    fn feedback_in_graph() {
-        // v-------------<
-        // |   2 -> 3 -> 4
-        // |   |    |
-        // fbv fbv fbv
-        //   0     -> 1 -> out
-        const BLOCK: usize = 4;
-        let mut graph: Graph = Graph::new(GraphSettings {
-            block_size: BLOCK,
-            ..Default::default()
-        });
-        let n0 = graph.push_node(Node::new("Dummy", Box::new(DummyGen { counter: 0.0 })));
-        let n1 = graph.push_node(Node::new("Dummy", Box::new(DummyGen { counter: 0.0 })));
-        let n2 = graph.push_node(Node::new("Dummy", Box::new(DummyGen { counter: 4.0 })));
-        let n3 = graph.push_node(Node::new("Dummy", Box::new(DummyGen { counter: 5.0 })));
-        let n4 = graph.push_node(Node::new("Dummy", Box::new(DummyGen { counter: 1.0 })));
-        graph.connect(Connection::graph_output(n1)).unwrap();
-        graph
-            .connect(Connection::graph_output(n0).to_index(1))
-            .unwrap();
-        graph.connect(n0.to(n1)).unwrap();
-        graph.connect(n2.to(n3)).unwrap();
-        graph.connect(n3.to(n4)).unwrap();
-        graph.connect(n2.to(n0).feedback(true)).unwrap();
-        graph.connect(n3.to(n1).feedback(true)).unwrap();
-        graph.connect(n4.to(n0).feedback(true)).unwrap();
-        let mut graph_node = graph_node(&mut graph);
-        let mut resources = Resources::new(test_resources_settings());
-        graph_node.process(&null_input(), &mut resources);
-        let block1 = vec![2.0f32, 4., 6., 8.];
-        let block2 = vec![39f32, 47., 55., 63.];
-        for (&output, expected) in graph_node
-            .output_buffers()
-            .get_channel(0)
-            .iter()
-            .zip(block1)
-        {
-            assert_eq!(
-                output,
-                expected,
-                "block1 failed with o: {}, expected: {}, n1: {:#?}, n0: {:#?}",
-                output,
-                expected,
-                graph_node.output_buffers().get_channel(0),
-                graph_node.output_buffers().get_channel(1)
-            );
-        }
-        graph_node.process(&null_input(), &mut resources);
-        for (&output, expected) in graph_node
-            .output_buffers()
-            .get_channel(0)
-            .iter()
-            .zip(block2)
-        {
-            assert_eq!(
-                output,
-                expected,
-                "block2 failed with o: {}, expected: {}, n1: {:#?}, n0: {:#?}",
-                output,
-                expected,
-                graph_node.output_buffers().get_channel(0),
-                graph_node.output_buffers().get_channel(1)
-            );
-        }
-    }
-
-    #[test]
-    fn changing_the_graph() {
-        const BLOCK: usize = 1;
-        let mut graph: Graph = Graph::new(GraphSettings {
-            block_size: BLOCK,
-            ..Default::default()
-        });
-        let resources = Resources::new(test_resources_settings());
-        let mut run_graph = RunGraph::new(&mut graph, resources).unwrap();
-        let triangular_sequence = |n| (n * (n + 1)) / 2;
-        for i in 0..10 {
-            let node = Node::new("Dummy", Box::new(DummyGen { counter: 0.0 }));
-            let node_id = graph.push_node(node);
-            graph.connect(constant(0.5).to(node_id)).unwrap();
-            graph.connect(Connection::graph_output(node_id)).unwrap();
-            graph.commit_changes();
-            graph.update();
-            run_graph.process_block();
-            assert_eq!(
-                run_graph.graph_output_buffers().read(0, 0),
-                (i + 1) as f32 * 0.5 + triangular_sequence(i + 1) as f32,
-                "i: {}, output: {}, expected: {}",
-                i,
-                run_graph.graph_output_buffers().read(0, 0),
-                (i + 1) as f32 * 0.5 + triangular_sequence(i + 1) as f32,
-            );
-        }
-    }
-
-    #[test]
-    fn graph_inputs() {
-        const BLOCK: usize = 1;
-        let mut graph: Graph = Graph::new(GraphSettings {
-            block_size: BLOCK,
-            num_inputs: 3,
-            ..Default::default()
-        });
-        let resources = Resources::new(test_resources_settings());
-        let mut run_graph = RunGraph::new(&mut graph, resources).unwrap();
-        let node = Node::new("Dummy", Box::new(DummyGen { counter: 0.0 }));
-        let node_id = graph.push_node(node);
-        graph
-            .connect(
-                Connection::graph_input(node_id)
-                    .from_index(2)
-                    .to_label("counter"),
-            )
-            .unwrap();
-        graph.connect(Connection::graph_output(node_id)).unwrap();
-        graph.commit_changes();
-        run_graph.graph_input_buffers().fill_channel(10.0, 2);
-        run_graph.process_block();
-        assert_eq!(run_graph.graph_output_buffers().read(0, 0), 11.0);
-    }
-
-    #[test]
-    fn remove_nodes() {
-        const BLOCK: usize = 1;
-        let mut graph: Graph = Graph::new(GraphSettings {
-            block_size: BLOCK,
-            ..Default::default()
-        });
-        let mut graph_node = graph_node(&mut graph);
-        let mut resources = Resources::new(test_resources_settings());
-        let mut nodes = vec![];
-        let mut last_node = None;
-        for _ in 0..10 {
-            let node = graph.push(OneGen {});
-            if let Some(last) = last_node.take() {
-                graph.connect(node.to(last)).unwrap();
-            } else {
-                graph.connect(Connection::graph_output(node)).unwrap();
-            }
-            last_node = Some(node);
-            nodes.push(node);
-        }
-        graph.commit_changes();
-        graph_node.process(&null_input(), &mut resources);
-        assert_eq!(graph_node.output_buffers().read(0, 0), 10.0);
-        graph.free_node(nodes[9]).unwrap();
-        graph.commit_changes();
-        graph_node.process(&null_input(), &mut resources);
-        assert_eq!(graph_node.output_buffers().read(0, 0), 9.0);
-        graph.free_node(nodes[4]).unwrap();
-        graph.commit_changes();
-        graph_node.process(&null_input(), &mut resources);
-        assert_eq!(graph_node.output_buffers().read(0, 0), 4.0);
-        graph.connect(nodes[5].to(nodes[3])).unwrap();
-        graph.commit_changes();
-        graph_node.process(&null_input(), &mut resources);
-        assert_eq!(graph_node.output_buffers().read(0, 0), 8.0);
-        for node in &nodes[1..4] {
-            graph.free_node(*node).unwrap();
-        }
-        graph.commit_changes();
-        graph_node.process(&null_input(), &mut resources);
-        assert_eq!(graph_node.output_buffers().read(0, 0), 1.0);
-        assert_eq!(graph.free_node(nodes[4]), Err(FreeError::NodeNotFound));
-    }
-
-    #[test]
-    fn parallel_mutation() {
-        // Here we just want to check that the program doesn't crash/segfault when changing the graph while running the GraphGen.
-        const BLOCK: usize = 1;
-        let mut graph: Graph = Graph::new(GraphSettings {
-            block_size: BLOCK,
-            ..Default::default()
-        });
-        let resources = Resources::new(test_resources_settings());
-        let mut run_graph = RunGraph::new(&mut graph, resources).unwrap();
-        let mut nodes = vec![];
-        let mut last_node = None;
-        let done_flag = Arc::new(AtomicBool::new(false));
-        let audio_done_flag = done_flag.clone();
-        let audio_thread = std::thread::spawn(move || {
-            while !audio_done_flag.load(Ordering::SeqCst) {
-                run_graph.process_block();
-                std::thread::sleep(std::time::Duration::from_millis(1));
-            }
-        });
-        for _ in 0..10 {
-            let node = graph.push(OneGen {});
-            if let Some(last) = last_node.take() {
-                graph.connect(node.to(last)).unwrap();
-            } else {
-                graph.connect(Connection::graph_output(node)).unwrap();
-            }
-            last_node = Some(node);
-            nodes.push(node);
-            graph.commit_changes();
-            std::thread::sleep(std::time::Duration::from_millis(3));
-        }
-        for node in nodes.into_iter().rev() {
-            graph.free_node(node).unwrap();
-            graph.commit_changes();
-            std::thread::sleep(std::time::Duration::from_millis(2));
-        }
-        let mut nodes = vec![];
-        last_node = None;
-        for _ in 0..10 {
-            let node = graph.push(DummyGen { counter: 0. });
-            if let Some(last) = last_node.take() {
-                graph.connect(node.to(last)).unwrap();
-            } else {
-                graph.connect(Connection::graph_output(node)).unwrap();
-            }
-            last_node = Some(node);
-            nodes.push(node);
-            graph.commit_changes();
-            std::thread::sleep(std::time::Duration::from_millis(1));
-        }
-        use rand::seq::SliceRandom;
-        let mut rng = rand::thread_rng();
-        nodes.shuffle(&mut rng);
-        for node in nodes.into_iter() {
-            graph.free_node(node).unwrap();
-            graph.commit_changes();
-            graph.update();
-            std::thread::sleep(std::time::Duration::from_millis(1));
-        }
-        drop(graph);
-        done_flag.store(true, Ordering::SeqCst);
-        audio_thread.join().unwrap();
-    }
-    struct SelfFreeing {
-        samples_countdown: usize,
-        value: Sample,
-        mend: bool,
-    }
-    impl Gen for SelfFreeing {
-        fn process(&mut self, ctx: GenContext, _resources: &mut Resources) -> GenState {
-            for i in 0..ctx.block_size() {
-                if self.samples_countdown == 0 {
-                    if self.mend {
-                        ctx.outputs.write(ctx.inputs.read(0, i), 0, i);
-                    } else {
-                        ctx.outputs.write(0., 0, i);
-                    }
-                } else {
-                    ctx.outputs.write(ctx.inputs.read(0, i) + self.value, 0, i);
-                    self.samples_countdown -= 1;
-                }
-            }
-            if self.samples_countdown == 0 {
-                if self.mend {
-                    GenState::FreeSelfMendConnections
-                } else {
-                    GenState::FreeSelf
-                }
-            } else {
-                GenState::Continue
-            }
-        }
-
-        fn num_inputs(&self) -> usize {
-            1
-        }
-
-        fn num_outputs(&self) -> usize {
-            1
-        }
-    }
-
-    #[test]
-    fn self_freeing_nodes() {
-        const BLOCK: usize = 1;
-        let mut graph: Graph = Graph::new(GraphSettings {
-            block_size: BLOCK,
-            ..Default::default()
-        });
-        let mut graph_node = graph_node(&mut graph);
-        let mut resources = Resources::new(test_resources_settings());
-        let n0 = graph.push(SelfFreeing {
-            samples_countdown: 2,
-            value: 1.,
-            mend: true,
-        });
-        let n1 = graph.push(SelfFreeing {
-            samples_countdown: 1,
-            value: 1.,
-            mend: true,
-        });
-        let n2 = graph.push(SelfFreeing {
-            samples_countdown: 4,
-            value: 2.,
-            mend: false,
-        });
-        let n3 = graph.push(SelfFreeing {
-            samples_countdown: 5,
-            value: 3.,
-            mend: false,
-        });
-        graph.connect(Connection::graph_output(n0)).unwrap();
-        graph.connect(n1.to(n0)).unwrap();
-        graph.connect(n2.to(n1)).unwrap();
-        graph.connect(n3.to(n2)).unwrap();
-
-        graph.commit_changes();
-        assert_eq!(graph.num_nodes(), 4);
-        graph_node.process(&null_input(), &mut resources);
-        assert_eq!(graph_node.output_buffers().read(0, 0), 7.0);
-        graph.commit_changes();
-        // Still 4 since the node has been added to the free node queue, but there
-        // hasn't been a new generation in the GraphGen yet.
-        assert_eq!(graph.num_nodes(), 4);
-        graph_node.process(&null_input(), &mut resources);
-        assert_eq!(graph_node.output_buffers().read(0, 0), 6.0);
-        graph.commit_changes();
-        assert_eq!(graph.num_nodes(), 3);
-        graph_node.process(&null_input(), &mut resources);
-        assert_eq!(graph_node.output_buffers().read(0, 0), 5.0);
-        graph.commit_changes();
-        assert_eq!(graph.num_nodes(), 2);
-        graph_node.process(&null_input(), &mut resources);
-        assert_eq!(graph_node.output_buffers().read(0, 0), 5.0);
-        graph.commit_changes();
-        assert_eq!(graph.num_nodes(), 2);
-        graph_node.process(&null_input(), &mut resources);
-        assert_eq!(graph_node.output_buffers().read(0, 0), 0.0);
-        graph.commit_changes();
-        assert_eq!(graph.num_nodes(), 1);
-        graph_node.process(&null_input(), &mut resources);
-        graph.commit_changes();
-        assert_eq!(graph.num_nodes(), 0);
-    }
-    #[test]
-    fn scheduling() {
-        const BLOCK: usize = 4;
-        let mut graph: Graph = Graph::new(GraphSettings {
-            block_size: BLOCK,
-            latency: Duration::from_millis(0),
-            ..Default::default()
-        });
-        let mut graph_node = graph_node(&mut graph);
-        let mut resources = Resources::new(test_resources_settings());
-        let node0 = graph.push(OneGen {});
-        let node1 = graph.push(OneGen {});
-        graph.connect(Connection::graph_output(node0)).unwrap();
-        graph.connect(node1.to(node0)).unwrap();
-        graph.connect(constant(2.).to(node1)).unwrap();
-        graph.commit_changes();
-        graph
-            .schedule_change(ParameterChange::absolute_samples(node0, 1.0, 3).i(0))
-            .unwrap();
-        graph
-            .schedule_change(ParameterChange::absolute_samples(node0, 2.0, 2).l("passthrough"))
-            .unwrap();
-        graph
-            .schedule_change(ParameterChange::absolute_samples(node1, 10.0, 7).i(0))
-            .unwrap();
-        // Schedule far into the future
-        graph
-            .schedule_change(
-                ParameterChange::relative_duration(node1, 3000.0, Duration::from_secs(100)).i(0),
-            )
-            .unwrap();
-        graph.update();
-        graph_node.process(&null_input(), &mut resources);
-        assert_eq!(graph_node.output_buffers().read(0, 0), 4.0);
-        assert_eq!(graph_node.output_buffers().read(0, 1), 4.0);
-        assert_eq!(graph_node.output_buffers().read(0, 2), 6.0);
-        assert_eq!(graph_node.output_buffers().read(0, 3), 5.0);
-        graph
-            .schedule_change(ParameterChange::absolute_samples(node0, 0.0, 5).i(0))
-            .unwrap();
-        graph
-            .schedule_change(ParameterChange::absolute_samples(node1, 0.0, 6).l("passthrough"))
-            .unwrap();
-        assert_eq!(
-            graph.schedule_change(ParameterChange::absolute_samples(node1, 100.0, 6).l("pasta")),
-            Err(ScheduleError::InputLabelNotFound("pasta"))
-        );
-        graph.update();
-        graph_node.process(&null_input(), &mut resources);
-        assert_eq!(graph_node.output_buffers().read(0, 0), 5.0);
-        assert_eq!(graph_node.output_buffers().read(0, 1), 4.0);
-        assert_eq!(graph_node.output_buffers().read(0, 2), 2.0);
-        assert_eq!(graph_node.output_buffers().read(0, 3), 12.0);
-        // Schedule "now", but this will be a few hundred samples into the
-        // future depending on the time it takes to run this test.
-        graph
-            .schedule_change(ParameterChange::now(node1, 1000.0).i(0))
-            .unwrap();
-        graph.update();
-        // Move a few hundred samples into the future
-        for _ in 0..600 {
-            graph_node.process(&null_input(), &mut resources);
-            graph.update();
-        }
-        // If this fails, it may be because the machine is too slow. Try
-        // increasing the number of iterations above.
-        assert_eq!(graph_node.output_buffers().read(0, 0), 1002.0);
-    }
-    #[test]
-    fn index_routing() {
-        let graph_settings = GraphSettings {
-            block_size: 4,
-            sample_rate: 44100.,
-            num_outputs: 2,
-            ..Default::default()
-        };
-        let mut graph = Graph::new(graph_settings);
-        let resources = Resources::new(ResourcesSettings {
-            sample_rate: 44100.,
-            ..Default::default()
-        });
-        let mut run_graph = RunGraph::new(&mut graph, resources).unwrap();
-        let mult = graph.push(Mult);
-        let five = graph.push(
-            gen(move |ctx, _resources| {
-                for o0 in ctx.outputs.get_channel_mut(0) {
-                    *o0 = 5.;
-                }
-                GenState::Continue
-            })
-            .output("o"),
-        );
-        let nine = graph.push(
-            gen(move |ctx, _resources| {
-                for o0 in ctx.outputs.get_channel_mut(0) {
-                    *o0 = 9.;
-                }
-                GenState::Continue
-            })
-            .output("o"),
-        );
-        // Connecting the node to the graph output
-        graph.connect(mult.to_graph_out()).unwrap();
-        // Multiply 5 by 9
-        graph.connect(five.to(mult).to_index(0)).unwrap();
-        graph.connect(nine.to(mult).to_index(1)).unwrap();
-        // You need to commit changes and update if the graph is running.
-        graph.commit_changes();
-        graph.update();
-        run_graph.process_block();
-        assert_eq!(run_graph.graph_output_buffers().read(0, 0), 45.0);
-    }
-    #[test]
-    fn index_routing_advanced() {
-        let graph_settings = GraphSettings {
-            block_size: 4,
-            sample_rate: 44100.,
-            num_outputs: 2,
-            ..Default::default()
-        };
-        let mut graph = Graph::new(graph_settings);
-        let resources = Resources::new(ResourcesSettings {
-            sample_rate: 44100.,
-            ..Default::default()
-        });
-        let mut run_graph = RunGraph::new(&mut graph, resources).unwrap();
-        let multiplier = graph.push(
-            gen(move |ctx, _resources| {
-                for i in 0..ctx.block_size() {
-                    let i0 = ctx.inputs.read(0, i) * 1.;
-                    let i1 = ctx.inputs.read(1, i) * 2.;
-                    let i2 = ctx.inputs.read(2, i) * 3.;
-                    let i3 = ctx.inputs.read(3, i) * 4.;
-                    let i4 = ctx.inputs.read(4, i) * 5.;
-                    let i5 = ctx.inputs.read(5, i) * 6.;
-                    let mut value = i0;
-                    for i in [i1, i2, i3, i4, i5] {
-                        if i != 0.0 {
-                            value *= i;
-                        }
-                    }
-                    ctx.outputs.write(value, 0, i);
-                }
-                GenState::Continue
-            })
-            .output("o")
-            .input("i0")
-            .input("i1")
-            .input("i2")
-            .input("i3")
-            .input("i4")
-            .input("i5"),
-        );
-        let five = graph.push(
-            gen(move |ctx, _resources| {
-                for o0 in ctx.outputs.get_channel_mut(0) {
-                    *o0 = 5.;
-                }
-                GenState::Continue
-            })
-            .output("o"),
-        );
-        let nine = graph.push(
-            gen(move |ctx, _resources| {
-                for o0 in ctx.outputs.get_channel_mut(0) {
-                    *o0 = 9.;
-                }
-                GenState::Continue
-            })
-            .output("o"),
-        );
-        let numberer = graph.push(
-            gen(move |ctx, _resources| {
-                for i in 0..ctx.block_size() {
-                    ctx.outputs.write(0.0, 0, i);
-                    ctx.outputs.write(1.0, 1, i);
-                    ctx.outputs.write(2.0, 2, i);
-                    ctx.outputs.write(3.0, 3, i);
-                    ctx.outputs.write(4.0, 4, i);
-                    ctx.outputs.write(5.0, 5, i);
-                    ctx.outputs.write(6.0, 6, i);
-                    ctx.outputs.write(7.0, 7, i);
-                    ctx.outputs.write(8.0, 8, i);
-                    ctx.outputs.write(9.0, 9, i);
-                }
-                GenState::Continue
-            })
-            .output("o0")
-            .output("o1")
-            .output("o2")
-            .output("o3")
-            .output("o4")
-            .output("o5")
-            .output("o6")
-            .output("o7")
-            .output("o8")
-            .output("o9"),
-        );
-        // Connecting the node to the graph output
-        graph.connect(multiplier.to_graph_out()).unwrap();
-        // Multiply 5 by 9
-        graph.connect(nine.to(multiplier).to_index(0)).unwrap();
-        graph.connect(five.to(multiplier).to_index(1)).unwrap();
-        // You need to commit changes and update if the graph is running.
-        graph.commit_changes();
-        graph.update();
-        run_graph.process_block();
-        assert_eq!(run_graph.graph_output_buffers().read(0, 0), 90.0);
-
-        graph.disconnect(five.to(multiplier).to_index(1)).unwrap();
-        graph.connect(five.to(multiplier).to_index(3)).unwrap();
-        graph.commit_changes();
-        graph.update();
-        run_graph.process_block();
-        assert_eq!(run_graph.graph_output_buffers().read(0, 0), 180.0);
-
-        graph.connect(five.to(multiplier).to_index(4)).unwrap();
-        graph.connect(five.to(multiplier).to_label("i5")).unwrap();
-        graph.commit_changes();
-        graph.update();
-        run_graph.process_block();
-        assert_eq!(run_graph.graph_output_buffers().read(0, 0), 135000.0);
-
-        graph.connect(Connection::clear_node_outputs(five)).unwrap();
-        graph.commit_changes();
-        graph.update();
-        run_graph.process_block();
-        assert_eq!(run_graph.graph_output_buffers().read(0, 0), 9.0);
-
-        graph
-            .connect(numberer.to(multiplier).from_index(2).to_index(4))
-            .unwrap();
-        graph
-            .connect(numberer.to(multiplier).from_index(7).to_index(2))
-            .unwrap();
-        graph.commit_changes();
-        graph.update();
-        run_graph.process_block();
-        assert_eq!(run_graph.graph_output_buffers().read(0, 0), 1890.0);
-    }
-}
+mod tests;

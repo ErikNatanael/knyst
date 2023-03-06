@@ -23,8 +23,17 @@ use crate::{
     graph::{Gen, GenState, Graph},
     StopAction,
 };
+use crate::{BufferId, IdOrKey};
 
 use super::Sample;
+
+#[derive(thiserror::Error, Debug)]
+pub enum BufferError {
+    #[error("Tried to load a file in an unsupported format: {0}")]
+    FileFormatNotSupported(PathBuf),
+    #[error("Symphonia error: {0}")]
+    SymphoniaError(#[from] SymphoniaError),
+}
 
 new_key_type! {
     pub struct BufferKey;
@@ -34,7 +43,8 @@ new_key_type! {
 pub struct Buffer {
     buffer: Vec<Sample>,
     num_channels: usize,
-    size: f64,
+    /// Size in number of frames independent on the number of channels.
+    num_frames: f64,
     /// The sample rate of the buffer, can be different from the sample rate of the audio server
     sample_rate: f64,
 }
@@ -44,7 +54,7 @@ impl Buffer {
         Buffer {
             buffer: vec![0.0; size],
             num_channels,
-            size: size as f64,
+            num_frames: size as f64,
             sample_rate,
         }
     }
@@ -54,7 +64,7 @@ impl Buffer {
         Buffer {
             buffer,
             num_channels: 1,
-            size,
+            num_frames: size,
             sample_rate,
         }
     }
@@ -66,21 +76,20 @@ impl Buffer {
         num_channels: usize,
         sample_rate: f64,
     ) -> Self {
-        let size = buffer.len() as f64;
+        let size = (buffer.len() / num_channels) as f64;
         Buffer {
             buffer,
             num_channels,
-            size,
+            num_frames: size,
             sample_rate,
         }
     }
 
     /// Create a [`Buffer`] by loading a sound file from disk. Currently
     /// supported file formats: Wave, Ogg Vorbis, FLAC, MP3
-    pub fn from_sound_file(path: impl Into<PathBuf>) -> Result<Self, SymphoniaError> {
+    pub fn from_sound_file(path: impl Into<PathBuf>) -> Result<Self, BufferError> {
         let path = path.into();
         let mut buffer = Vec::new();
-        let mut codec_params = None;
         let inp_file = File::open(&path).expect("Buffer: failed to open file!");
         // hint to the format registry of the decoder what file format it might be
         let mut hint = Hint::new();
@@ -97,7 +106,12 @@ impl Buffer {
         let mut sample_buf = None;
 
         // Probe the media source stream for metadata and get the format reader.
-        match symphonia::default::get_probe().format(&hint, mss, &format_opts, &metadata_opts) {
+        let codec_params = match symphonia::default::get_probe().format(
+            &hint,
+            mss,
+            &format_opts,
+            &metadata_opts,
+        ) {
             Ok(probed) => {
                 let mut reader = probed.format;
                 // Find the first audio track with a known (decodeable) codec.
@@ -115,7 +129,7 @@ impl Buffer {
                 let mut decoder = symphonia::default::get_codecs()
                     .make(&track.codec_params, &decode_options)
                     .expect("unsupported codec");
-                codec_params = Some(track.codec_params.clone());
+                let codec_params = track.codec_params.clone();
                 // Store the track identifier, it will be used to filter packets.
                 let track_id = track.id;
 
@@ -132,8 +146,8 @@ impl Buffer {
                             unimplemented!();
                         }
                         Err(err) => match err {
-                            SymphoniaError::IoError(e) => {
-                                println!("{e}");
+                            SymphoniaError::IoError(_e) => {
+                                // println!("{e}");
                                 break;
                             }
                             SymphoniaError::DecodeError(_) => todo!(),
@@ -194,31 +208,26 @@ impl Buffer {
                         }
                         Err(err) => {
                             // An unrecoverable error occured, halt decoding.
-                            match err {
-                                SymphoniaError::SeekError(_) => todo!(),
-                                SymphoniaError::Unsupported(_) => todo!(),
-                                SymphoniaError::LimitError(_) => todo!(),
-                                SymphoniaError::ResetRequired => todo!(),
-                                _ => (),
-                            }
-                            panic!("{}", err);
+                            return Err(From::from(err));
                         }
                     }
                 }
+                codec_params
             }
-            Err(err) => {
+            Err(_err) => {
                 // The input was not supported by any format reader.
-                eprintln!("file not supported: {}", err);
+                return Err(BufferError::FileFormatNotSupported(path));
             }
-        }
+        };
 
-        let (sampling_rate, num_channels) = if let Some(cp) = codec_params {
-            println!(
-                "channels: {}, rate: {}, num samples: {}",
-                cp.channels.unwrap(),
-                cp.sample_rate.unwrap(),
-                buffer.len()
-            );
+        let (sampling_rate, num_channels) = {
+            let cp = codec_params;
+            // println!(
+            //     "channels: {}, rate: {}, num samples: {}",
+            //     cp.channels.unwrap(),
+            //     cp.sample_rate.unwrap(),
+            //     buffer.len()
+            // );
             // The channels are stored as a bit field
             // https://docs.rs/symphonia-core/0.5.1/src/symphonia_core/audio.rs.html#29-90
             // The number of bits set to 1 is the number of channels in the buffer.
@@ -226,8 +235,6 @@ impl Buffer {
                 cp.sample_rate.unwrap() as f64,
                 cp.channels.unwrap().bits().count_ones() as usize,
             )
-        } else {
-            (0.0, 1)
         };
         // TODO: Return Err if there's no audio data
         Ok(Self::from_vec_interleaved(
@@ -257,8 +264,9 @@ impl Buffer {
         &self.buffer[index..index + self.num_channels]
         // unsafe{ *self.buffer.get_unchecked(index) }
     }
-    pub fn size(&self) -> f64 {
-        self.size
+    /// Size in number of frames regardless of the number of samples
+    pub fn num_frames(&self) -> f64 {
+        self.num_frames
     }
 }
 
@@ -266,7 +274,7 @@ impl Buffer {
 /// TODO: Support rate through an argument with a default constant of 1
 #[derive(Clone, Debug)]
 pub struct BufferReader {
-    buffer_key: BufferKey,
+    buffer_key: IdOrKey<BufferId, BufferKey>,
     read_pointer: f64,
     rate: f64,
     base_rate: f64, // The basic rate for playing the buffer at normal speed
@@ -276,14 +284,18 @@ pub struct BufferReader {
 }
 
 impl BufferReader {
-    pub fn new(buffer_key: BufferKey, rate: f64, stop_action: StopAction) -> Self {
+    pub fn new(
+        buffer_key: IdOrKey<BufferId, BufferKey>,
+        rate: f64,
+        stop_action: StopAction,
+    ) -> Self {
         BufferReader {
             buffer_key,
             read_pointer: 0.0,
             base_rate: 0.0, // initialise to the correct value the first time next() is called
             rate,
             finished: false,
-            looping: true,
+            looping: false,
             stop_action,
         }
     }
@@ -303,41 +315,51 @@ impl Gen for BufferReader {
         resources: &mut crate::Resources,
     ) -> crate::graph::GenState {
         let mut stop_sample = None;
-        if !self.finished {
-            if let Some(buffer) = &mut resources.buffers.get(self.buffer_key) {
-                // Initialise the base rate if it hasn't been set
-                if self.base_rate == 0.0 {
-                    self.base_rate = buffer.buf_rate_scale(resources.sample_rate);
-                }
 
-                for (i, out) in ctx.outputs.get_channel_mut(0).iter_mut().enumerate() {
-                    let samples = buffer.get_interleaved((self.read_pointer) as usize);
-                    *out = samples[0];
-                    // println!("out: {}", sample);
-                    self.read_pointer += self.base_rate * self.rate;
-                    if self.read_pointer >= buffer.size() {
-                        self.finished = true;
-                        if self.looping {
-                            self.reset();
+        let mut outputs = ctx.outputs.split_mut();
+        let output0 = outputs.next().unwrap();
+        if !self.finished {
+            if let IdOrKey::Id(id) = self.buffer_key {
+                match resources.buffer_key_from_id(id) {
+                    Some(key) => self.buffer_key = IdOrKey::Key(key),
+                    None => (),
+                }
+            }
+            if let IdOrKey::Key(buffer_key) = self.buffer_key {
+                if let Some(buffer) = &mut resources.buffers.get(buffer_key) {
+                    // Initialise the base rate if it hasn't been set
+                    if self.base_rate == 0.0 {
+                        self.base_rate = buffer.buf_rate_scale(ctx.sample_rate);
+                    }
+
+                    for (i, out) in output0.iter_mut().enumerate() {
+                        let samples = buffer.get_interleaved((self.read_pointer) as usize);
+                        *out = samples[0];
+                        // println!("out: {}", sample);
+                        self.read_pointer += self.base_rate * self.rate;
+                        if self.read_pointer >= buffer.num_frames() {
+                            self.finished = true;
+                            if self.looping {
+                                self.reset();
+                            }
+                        }
+                        if self.finished {
+                            stop_sample = Some(i + 1);
+                            break;
                         }
                     }
-                    if self.finished {
-                        stop_sample = Some(i + 1);
-                        break;
-                    }
+                } else {
+                    // Output zeroes if the buffer doesn't exist.
+                    // TODO: Send error back to the user that the buffer doesn't exist without interrupting the audio thread.
+                    // eprintln!("Error: BufferReader: buffer doesn't exist in Resources");
+                    stop_sample = Some(0);
                 }
-            } else {
-                // Output zeroes if the buffer doesn't exist.
-                // TODO: Send error back to the user that the buffer doesn't exist without interrupting the audio thread.
-                eprintln!("Error: BufferReader: buffer doesn't exist in Resources");
-                stop_sample = Some(0);
             }
         } else {
             stop_sample = Some(0);
         }
         if let Some(stop_sample) = stop_sample {
-            let output = ctx.outputs.get_channel_mut(0);
-            for out in output[stop_sample..].iter_mut() {
+            for out in output0[stop_sample..].iter_mut() {
                 *out = 0.;
             }
             self.stop_action.to_gen_state(stop_sample)
@@ -353,8 +375,6 @@ impl Gen for BufferReader {
     fn num_outputs(&self) -> usize {
         1
     }
-
-    fn init(&mut self, _sample_rate: crate::graph::Sample) {}
 
     fn input_desc(&self, _input: usize) -> &'static str {
         ""
@@ -394,9 +414,13 @@ impl BufferReaderMulti {
             rate,
             num_channels: 1,
             finished: false,
-            looping: true,
+            looping: false,
             stop_action,
         }
+    }
+    pub fn looping(mut self, looping: bool) -> Self {
+        self.looping = looping;
+        self
     }
     pub fn channels(mut self, num_channels: usize) -> Self {
         self.num_channels = num_channels;
@@ -422,7 +446,7 @@ impl Gen for BufferReaderMulti {
             if let Some(buffer) = &mut resources.buffers.get(self.buffer_key) {
                 // Initialise the base rate if it hasn't been set
                 if self.base_rate == 0.0 {
-                    self.base_rate = buffer.buf_rate_scale(resources.sample_rate);
+                    self.base_rate = buffer.buf_rate_scale(ctx.sample_rate);
                 }
                 for i in 0..ctx.block_size() {
                     let samples = buffer.get_interleaved((self.read_pointer) as usize);
@@ -430,7 +454,7 @@ impl Gen for BufferReaderMulti {
                         ctx.outputs.write(*sample, out_num, i);
                     }
                     self.read_pointer += self.base_rate * self.rate;
-                    if self.read_pointer >= buffer.size() {
+                    if self.read_pointer >= buffer.num_frames() {
                         self.finished = true;
                         if self.looping {
                             self.reset();
@@ -444,14 +468,15 @@ impl Gen for BufferReaderMulti {
             } else {
                 // Output zeroes if the buffer doesn't exist.
                 // TODO: Send error back to the user that the buffer doesn't exist without interrupting the audio thread.
-                eprintln!("Error: BufferReader: buffer doesn't exist in Resources");
+                // eprintln!("Error: BufferReader: buffer doesn't exist in Resources");
                 stop_sample = Some(0);
             }
         } else {
             stop_sample = Some(0);
         }
         if let Some(stop_sample) = stop_sample {
-            let output = ctx.outputs.get_channel_mut(0);
+            let mut outputs = ctx.outputs.split_mut();
+            let output = outputs.next().unwrap();
             for out in output[stop_sample..].iter_mut() {
                 *out = 0.;
             }

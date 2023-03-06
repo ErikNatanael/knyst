@@ -1,9 +1,30 @@
 # Change Log
 
+## Current changes
+
+- Introduced a convenient and unified way of running knyst in single or multi threaded contexts through the `Controller` and `KnystCommands` (name inspired from Bevy). This was incorporated in the AudioBackend API for convenience.
+- Introduced the ability to schedule nodes to start with sample accuracy (see `Graph::push_at_time` and similar).
+- Introduces the ability to push a node while reusing a preexisting NodeAddress. This is useful mainly for the KnystCommands API to create the NodeAddress before the node is pushed.
+- Changed NodeAddress to be async compatible i.e. it can be created before the Gen/Graph has been pushed to a Graph. This required making it not Copy and methods taking a reference to it instead.
+- Renamed functions/methods for clarity.
+  - ParameterChange::relative_duration -> ParameterChange::duration_from_now
+  - Connection::clear_output_nodes -> Connection::clear_to_nodes
+  - Connection::clear_inputs -> Connection::clear_from_nodes
+  - Connection::clear_graph_outputs -> Connection::clear_to_graph_outputs
+  - Connection::clear_graph_inputs -> Connection::clear_from_graph_inputs
+- Removed the deprecated methods.
+- Internal changes to make scheduling changes more flexible and exact.
+- Move latency setting from GraphSettings to RunGraphSettings so that the latency is the same for every Graph.
+- Replace absolute sample scheduling by a type that can handle all common sample rates transparently, inspired by BillyDM's blogpost: https://billydm.github.io/blog/time-keeping/
+- Also implement a musical beat scheduling time primitive along the ideas of BillyDM expressed in that same blog post.
+- Barebones scheduling of events in musical time.
+- Streamlined examples to decrease maintenance time.
+
 ## 0.3.1
 
 - Fixed a data race bug potentially resulting in a segfault by replacing the generation counting synchronisation with atomic flags.
 - Improved tests for catching new data race bugs in the future.
+- Deprecated `Graph::push_graph` and `Graph::push_gen` methods
 
 ## 0.3.0
 

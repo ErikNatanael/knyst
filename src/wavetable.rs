@@ -2,7 +2,7 @@
 
 use slotmap::new_key_type;
 
-use crate::{Resources, Sample};
+use crate::{IdOrKey, Resources, Sample, WavetableId};
 
 use crate::graph::{Gen, GenContext, GenState};
 // use std::f64::consts::PI;
@@ -304,6 +304,7 @@ pub struct WavetableOscillatorOwned {
     phase: Phase,
     wavetable: Wavetable,
     amp: Sample,
+    freq_to_phase_inc: f64,
 }
 
 impl WavetableOscillatorOwned {
@@ -314,6 +315,7 @@ impl WavetableOscillatorOwned {
             phase: Phase(0),
             wavetable,
             amp: 1.0,
+            freq_to_phase_inc: 0.0, // set to a real value in init
         }
     }
     #[must_use]
@@ -323,8 +325,8 @@ impl WavetableOscillatorOwned {
         osc.step = ((freq / sample_rate) * TABLE_SIZE as f32) as u32;
         osc
     }
-    pub fn set_freq(&mut self, freq: Sample, resources: &mut Resources) {
-        self.step = (freq as f64 * resources.freq_to_phase_inc) as u32;
+    pub fn set_freq(&mut self, freq: Sample, _resources: &mut Resources) {
+        self.step = (freq as f64 * self.freq_to_phase_inc) as u32;
     }
     pub fn set_amp(&mut self, amp: Sample) {
         self.amp = amp;
@@ -346,7 +348,7 @@ impl WavetableOscillatorOwned {
 
 impl Gen for WavetableOscillatorOwned {
     fn process(&mut self, ctx: GenContext, resources: &mut Resources) -> GenState {
-        let output = ctx.outputs.get_channel_mut(0);
+        let output = ctx.outputs.split_mut().next().unwrap();
         let freq_buf = ctx.inputs.get_channel(0);
         for (&freq, o) in freq_buf.iter().zip(output.iter_mut()) {
             self.set_freq(freq, resources);
@@ -365,6 +367,10 @@ impl Gen for WavetableOscillatorOwned {
     }
     fn num_inputs(&self) -> usize {
         1
+    }
+    fn init(&mut self, _block_size: usize, sample_rate: Sample) {
+        self.freq_to_phase_inc =
+            TABLE_SIZE as f64 * FRACTIONAL_PART as f64 * (1.0 / sample_rate as f64);
     }
 }
 
@@ -432,23 +438,25 @@ impl PhaseF32 {
 pub struct Oscillator {
     step: u32,
     phase: Phase,
-    wavetable: WavetableKey,
+    wavetable: IdOrKey<WavetableId, WavetableKey>,
     amp: Sample,
+    freq_to_phase_inc: f64,
 }
 
 impl Oscillator {
     #[must_use]
-    pub fn new(wavetable: WavetableKey) -> Self {
+    pub fn new(wavetable: IdOrKey<WavetableId, WavetableKey>) -> Self {
         Oscillator {
             step: 0,
             phase: Phase(0),
             wavetable,
             amp: 1.0,
+            freq_to_phase_inc: 0., // set to a real value in init
         }
     }
     #[must_use]
     pub fn from_freq(
-        wavetable: WavetableKey,
+        wavetable: IdOrKey<WavetableId, WavetableKey>,
         sample_rate: Sample,
         freq: Sample,
         amp: Sample,
@@ -459,8 +467,8 @@ impl Oscillator {
         osc
     }
     #[inline]
-    pub fn set_freq(&mut self, freq: Sample, resources: &mut Resources) {
-        self.step = (freq as f64 * resources.freq_to_phase_inc) as u32;
+    pub fn set_freq(&mut self, freq: Sample) {
+        self.step = (freq as f64 * self.freq_to_phase_inc) as u32;
     }
     #[inline]
     pub fn set_amp(&mut self, amp: Sample) {
@@ -470,27 +478,32 @@ impl Oscillator {
     pub fn reset_phase(&mut self) {
         self.phase.0 = 0;
     }
-    #[inline]
-    #[must_use]
-    fn next(&mut self, resources: &mut Resources) -> Sample {
-        // Use the phase to index into the wavetable
-        let sample = if let Some(wt) = resources.wavetables.get(self.wavetable) {
-            wt.get(self.phase) * self.amp
-        } else {
-            eprintln!("Wavetable doesn't exist: {:?}", self.wavetable);
-            0.0
-        };
-        self.phase.increase(self.step);
-        sample
-    }
 }
 impl Gen for Oscillator {
     fn process(&mut self, ctx: GenContext, resources: &mut Resources) -> GenState {
-        let output = ctx.outputs.get_channel_mut(0);
+        let output = ctx.outputs.split_mut().next().unwrap();
         let freq_buf = ctx.inputs.get_channel(0);
-        for (&freq, o) in freq_buf.iter().zip(output.iter_mut()) {
-            self.set_freq(freq, resources);
-            *o = self.next(resources);
+        let wt_key = match self.wavetable {
+            IdOrKey::Id(id) => match resources.wavetable_key_from_id(id) {
+                Some(key) => {
+                    self.wavetable = IdOrKey::Key(key);
+                    key
+                }
+                None => {
+                    output.fill(0.0);
+                    return GenState::Continue;
+                }
+            },
+            IdOrKey::Key(key) => key,
+        };
+        if let Some(wt) = resources.wavetables.get(wt_key) {
+            for (&freq, o) in freq_buf.iter().zip(output.iter_mut()) {
+                self.set_freq(freq);
+                self.phase.increase(self.step);
+                *o = wt.get(self.phase) * self.amp
+            }
+        } else {
+            output.fill(0.0);
         }
         GenState::Continue
     }
@@ -505,5 +518,9 @@ impl Gen for Oscillator {
     }
     fn num_inputs(&self) -> usize {
         1
+    }
+    fn init(&mut self, _block_size: usize, sample_rate: Sample) {
+        self.freq_to_phase_inc =
+            TABLE_SIZE as f64 * FRACTIONAL_PART as f64 * (1.0 / sample_rate as f64);
     }
 }
