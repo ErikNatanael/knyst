@@ -356,11 +356,7 @@ fn fundsp_reverb_gen(sample_rate: f64, mix: f32) -> ClosureGen {
     use fundsp::audiounit::AudioUnit32;
     let mut fundsp_graph = {
         use fundsp::hacker32::*;
-        //let mut c = c * 0.1;
-        // let mut c = multipass() & mix * reverb_stereo(10.0, 5.0);
-        // let mut c = pass() & feedback(delay(1.0) >> lowpass_hz(1000.0, 1.0));
-        // let mut c = zero();
-        let mut c = triangle();
+        let mut c = multipass() & mix * reverb_stereo(10.0, 5.0);
         c.reset(Some(sample_rate));
         c
     };
