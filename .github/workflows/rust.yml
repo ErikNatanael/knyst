@@ -16,7 +16,7 @@ jobs:
 
     steps:
     - name: Install dependencies
-      run: sudo apt-get install libasound2-dev libjack-jackd2-dev libjack-jackd2-0 librust-atk-dev libgtk-3-dev
+      run: sudo apt-get install libasound2-dev libjack-jackd2-dev libjack-jackd2-0 librust-atk-dev libgtk-3-dev librust-gdk-dev
     - uses: actions/checkout@v3
     
     - name: Configure sccache
