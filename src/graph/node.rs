@@ -91,7 +91,7 @@ impl Node {
         };
         self.block_size = block_size;
         unsafe {
-            (*self.gen).init(sample_rate);
+            (*self.gen).init(block_size, sample_rate);
         }
     }
     /// Use the embedded Gen to generate values that are placed in the

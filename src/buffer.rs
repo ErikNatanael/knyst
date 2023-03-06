@@ -376,8 +376,6 @@ impl Gen for BufferReader {
         1
     }
 
-    fn init(&mut self, _sample_rate: crate::graph::Sample) {}
-
     fn input_desc(&self, _input: usize) -> &'static str {
         ""
     }

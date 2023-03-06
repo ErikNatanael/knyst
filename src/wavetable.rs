@@ -368,7 +368,7 @@ impl Gen for WavetableOscillatorOwned {
     fn num_inputs(&self) -> usize {
         1
     }
-    fn init(&mut self, sample_rate: Sample) {
+    fn init(&mut self, _block_size: usize, sample_rate: Sample) {
         self.freq_to_phase_inc =
             TABLE_SIZE as f64 * FRACTIONAL_PART as f64 * (1.0 / sample_rate as f64);
     }
@@ -519,7 +519,7 @@ impl Gen for Oscillator {
     fn num_inputs(&self) -> usize {
         1
     }
-    fn init(&mut self, sample_rate: Sample) {
+    fn init(&mut self, _block_size: usize, sample_rate: Sample) {
         self.freq_to_phase_inc =
             TABLE_SIZE as f64 * FRACTIONAL_PART as f64 * (1.0 / sample_rate as f64);
     }

@@ -539,7 +539,7 @@ pub trait Gen {
     fn num_outputs(&self) -> usize;
     /// Initialize buffers etc.
     /// Default: noop
-    fn init(&mut self, _sample_rate: Sample) {}
+    fn init(&mut self, _block_size: usize, _sample_rate: Sample) {}
     /// Return a label for a given input channel index. This sets the label in the [`Connection`] API.
     fn input_desc(&self, _input: usize) -> &'static str {
         ""
@@ -663,8 +663,6 @@ impl Gen for ClosureGen {
     fn num_outputs(&self) -> usize {
         self.outputs.len()
     }
-
-    fn init(&mut self, _sample_rate: Sample) {}
 
     fn input_desc(&self, input: usize) -> &'static str {
         self.inputs.get(input).unwrap_or(&"")
@@ -3063,7 +3061,7 @@ impl Gen for Ramp {
         1
     }
 
-    fn init(&mut self, sample_rate: Sample) {
+    fn init(&mut self, _block_size: usize, sample_rate: Sample) {
         self.sample_rate = sample_rate;
     }
 

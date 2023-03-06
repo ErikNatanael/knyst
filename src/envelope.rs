@@ -435,14 +435,14 @@ impl Gen for EnvelopeGen {
     }
 
     fn num_inputs(&self) -> usize {
-        1
+        2
     }
 
     fn num_outputs(&self) -> usize {
         1
     }
 
-    fn init(&mut self, sample_rate: Sample) {
+    fn init(&mut self, _block_size: usize, sample_rate: Sample) {
         if self.sample_rate != sample_rate {
             self.points = self
                 .points_secs
