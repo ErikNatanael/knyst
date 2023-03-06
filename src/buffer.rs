@@ -414,9 +414,13 @@ impl BufferReaderMulti {
             rate,
             num_channels: 1,
             finished: false,
-            looping: true,
+            looping: false,
             stop_action,
         }
+    }
+    pub fn looping(mut self, looping: bool) -> Self {
+        self.looping = looping;
+        self
     }
     pub fn channels(mut self, num_channels: usize) -> Self {
         self.num_channels = num_channels;
