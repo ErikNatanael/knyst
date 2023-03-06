@@ -19,6 +19,7 @@
 - Also implement a musical beat scheduling time primitive along the ideas of BillyDM expressed in that same blog post.
 - Barebones scheduling of events in musical time.
 - Streamlined examples to decrease maintenance time.
+- Enable assertions for no allocation on the audio thread when compiling in debug mode.
 
 ## 0.3.1
 
