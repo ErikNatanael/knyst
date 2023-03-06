@@ -160,6 +160,20 @@ fn main() -> Result<()> {
 
     // Use asynchronous stdin
     let mut stdin = termion::async_stdin().keys();
+    let lines = [
+        "Play your keyboard",
+        "a-ä and w-å: trigger a new note on the monophonic synth",
+        "q: quit",
+        "m: load and play sound file",
+        "n: toggle reverb",
+        "b: replace wavetable for harmony notes",
+        "v: trigger a little melody using async",
+    ];
+    write!(stdout, "{}", termion::clear::All,).unwrap();
+    for (y, line) in lines.into_iter().enumerate() {
+        write!(stdout, "{}{line}", termion::cursor::Goto(1, y as u16 + 1)).unwrap();
+    }
+    stdout.lock().flush().unwrap();
     loop {
         // Read input (if any)
         let input = stdin.next();
@@ -171,19 +185,6 @@ fn main() -> Result<()> {
                 termion::event::Key::Char('q') => break,
                 // Else print the pressed key
                 termion::event::Key::Char(c) => {
-                    let lines = [
-                        "Play your keyboard",
-                        "q: quit",
-                        "m: load and play sound file",
-                        "n: toggle reverb",
-                        "b: replace wavetable for harmony notes",
-                        "v: trigger a little melody using async",
-                    ];
-                    write!(stdout, "{}", termion::clear::All,).unwrap();
-                    for (y, line) in lines.into_iter().enumerate() {
-                        write!(stdout, "{}{line}", termion::cursor::Goto(1, y as u16 + 1)).unwrap();
-                    }
-
                     if !handle_special_keys(c, k.clone(), &mut state) {
                         // Change the frequency of the nodes based on what key was pressed
                         let new_freq = character_to_hz(c);
@@ -197,20 +198,16 @@ fn main() -> Result<()> {
                         // Trigger the envelope to restart
                         let trig = k.push(OnceTrig::new());
                         k.connect(trig.to(&state.lead_env_address).to_label("restart_trig"));
+                        write!(
+                            stdout,
+                            "{}Triggered note with frequency {new_freq}",
+                            termion::cursor::Goto(1, lines.len() as u16 + 2)
+                        )
+                        .unwrap();
+                        stdout.lock().flush().unwrap();
                     }
-
-                    stdout.lock().flush().unwrap();
                 }
-                _ => {
-                    write!(
-                        stdout,
-                        "{}{}Play your keyboard, q: quit, key pressed: {:?}",
-                        termion::clear::All,
-                        termion::cursor::Goto(1, 1),
-                        key
-                    )
-                    .unwrap();
-                }
+                _ => (),
             }
         }
         // Short sleep time to minimise latency

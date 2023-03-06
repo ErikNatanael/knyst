@@ -74,23 +74,8 @@ path = "examples/cpal_example.rs"
 required-features = ["cpal"]
 
 [[example]]
-name = "async_knyst"
-path = "examples/async_knyst.rs"
-required-features = ["cpal"]
-
-[[example]]
-name = "sine_piece"
-path = "examples/sine_piece.rs"
-required-features = ["cpal"]
-
-[[example]]
-name = "fundsp_encapsulation"
-path = "examples/fundsp_encapsulation.rs"
-required-features = ["cpal"]
-
-[[example]]
-name = "sequences"
-path = "examples/sequences.rs"
+name = "interactive"
+path = "examples/interactive.rs"
 required-features = ["cpal"]
 
 [[example]]
