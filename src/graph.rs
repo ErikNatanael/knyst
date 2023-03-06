@@ -926,6 +926,19 @@ impl Graph {
     pub fn num_outputs(&self) -> usize {
         self.num_outputs
     }
+    /// Return a [`GraphSettings`] matching this [`Graph`]
+    pub fn graph_settings(&self) -> GraphSettings {
+        GraphSettings {
+            name: self.name.clone(),
+            num_inputs: self.num_inputs,
+            max_node_inputs: self.max_node_inputs,
+            num_outputs: self.num_outputs,
+            block_size: self.block_size,
+            num_nodes: self.get_nodes().capacity(),
+            sample_rate: self.sample_rate,
+            ring_buffer_size: self.ring_buffer_size,
+        }
+    }
     /// Returns a number including both active nodes and nodes waiting to be safely freed
     pub fn num_stored_nodes(&self) -> usize {
         self.get_nodes().len()

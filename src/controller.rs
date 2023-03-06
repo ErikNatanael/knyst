@@ -4,7 +4,7 @@ use crate::{
     buffer::Buffer,
     graph::{
         connection::ConnectionError, Connection, GenOrGraph, GenOrGraphEnum, Graph, GraphId,
-        NodeAddress, ParameterChange,
+        GraphSettings, NodeAddress, ParameterChange,
     },
     scheduling::MusicalTimeMap,
     wavetable::Wavetable,
@@ -37,16 +37,17 @@ impl Command {}
 ///
 /// This can safely be cloned and sent to a different thread for use.
 ///
-// TODO: Any errors need a mechanism to be sent back, mostly for printing and
-// debugging.
-//
 // TODO: What's the best way of referring to a graph? GraphId is unique, but not
 // always the handiest. It would be nice to be able to choose to refer to Graphs
 // by an identifier e.g. name. In Bevy holding on to GraphIds is easy.
 #[derive(Clone)]
 pub struct KnystCommands {
+    /// Sends Commands to the Controller.
     sender: crossbeam_channel::Sender<Command>,
+    /// As pushing to the top level Graph is the default we store the GraphId to that Graph.
     top_level_graph_id: GraphId,
+    /// Make the top level graph settings available so that creating a matching sub graph is easy.
+    top_level_graph_settings: GraphSettings,
 }
 
 impl KnystCommands {
@@ -142,6 +143,12 @@ impl KnystCommands {
         self.sender
             .send(Command::ChangeMusicalTimeMap(Box::new(change_fn)))
             .unwrap();
+    }
+    /// Return the [`GraphSettings`] of the top level graph. This means you
+    /// don't have to manually keep track of matching sample rate and block size
+    /// for example.
+    pub fn default_graph_settings(&self) -> GraphSettings {
+        self.top_level_graph_settings.clone()
     }
 }
 
@@ -358,12 +365,14 @@ impl Controller {
         KnystCommands {
             sender: self.command_sender.clone(),
             top_level_graph_id: self.top_level_graph.id(),
+            top_level_graph_settings: self.top_level_graph.graph_settings(),
         }
     }
 
     /// Consumes the [`Controller`] and moves it to a new thread where it will `run` in a loop.
     pub fn start_on_new_thread(self) -> KnystCommands {
         let top_level_graph_id = self.top_level_graph.id();
+        let top_level_graph_settings = self.top_level_graph.graph_settings();
         let mut controller = self;
         let sender = controller.command_sender.clone();
 
@@ -375,6 +384,7 @@ impl Controller {
         KnystCommands {
             sender,
             top_level_graph_id,
+            top_level_graph_settings,
         }
     }
 }
