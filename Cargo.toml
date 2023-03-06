@@ -25,8 +25,6 @@ thiserror = "1.0"
 # For real time safe communication between threads
 rtrb = "0.2"
 fastrand = "1.4.1"
-# Scheduling primitives from meadowlark
-meadowlark-core-types = { git = "https://github.com/MeadowlarkDAW/meadowlark-core-types" }
 # Fast approximation of common float math. Probably under BSD-3.
 fastapprox = "0.3"
 # Downcast used to have any user data in the Resources struct

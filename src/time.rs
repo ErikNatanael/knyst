@@ -1,6 +1,7 @@
 use std::{ops, time::Duration};
 
 pub static SUBSAMPLE_TESIMALS_PER_SECOND: u32 = 282_240_000;
+pub static SUBBEAT_TESIMALS_PER_BEAT: u32 = 1_476_034_560;
 
 /// A description of time well suited for sample based wall clock time with
 /// lossless converstion between all common sample rates.
@@ -69,7 +70,7 @@ impl Superseconds {
     }
 
     /// Returns self - other if self is bigger than or equal to other, otherwise a SubsampleTime at 0
-    pub fn checked_sub(self, rhs: Superseconds) -> Option<Self> {
+    pub fn checked_sub(self, rhs: Self) -> Option<Self> {
         if self < rhs {
             None
         } else {
@@ -153,6 +154,135 @@ impl ops::Mul<Superseconds> for Superseconds {
 }
 impl ops::MulAssign<Superseconds> for Superseconds {
     fn mul_assign(&mut self, rhs: Superseconds) {
+        *self = *self * rhs;
+    }
+}
+
+/// A description of time well suited for musical beat time with
+/// lossless converstion between all common subdivisions of beats.
+///
+/// "tesimal" is a made up word to refer to a very short amount of time.
+///
+/// Inspired by BillyDM's blog post https://billydm.github.io/blog/time-keeping/
+#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
+#[cfg_attr(feature = "serde-derive", derive(serde::Serialize, serde::Deserialize))]
+pub struct Superbeats {
+    beats: u32,
+    beat_tesimals: u32,
+}
+impl Superbeats {
+    pub fn new(beats: u32, beat_tesimals: u32) -> Self {
+        Self {
+            beat_tesimals,
+            beats,
+        }
+    }
+    pub fn from_beats(beats: u32) -> Self {
+        Self::new(beats, 0)
+    }
+    /// Construct from a number of fractional beats. This will be exact for any
+    /// fraction that [`SUBBEAT_TESIMALS_PER_BEAT`] is evenly divisible by
+    /// including 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14, 15, 16, 18, 20, 24, 32,
+    /// 64, 128, 256, 512, and 1920.
+    ///
+    /// Fractional_beats must be in the range [0, FRACTION-1]
+    pub fn from_fractional_beats<const FRACTION: u32>(beats: u32, fractional_beats: u32) -> Self {
+        assert!(fractional_beats < FRACTION);
+        let tesimals = (SUBBEAT_TESIMALS_PER_BEAT / FRACTION) * fractional_beats;
+        Self::new(beats, tesimals)
+    }
+    pub fn from_beats_f32(beats: f32) -> Self {
+        let fract = beats.fract();
+        Self {
+            beats: beats as u32,
+            beat_tesimals: (fract * SUBBEAT_TESIMALS_PER_BEAT as f32) as u32,
+        }
+    }
+    pub fn from_beats_f64(beats: f64) -> Self {
+        let fract = beats.fract();
+        Self {
+            beats: beats as u32,
+            beat_tesimals: (fract * SUBBEAT_TESIMALS_PER_BEAT as f64) as u32,
+        }
+    }
+    pub fn as_beats_f32(&self) -> f32 {
+        self.beats as f32 + (self.beat_tesimals as f32 / SUBBEAT_TESIMALS_PER_BEAT as f32)
+    }
+    pub fn as_beats_f64(&self) -> f64 {
+        self.beats as f64 + (self.beat_tesimals as f64 / SUBBEAT_TESIMALS_PER_BEAT as f64)
+    }
+    pub fn checked_sub(&self, v: Self) -> Option<Self> {
+        if self < &v {
+            None
+        } else {
+            if self.beat_tesimals < v.beat_tesimals {
+                Some(Self {
+                    beats: self.beats - v.beats - 1,
+                    beat_tesimals: SUBBEAT_TESIMALS_PER_BEAT
+                        - (v.beat_tesimals - self.beat_tesimals),
+                })
+            } else {
+                Some(Self {
+                    beats: self.beats - v.beats,
+                    beat_tesimals: self.beat_tesimals - v.beat_tesimals,
+                })
+            }
+        }
+    }
+}
+impl PartialOrd for Superbeats {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        if self.beats == other.beats {
+            self.beat_tesimals.partial_cmp(&other.beat_tesimals)
+        } else {
+            self.beats.partial_cmp(&other.beats)
+        }
+    }
+}
+impl Ord for Superbeats {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        if self.beats == other.beats {
+            self.beat_tesimals.cmp(&other.beat_tesimals)
+        } else {
+            self.beats.cmp(&other.beats)
+        }
+    }
+}
+impl ops::Add<Superbeats> for Superbeats {
+    type Output = Self;
+
+    fn add(self, rhs: Superbeats) -> Self::Output {
+        let mut beats = self.beats + rhs.beats;
+        let mut beat_tesimals = self.beat_tesimals + rhs.beat_tesimals;
+        while beat_tesimals > SUBBEAT_TESIMALS_PER_BEAT {
+            beats += 1;
+            beat_tesimals -= SUBBEAT_TESIMALS_PER_BEAT;
+        }
+
+        Superbeats::new(beats, beat_tesimals)
+    }
+}
+impl ops::AddAssign<Superbeats> for Superbeats {
+    fn add_assign(&mut self, rhs: Superbeats) {
+        let result = *self + rhs;
+        *self = result;
+    }
+}
+impl ops::Mul<Superbeats> for Superbeats {
+    type Output = Self;
+
+    fn mul(self, rhs: Superbeats) -> Self::Output {
+        let mut beats = self.beats * rhs.beats;
+        let mut beat_tesimals = self.beat_tesimals as u64 * rhs.beat_tesimals as u64;
+        if beat_tesimals > SUBBEAT_TESIMALS_PER_BEAT as u64 {
+            beats += (beat_tesimals / SUBBEAT_TESIMALS_PER_BEAT as u64) as u32;
+            beat_tesimals %= SUBBEAT_TESIMALS_PER_BEAT as u64;
+        }
+        Superbeats::new(beats, beat_tesimals as u32)
+    }
+}
+impl ops::MulAssign<Superbeats> for Superbeats {
+    fn mul_assign(&mut self, rhs: Superbeats) {
         *self = *self * rhs;
     }
 }

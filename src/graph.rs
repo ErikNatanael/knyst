@@ -41,8 +41,8 @@ use node::Node;
 pub use node::NodeBufferRef;
 pub use run_graph::{RunGraph, RunGraphSettings};
 
-use crate::scheduling::{MusicalTime, MusicalTimeMap};
-use crate::time::Superseconds;
+use crate::scheduling::MusicalTimeMap;
+use crate::time::{Superbeats, Superseconds};
 use rtrb::RingBuffer;
 use slotmap::{new_key_type, SecondaryMap, SlotMap};
 
@@ -282,7 +282,7 @@ impl ParameterChange {
 
 #[derive(Clone, Copy)]
 pub enum TimeKind {
-    MusicalTime(MusicalTime),
+    Beats(Superbeats),
     DurationFromNow(Duration),
     Superseconds(Superseconds),
     Immediately,
@@ -2754,7 +2754,7 @@ impl Scheduler {
                             kind: change_kind,
                         });
                     }
-                    TimeKind::MusicalTime(mt) => {
+                    TimeKind::Beats(mt) => {
                         // TODO: Remove unwrap, return a Result
                         let mtm = musical_time_map.read().unwrap();
                         let duration_from_start =
