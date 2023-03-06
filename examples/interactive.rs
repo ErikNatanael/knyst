@@ -352,6 +352,9 @@ fn insert_reverb(
 }
 
 /// Create a Gen containing a fundsp graph
+///
+/// Note: This currently allocates on the audio thread, the creator of fundsp is
+/// working on a solution
 fn fundsp_reverb_gen(sample_rate: f64, mix: f32) -> ClosureGen {
     use fundsp::audiounit::AudioUnit32;
     let mut fundsp_graph = {
