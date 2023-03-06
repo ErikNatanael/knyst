@@ -867,3 +867,72 @@ fn start_nodes_with_sample_precision() {
         }
     }
 }
+
+#[test]
+fn beat_scheduling() {
+    const SR: u64 = 16;
+    const BLOCK_SIZE: usize = SR as usize;
+    let graph_settings = GraphSettings {
+        block_size: BLOCK_SIZE,
+        sample_rate: SR as f32,
+        num_outputs: 2,
+        ..Default::default()
+    };
+    let mut graph = Graph::new(graph_settings);
+    let node = graph.push(OneGen {});
+    graph.connect(node.to_graph_out()).unwrap();
+    let (mut run_graph, _, _) = RunGraph::new(
+        &mut graph,
+        Resources::new(ResourcesSettings::default()),
+        RunGraphSettings {
+            scheduling_latency: Duration::new(0, 0),
+        },
+    )
+    .unwrap();
+    graph.change_musical_time_map(|mtm| {
+        mtm.insert(
+            crate::scheduling::TempoChange::NewTempo { bpm: 120.0 },
+            Superbeats::from_beats(1),
+        );
+    });
+    graph
+        .schedule_change(ParameterChange::beats(
+            node.clone(),
+            1.0,
+            Superbeats::from_fractional_beats::<4>(0, 1),
+        ))
+        .unwrap();
+    graph
+        .schedule_change(ParameterChange::beats(
+            node.clone(),
+            2.0,
+            Superbeats::from_fractional_beats::<4>(0, 2),
+        ))
+        .unwrap();
+    graph
+        .schedule_change(ParameterChange::beats(
+            node.clone(),
+            3.0,
+            Superbeats::from_fractional_beats::<4>(1, 0),
+        ))
+        .unwrap();
+    graph
+        .schedule_change(ParameterChange::beats(
+            node.clone(),
+            4.0,
+            Superbeats::from_fractional_beats::<2>(1, 1),
+        ))
+        .unwrap();
+    graph.update();
+    run_graph.process_block();
+    let out = run_graph.graph_output_buffers().get_channel(0);
+    assert_eq!(out[0], 1.0);
+    assert_eq!(out[(SR / 4) as usize], 2.0);
+    assert_eq!(out[(SR / 2) as usize], 3.0);
+    graph.update();
+    run_graph.process_block();
+    let out = run_graph.graph_output_buffers().get_channel(0);
+    assert_eq!(out[0], 4.0);
+    // Tempo is twice as fast so half as many samples to get to the half beat mark.
+    assert_eq!(out[SR as usize / 4], 5.0);
+}

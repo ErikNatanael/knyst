@@ -235,6 +235,15 @@ pub struct ParameterChange {
 }
 
 impl ParameterChange {
+    pub fn beats(node: NodeAddress, value: Sample, beats: Superbeats) -> Self {
+        Self {
+            node,
+            value,
+            time: TimeKind::Beats(beats),
+            input_index: None,
+            input_label: None,
+        }
+    }
     pub fn superseconds(node: NodeAddress, value: Sample, superseconds: Superseconds) -> Self {
         Self {
             node,
@@ -1424,6 +1433,7 @@ impl Graph {
         if let Some(ggc) = &mut self.graph_gen_communicator {
             ggc.scheduler.start(
                 self.sample_rate,
+                self.block_size,
                 latency,
                 start_ts,
                 musical_time_map.clone(),
@@ -2696,6 +2706,7 @@ impl Scheduler {
     fn start(
         &mut self,
         sample_rate: Sample,
+        block_size: usize,
         latency: Duration,
         audio_thread_start_ts: Instant,
         musical_time_map: Arc<RwLock<MusicalTimeMap>>,
@@ -2706,10 +2717,16 @@ impl Scheduler {
             } => {
                 // "Take" the scheduling queue out, replacing it with an empty vec which should be cheap
                 let scheduling_queue = mem::replace(scheduling_queue, vec![]);
+                // How far into the future messages are sent to the GraphGen.
+                // This needs to be at least 2 * block_size since the timestamp
+                // this is compared to is loaded atomically from the GraphGen
+                // and there might be a race condition if less than 2 blocks of
+                // events are sent.
+                let max_duration_to_send = ((sample_rate * 0.5) as u64).max(block_size as u64 * 2);
                 let mut new_scheduler = Scheduler::Running {
                     start_ts: audio_thread_start_ts,
                     sample_rate: sample_rate as u64,
-                    max_duration_to_send: (sample_rate * 0.5) as u64,
+                    max_duration_to_send,
                     scheduling_queue: vec![],
                     latency_in_samples: (latency.as_secs_f64() * sample_rate as f64),
                     musical_time_map,
@@ -2761,6 +2778,8 @@ impl Scheduler {
                             Duration::from_secs_f64(mtm.musical_time_to_secs_f64(mt));
                         let timestamp = ((duration_from_start).as_secs_f64() * *sample_rate as f64
                             + *latency) as u64;
+                        dbg!(duration_from_start);
+                        dbg!(timestamp);
                         scheduling_queue.push(ScheduledChange {
                             timestamp,
                             key,
