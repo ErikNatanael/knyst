@@ -52,6 +52,15 @@ use slotmap::{SecondaryMap, SlotMap};
 use std::{collections::HashMap, hash::Hash, sync::atomic::AtomicU64};
 use wavetable::{Wavetable, WavetableKey};
 
+// assert_no_alloc to make sure we are not allocating on the audio thread. The
+// assertion is put in AudioBackend.
+#[allow(unused_imports)]
+use assert_no_alloc::*;
+
+#[cfg(debug_assertions)] // required when disable_release is set (default)
+#[global_allocator]
+static A: AllocDisabler = AllocDisabler;
+
 pub mod audio_backend;
 pub mod buffer;
 pub mod controller;
