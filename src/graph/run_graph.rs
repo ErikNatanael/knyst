@@ -42,7 +42,7 @@ impl RunGraph {
         ),
         RunGraphError,
     > {
-        match graph.split_and_create_node() {
+        match graph.split_and_create_top_level_node() {
             Ok(graph_node) => {
                 let input_buffer_length = graph_node.num_inputs() * graph_node.block_size;
                 let input_buffer_ptr = if input_buffer_length != 0 {

@@ -12,14 +12,18 @@ use slotmap::SlotMap;
 use crate::Resources;
 
 use super::{
-    node::Node, Gen, GenContext, GenState, NodeKey, OwnedRawBuffer, Sample, ScheduleReceiver,
-    TaskData,
+    node::Node, Gen, GenContext, GenState, NodeKey, Oversampling, OwnedRawBuffer, Sample,
+    ScheduleReceiver, TaskData,
 };
 
 pub(super) fn make_graph_gen(
     sample_rate: f32,
+    parent_sample_rate: f32,
     current_task_data: TaskData,
     block_size: usize,
+    parent_block_size: usize,
+    oversampling: Oversampling,
+    parent_oversampling: Oversampling,
     num_outputs: usize,
     num_inputs: usize,
     timestamp: Arc<AtomicU64>,
@@ -31,9 +35,9 @@ pub(super) fn make_graph_gen(
     arc_inputs_buffers_ptr: Arc<OwnedRawBuffer>,
 ) -> Box<dyn Gen + Send> {
     let graph_gen = GraphGen {
-        sample_rate: sample_rate,
+        sample_rate: sample_rate * oversampling.as_usize() as f32,
         current_task_data,
-        block_size,
+        block_size: block_size * oversampling.as_usize(),
         num_outputs,
         num_inputs,
         graph_state: GenState::Continue,
@@ -46,7 +50,74 @@ pub(super) fn make_graph_gen(
         new_task_data_consumer,
         _arc_inputs_buffers_ptr: arc_inputs_buffers_ptr,
     };
+    // TODO:
+    // If the graph is the same as the parent Graph, do no conversion.
+    // Otherwise, first convert oversampling to that of the parent if necessary.
+    // Then convert sample rate further if necessary.
+    // Then convert block size if necessary.
+    if parent_block_size != block_size {
+        // TODO: If there is oversampling this does not hold because the
+        if parent_block_size < block_size && num_inputs > 0 {
+            panic!("An inner Graph cannot have inputs if it has a larger block size since the inputs will not be sufficiently filled.");
+        }
+    }
     Box::new(graph_gen)
+}
+
+/// Contains a GraphGen which it will run inside itself, converting block size
+/// and sample rate to that of the parent Graph of this Graph.
+///
+/// Note that if the inner Graph has a larger block size it cannot have any
+/// inputs since these inputs would only be half filled.
+pub(super) struct GraphBlockConverterGen {
+    graph_gen_node: Node,
+    source_block_size: usize,
+    parent_block_size: usize,
+    // This buffer is only needed if the GraphGen has a larger block_size than
+    // the parent. It will in that case use this buffer instead of that of the
+    // Node.
+    block_buffer: Vec<Vec<Sample>>,
+    // TODO: Input buffer needs buffering because it gets passed to the Node as an NodeBufferRef
+}
+
+impl GraphBlockConverterGen {
+    pub fn new(graph_gen_node: Node, parent_block_size: usize, block_size: usize) -> Self {
+        let block_buffer = vec![];
+        Self {
+            graph_gen_node,
+            source_block_size: block_size,
+            parent_block_size,
+            block_buffer,
+        }
+    }
+}
+
+impl Gen for GraphBlockConverterGen {
+    fn process(&mut self, ctx: GenContext, resources: &mut Resources) -> GenState {
+        if self.source_block_size < self.parent_block_size {
+            // We need to run our inner graph_gen many times to fill the outer block.
+            let num_batches = self.parent_block_size / self.source_block_size;
+            // TODO: Have an inner Node and an outer Node to
+            for i in 0..num_batches {
+                // let ctx = GenContext {
+                //     inputs: input_buffers,
+                //     outputs: &mut outputs,
+                //     sample_rate,
+                // };
+                // unsafe { (*self.gen).process(ctx, resources) }
+                todo!()
+            }
+        }
+        todo!()
+    }
+
+    fn num_inputs(&self) -> usize {
+        todo!()
+    }
+
+    fn num_outputs(&self) -> usize {
+        todo!()
+    }
 }
 
 /// This gets placed as a dyn Gen in a Node in a Graph. It's how the Graph gets
@@ -60,7 +131,9 @@ pub(super) fn make_graph_gen(
 /// mustn't use the _arc_nodes field; it is only there to make sure the nodes
 /// don't get dropped.
 pub(super) struct GraphGen {
+    // block_size with oversampling applied
     block_size: usize,
+    // sample_rate with oversampling applied
     sample_rate: Sample,
     num_outputs: usize,
     num_inputs: usize,

@@ -463,10 +463,19 @@ impl std::fmt::Debug for GenOrGraphEnum {
 }
 
 impl GenOrGraphEnum {
-    fn components(self) -> (Option<Graph>, Box<dyn Gen + Send>) {
+    fn components(
+        self,
+        parent_graph_block_size: usize,
+        parent_graph_sample_rate: Sample,
+        parent_graph_oversampling: Oversampling,
+    ) -> (Option<Graph>, Box<dyn Gen + Send>) {
         match self {
             GenOrGraphEnum::Gen(boxed_gen) => (None, boxed_gen),
-            GenOrGraphEnum::Graph(graph) => graph.components(),
+            GenOrGraphEnum::Graph(graph) => graph.components(
+                parent_graph_block_size,
+                parent_graph_sample_rate,
+                parent_graph_oversampling,
+            ),
         }
     }
 }
@@ -494,12 +503,22 @@ impl<T: GenOrGraph> From<T> for GenOrGraphEnum {
 /// ToNode allows us to generically push either something that implements Gen or
 /// a Graph using the same API.
 pub trait GenOrGraph {
-    fn components(self) -> (Option<Graph>, Box<dyn Gen + Send>);
+    fn components(
+        self,
+        parent_graph_block_size: usize,
+        parent_graph_sample_rate: Sample,
+        parent_graph_oversampling: Oversampling,
+    ) -> (Option<Graph>, Box<dyn Gen + Send>);
     fn into_gen_or_graph_enum(self) -> GenOrGraphEnum;
 }
 
 impl<T: Gen + Send + 'static> GenOrGraph for T {
-    fn components(self) -> (Option<Graph>, Box<dyn Gen + Send>) {
+    fn components(
+        self,
+        parent_graph_block_size: usize,
+        parent_graph_sample_rate: Sample,
+        parent_graph_oversampling: Oversampling,
+    ) -> (Option<Graph>, Box<dyn Gen + Send>) {
         (None, Box::new(self))
     }
     fn into_gen_or_graph_enum(self) -> GenOrGraphEnum {
@@ -515,15 +534,26 @@ impl<T: Gen + Send + 'static> GenOrGraph for T {
 //     }
 // }
 impl GenOrGraph for Graph {
-    fn components(mut self) -> (Option<Graph>, Box<dyn Gen + Send>) {
-        if self.block_size() != self.block_size() {
+    fn components(
+        mut self,
+        parent_graph_block_size: usize,
+        parent_graph_sample_rate: Sample,
+        parent_graph_oversampling: Oversampling,
+    ) -> (Option<Graph>, Box<dyn Gen + Send>) {
+        if self.block_size() != parent_graph_block_size {
             panic!("Warning: You are pushing a graph with a different block size. The library is not currently equipped to handle this. In a future version this will work seamlesly.")
         }
-        if self.sample_rate != self.sample_rate {
+        if self.sample_rate != parent_graph_sample_rate {
             eprintln!("Warning: You are pushing a graph with a different sample rate. This is currently allowed, but expect bugs unless you deal with resampling manually.")
         }
         // Create the GraphGen from the new Graph
-        let gen = self.create_graph_gen().unwrap();
+        let gen = self
+            .create_graph_gen(
+                parent_graph_block_size,
+                parent_graph_sample_rate,
+                parent_graph_oversampling,
+            )
+            .unwrap();
         (Some(self), gen)
     }
     fn into_gen_or_graph_enum(self) -> GenOrGraphEnum {
@@ -715,6 +745,28 @@ new_key_type! {
     struct NodeKey;
 }
 
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+pub enum Oversampling {
+    X1,
+    X2,
+    X4,
+    X8,
+    X16,
+    X32,
+}
+impl Oversampling {
+    pub fn as_usize(&self) -> usize {
+        match self {
+            Oversampling::X1 => 1,
+            Oversampling::X2 => 2,
+            Oversampling::X4 => 4,
+            Oversampling::X8 => 8,
+            Oversampling::X16 => 16,
+            Oversampling::X32 => 32,
+        }
+    }
+}
+
 /// Pass to Graph::new to set the options the Graph is created with in an ergonomic and clear way.
 #[derive(Clone, Debug)]
 pub struct GraphSettings {
@@ -731,6 +783,8 @@ pub struct GraphSettings {
     pub num_nodes: usize,
     /// The sample rate this Graph uses for processing.
     pub sample_rate: Sample,
+    /// The oversampling factor
+    pub oversampling: Oversampling,
     /// The number of messages that can be sent through any of the ring buffers.
     /// Ring buffers are used pass information back and forth between the audio
     /// thread (GraphGen) and the Graph.
@@ -747,6 +801,7 @@ impl Default for GraphSettings {
             block_size: 64,
             num_nodes: 1024,
             sample_rate: 48000.,
+            oversampling: Oversampling::X1,
             ring_buffer_size: 100,
         }
     }
@@ -845,6 +900,7 @@ pub struct Graph {
     num_outputs: usize,
     block_size: usize,
     sample_rate: Sample,
+    oversampling: Oversampling,
     ring_buffer_size: usize,
     initiated: bool,
     /// Used for processing every node, index using \[input_num\]\[sample_in_block\]
@@ -871,6 +927,7 @@ impl Graph {
             block_size,
             num_nodes,
             sample_rate,
+            oversampling,
             ring_buffer_size,
         } = options;
         let inputs_buffers_ptr = Box::<[Sample]>::into_raw(
@@ -907,6 +964,7 @@ impl Graph {
             num_outputs,
             block_size,
             sample_rate,
+            oversampling,
             initiated: false,
             inputs_buffers_ptr,
             max_node_inputs,
@@ -918,9 +976,11 @@ impl Graph {
     /// Create a node that will run this graph. This will fail if a Node or Gen has already been created from the Graph since only one Gen is allowed to exist per Graph.
     ///
     /// Only use this for manually running the main Graph (the Graph containing all other Graphs). For adding a Graph to another Graph, use the push_graph() method.
-    fn split_and_create_node(&mut self) -> Result<Node, String> {
+    fn split_and_create_top_level_node(&mut self) -> Result<Node, String> {
         let block_size = self.block_size();
-        let graph_gen = self.create_graph_gen()?;
+        // For the top level node, we will set the parent to its own settings, but without oversampling.
+        let graph_gen =
+            self.create_graph_gen(self.block_size, self.sample_rate, Oversampling::X1)?;
         let mut node = Node::new("graph", graph_gen);
         node.init(block_size, self.sample_rate);
         self.recalculation_required = true;
@@ -943,6 +1003,7 @@ impl Graph {
             block_size: self.block_size,
             num_nodes: self.get_nodes().capacity(),
             sample_rate: self.sample_rate,
+            oversampling: self.oversampling,
             ring_buffer_size: self.ring_buffer_size,
         }
     }
@@ -1044,7 +1105,10 @@ impl Graph {
         start_time: Superseconds,
     ) -> Result<(), PushError> {
         if graph_id == self.id {
-            let (graph, gen) = to_node.into().components();
+            let (graph, gen) =
+                to_node
+                    .into()
+                    .components(self.block_size, self.sample_rate, self.oversampling);
             let mut node = Node::new(gen.name(), gen);
             let start_sample_time = start_time.to_samples(self.sample_rate as u64);
             node.start_at_sample(start_sample_time);
@@ -2461,7 +2525,12 @@ impl Graph {
     }
     /// Only one GraphGen can be created from a Graph, since otherwise nodes in
     /// the graph could be run multiple times.
-    fn create_graph_gen(&mut self) -> Result<Box<dyn Gen + Send>, String> {
+    fn create_graph_gen(
+        &mut self,
+        parent_graph_block_size: usize,
+        parent_graph_sample_rate: Sample,
+        parent_graph_oversampling: Oversampling,
+    ) -> Result<Box<dyn Gen + Send>, String> {
         if self.graph_gen_communicator.is_some() {
             return Err(
                 "create_graph_gen: GraphGenCommunicator already existed for this graph".to_owned(),
@@ -2501,8 +2570,12 @@ impl Graph {
 
         let graph_gen = graph_gen::make_graph_gen(
             self.sample_rate,
+            parent_graph_sample_rate,
             task_data,
             self.block_size,
+            parent_graph_block_size,
+            self.oversampling,
+            parent_graph_oversampling,
             self.num_outputs,
             self.num_inputs,
             graph_gen_communicator.timestamp.clone(),
