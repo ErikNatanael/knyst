@@ -186,6 +186,7 @@ fn main() -> Result<()> {
         "n: toggle reverb",
         "b: replace wavetable for harmony notes",
         "v: trigger a little melody using async",
+        "c: tries to allocate, in debug mode this will panic (will mess with the terminal)",
     ];
     write!(stdout, "{}", termion::clear::All,).unwrap();
     for (y, line) in lines.into_iter().enumerate() {
@@ -323,6 +324,28 @@ fn handle_special_keys(c: char, mut k: KnystCommands, state: &mut State) -> bool
                 .store(true, std::sync::atomic::Ordering::SeqCst);
             true
         }
+        'c' => {
+            // Here's an example of what you mustn't do. If you run this program
+            // in debug mode it should panic because of assert_no_alloc.
+            k.push(
+                gen(|ctx, resources| {
+                    let out = ctx.outputs.split_mut().next().unwrap();
+                    let new_allocation: Vec<Sample> = ctx
+                        .inputs
+                        .get_channel(0)
+                        .iter()
+                        .map(|v| v.powf(2.5))
+                        .collect();
+                    for (o, &new_alloc) in out.iter_mut().zip(new_allocation.iter()) {
+                        *o = new_alloc;
+                    }
+                    GenState::Continue
+                })
+                .output("out")
+                .input("in"),
+            );
+            true
+        }
         _ => false,
     }
 }
@@ -347,11 +370,13 @@ fn insert_reverb(
 }
 
 /// Create a Gen containing a fundsp graph
+///
+/// Note: This currently allocates on the audio thread, the creator of fundsp is
+/// working on a solution
 fn fundsp_reverb_gen(sample_rate: f64, mix: f32) -> ClosureGen {
     use fundsp::audiounit::AudioUnit32;
     let mut fundsp_graph = {
         use fundsp::hacker32::*;
-        //let mut c = c * 0.1;
         let mut c = multipass() & mix * reverb_stereo(10.0, 5.0);
         c.reset(Some(sample_rate));
         c

@@ -16,7 +16,8 @@ homepage = "https://github.com/ErikNatanael/knyst"
 all-features = true
 
 [features]
-serde-derive = ["serde"]
+serde-derive = ["dep:serde"]
+debug-warn-on-alloc = ["assert_no_alloc/warn_debug"]
 
 [dependencies]
 slotmap = "1.0"
@@ -38,6 +39,7 @@ cpal = {version = "0.14.0", optional = true }
 # Only for non real time use
 crossbeam-channel = "0.5.6"
 serde = { version = "1.0", features = ["derive"], optional = true }
+assert_no_alloc = { version = "1.1.2" }
 
 # For concurrency testing
 [target.'cfg(loom)'.dependencies]
