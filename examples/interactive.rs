@@ -99,26 +99,44 @@ fn main() -> Result<()> {
             vec![53, 17, 31],
             vec![0, 22, 36],
             vec![9, 22, 45],
+            vec![9, 17, 45],
+            vec![0, 9, 22],
         ];
         let mut k = k.clone();
         std::thread::spawn(move || {
             let mut rng = thread_rng();
             let harmony_nodes: Vec<NodeAddress> = (0..chords[0].len())
-                .map(|_| {
+                .map(|i| {
                     let node =
                         k.push_to_graph(Oscillator::new(harmony_wavetable_id.into()), sub_graph_id);
                     let amp = k.push_to_graph(Mult, sub_graph_id);
+                    let sine_amp = k.push_to_graph(
+                        WavetableOscillatorOwned::new(Wavetable::sine()),
+                        sub_graph_id,
+                    );
+                    let sine_amp_mul = k.push_to_graph(Mult, sub_graph_id);
+                    let pan = k.push_to_graph(PanMonoToStereo, sub_graph_id);
 
                     k.connect(constant(400.).to(&node).to_label("freq"));
                     k.connect(node.to(&amp));
-                    k.connect(constant(0.02).to(&amp).to_index(1));
-                    k.connect(amp.to_graph_out());
-                    k.connect(amp.to_graph_out().to_index(1));
+                    k.connect(
+                        constant(rng.gen_range(0.1..0.4))
+                            .to(&sine_amp)
+                            .to_label("freq"),
+                    );
+                    k.connect(sine_amp.to(&sine_amp_mul));
+                    k.connect(constant(0.4 * 0.03).to(&sine_amp_mul).to_index(1));
+                    k.connect(constant(0.03).to(&amp).to_index(1));
+                    k.connect(sine_amp_mul.to(&amp).to_index(1));
+                    k.connect(amp.to(&pan));
+                    // Pan at positions -0.5, 0.0, 0.5
+                    k.connect(constant((i as f32 - 1.) * 0.5).to(&pan));
+                    k.connect(pan.to_graph_out());
+                    k.connect(pan.to_graph_out().to_index(1));
                     node
                 })
                 .collect();
             // Change to a new chord
-            let arpeggiation_time = 200;
             loop {
                 let new_chord = chords.choose(&mut rng).unwrap();
                 for (i, node) in harmony_nodes.iter().enumerate() {
@@ -129,10 +147,10 @@ fn main() -> Result<()> {
                         )
                         .label("freq"),
                     );
-                    std::thread::sleep(Duration::from_millis(arpeggiation_time));
+                    std::thread::sleep(Duration::from_millis(rng.gen::<u64>() % 1500 + 500));
                 }
 
-                std::thread::sleep(Duration::from_millis(1000));
+                std::thread::sleep(Duration::from_millis(rng.gen::<u64>() % 1000 + 1000));
             }
         });
     }
@@ -367,7 +385,7 @@ async fn tokio_knyst(k: KnystCommands, mut trigger: Arc<AtomicBool>) {
     loop {
         receive_trigger(&mut trigger).await;
         let k = k.clone();
-        let speed = rng.gen_range(0.2..0.4_f32);
+        let speed = rng.gen_range(0.1..0.6_f32);
         tokio::spawn(async move {
             play_a_little_tune(k, speed).await;
         });
@@ -383,15 +401,15 @@ async fn receive_trigger(trigger: &mut Arc<AtomicBool>) {
 
 async fn play_a_little_tune(mut k: KnystCommands, speed: f32) {
     let melody = vec![
+        (17, 1.),
         (22, 1.),
         (31, 1.),
         (36, 1.),
-        (45, 1.),
+        (45, 0.25),
         (53, 0.25),
         (58, 0.25),
-        (53, 0.25),
-        (48, 0.25),
-        (53, 3.),
+        (62, 0.25),
+        (53 + 17, 6.),
     ];
     for (degree_53, beats) in melody {
         let freq = degree_53_to_hz(degree_53 as f32 + 53., ROOT_FREQ);
