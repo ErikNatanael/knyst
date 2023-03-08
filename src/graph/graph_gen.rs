@@ -12,8 +12,8 @@ use slotmap::SlotMap;
 use crate::Resources;
 
 use super::{
-    node::Node, Gen, GenContext, GenState, NodeKey, Oversampling, OwnedRawBuffer, Sample,
-    ScheduleReceiver, TaskData,
+    node::Node, Gen, GenContext, GenState, NodeBufferRef, NodeKey, Oversampling, OwnedRawBuffer,
+    Sample, ScheduleReceiver, TaskData,
 };
 
 pub(super) fn make_graph_gen(
@@ -56,12 +56,18 @@ pub(super) fn make_graph_gen(
     // Then convert sample rate further if necessary.
     // Then convert block size if necessary.
     if parent_block_size != block_size {
-        // TODO: If there is oversampling this does not hold because the
         if parent_block_size < block_size && num_inputs > 0 {
             panic!("An inner Graph cannot have inputs if it has a larger block size since the inputs will not be sufficiently filled.");
         }
+        let graph_block_converter_gen = GraphBlockConverterGen::new(
+            Node::new("GraphBlockConverterGen", Box::new(graph_gen)),
+            parent_block_size,
+            block_size,
+        );
+        Box::new(graph_block_converter_gen)
+    } else {
+        Box::new(graph_gen)
     }
-    Box::new(graph_gen)
 }
 
 /// Contains a GraphGen which it will run inside itself, converting block size
@@ -71,54 +77,134 @@ pub(super) fn make_graph_gen(
 /// inputs since these inputs would only be half filled.
 pub(super) struct GraphBlockConverterGen {
     graph_gen_node: Node,
-    source_block_size: usize,
+    // The block size of the
+    inner_block_size: usize,
     parent_block_size: usize,
-    // This buffer is only needed if the GraphGen has a larger block_size than
-    // the parent. It will in that case use this buffer instead of that of the
-    // Node.
-    block_buffer: Vec<Vec<Sample>>,
     // TODO: Input buffer needs buffering because it gets passed to the Node as an NodeBufferRef
+    /// This buffer is used to hold the inputs to the inner graph so that they
+    /// can be passed to the node. It only needs to have as many channels as the
+    /// inner node has inputs. It could have been a Vec if not for the interface
+    /// for calling Node::process which needs to work with raw pointers in every
+    /// other situation.
+    inputs_buffers_ptr: Arc<OwnedRawBuffer>,
 }
 
 impl GraphBlockConverterGen {
-    pub fn new(graph_gen_node: Node, parent_block_size: usize, block_size: usize) -> Self {
-        let block_buffer = vec![];
+    pub fn new(graph_gen_node: Node, parent_block_size: usize, inner_block_size: usize) -> Self {
+        let inputs_buffers_ptr = Box::<[Sample]>::into_raw(
+            vec![0.0 as Sample; inner_block_size * graph_gen_node.num_inputs()].into_boxed_slice(),
+        );
+        let inputs_buffers_ptr = Arc::new(OwnedRawBuffer {
+            ptr: inputs_buffers_ptr,
+        });
         Self {
             graph_gen_node,
-            source_block_size: block_size,
+            inner_block_size,
             parent_block_size,
-            block_buffer,
+            inputs_buffers_ptr,
         }
     }
 }
 
 impl Gen for GraphBlockConverterGen {
     fn process(&mut self, ctx: GenContext, resources: &mut Resources) -> GenState {
-        if self.source_block_size < self.parent_block_size {
+        let mut gen_state = GenState::Continue;
+        if self.inner_block_size < self.parent_block_size {
             // We need to run our inner graph_gen many times to fill the outer block.
-            let num_batches = self.parent_block_size / self.source_block_size;
-            // TODO: Have an inner Node and an outer Node to
-            for i in 0..num_batches {
-                // let ctx = GenContext {
-                //     inputs: input_buffers,
-                //     outputs: &mut outputs,
-                //     sample_rate,
-                // };
-                // unsafe { (*self.gen).process(ctx, resources) }
-                todo!()
+            let num_batches = self.parent_block_size / self.inner_block_size;
+            let input_buffers_first_sample = self.inputs_buffers_ptr.ptr.cast::<f32>();
+            let mut input_buffers = NodeBufferRef::new(
+                input_buffers_first_sample,
+                self.graph_gen_node.num_inputs(),
+                self.inner_block_size,
+            );
+
+            for batch in 0..num_batches {
+                let batch_sample_offset = batch * self.inner_block_size;
+                // Copy inputs from input to this graph
+                for input_num in 0..input_buffers.channels() {
+                    for sample in 0..self.inner_block_size {
+                        input_buffers.write(
+                            ctx.inputs.read(input_num, sample + batch_sample_offset),
+                            input_num,
+                            sample,
+                        );
+                    }
+                }
+                // GraphBlockConverterGen does not convert sample rate so just
+                // use the sample rate from upstream
+                let returned_gen_state =
+                    self.graph_gen_node
+                        .process(&input_buffers, ctx.sample_rate, resources);
+                // Copy the outputs of the node to the outputs of this Gen
+                for output_num in 0..ctx.outputs.channels() {
+                    for sample in 0..self.inner_block_size {
+                        ctx.outputs.write(
+                            self.graph_gen_node
+                                .output_buffers()
+                                .read(output_num, sample),
+                            output_num,
+                            sample + batch_sample_offset,
+                        );
+                    }
+                }
+                gen_state = returned_gen_state;
+                match returned_gen_state {
+                    GenState::Continue => (),
+                    GenState::FreeSelf
+                    | GenState::FreeSelfMendConnections
+                    | GenState::FreeGraph(_)
+                    | GenState::FreeGraphMendConnections(_) => {
+                        // zero the following batches and then break
+                        for batch_left in (batch + 1)..num_batches {
+                            let batch_sample_offset = batch_left * self.inner_block_size;
+                            for output_num in 0..ctx.outputs.channels() {
+                                for sample in 0..self.inner_block_size {
+                                    ctx.outputs.write(
+                                        0.0,
+                                        output_num,
+                                        sample + batch_sample_offset,
+                                    );
+                                }
+                            }
+                        }
+                        break;
+                    }
+                }
             }
+        } else {
+            // Inner graph has a larger block size than outer
+            todo!()
         }
-        todo!()
+        gen_state
     }
 
     fn num_inputs(&self) -> usize {
-        todo!()
+        self.graph_gen_node.num_inputs()
     }
 
     fn num_outputs(&self) -> usize {
-        todo!()
+        self.graph_gen_node.num_outputs()
+    }
+
+    fn init(&mut self, _block_size: usize, sample_rate: Sample) {
+        self.graph_gen_node.init(self.inner_block_size, sample_rate);
+    }
+
+    fn input_desc(&self, input: usize) -> &'static str {
+        self.graph_gen_node.input_desc(input)
+    }
+
+    fn output_desc(&self, output: usize) -> &'static str {
+        self.graph_gen_node.output_desc(output)
+    }
+
+    fn name(&self) -> &'static str {
+        self.graph_gen_node.name
     }
 }
+
+unsafe impl Send for GraphBlockConverterGen {}
 
 /// This gets placed as a dyn Gen in a Node in a Graph. It's how the Graph gets
 /// run. The Graph communicates with the GraphGen in a thread safe way.

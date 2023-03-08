@@ -4,6 +4,7 @@ use crate::{
     buffer::{Buffer, BufferReader},
     controller::Controller,
     graph::connection::constant,
+    wavetable::{Wavetable, WavetableOscillatorOwned},
     ResourcesSettings,
 };
 
@@ -548,7 +549,6 @@ fn scheduling() {
     );
     graph.update();
     run_graph.process_block();
-    dbg!(run_graph.graph_output_buffers().get_channel(0));
     assert_eq!(run_graph.graph_output_buffers().read(0, 0), 5.0);
     assert_eq!(run_graph.graph_output_buffers().read(0, 1), 4.0);
     assert_eq!(run_graph.graph_output_buffers().read(0, 2), 2.0);
@@ -935,4 +935,72 @@ fn beat_scheduling() {
     assert_eq!(out[0], 4.0);
     // Tempo is twice as fast so half as many samples to get to the half beat mark.
     assert_eq!(out[SR as usize / 4], 5.0);
+}
+
+#[test]
+fn inner_graph_different_block_size() {
+    const SR: u64 = 44100;
+    const BLOCK_SIZE: usize = 2_usize.pow(11);
+    let graph_settings = GraphSettings {
+        block_size: BLOCK_SIZE,
+        sample_rate: SR as f32,
+        num_outputs: 10,
+        ..Default::default()
+    };
+    let freq = 442.0;
+    let mut graph = Graph::new(graph_settings);
+    let node = graph.push(WavetableOscillatorOwned::new(Wavetable::sine()));
+    graph
+        .connect(constant(freq).to(&node).to_label("freq"))
+        .unwrap();
+    graph.connect(node.to_graph_out().to_index(0)).unwrap();
+    for i in 1..10 {
+        let graph_settings = GraphSettings {
+            block_size: 2_usize.pow(i),
+            sample_rate: SR as f32,
+            num_outputs: 1,
+            ..Default::default()
+        };
+        let mut inner_graph = Graph::new(graph_settings);
+        let node = inner_graph.push(WavetableOscillatorOwned::new(Wavetable::sine()));
+        inner_graph
+            .connect(node.to_graph_out().to_index(0))
+            .unwrap();
+        inner_graph
+            .connect(constant(freq).to(&node).to_label("freq"))
+            .unwrap();
+        let inner_graph = graph.push(inner_graph);
+        graph
+            .connect(inner_graph.to_graph_out().to_index(i as usize))
+            .unwrap();
+    }
+
+    graph.update();
+    let (mut run_graph, _, _) = RunGraph::new(
+        &mut graph,
+        Resources::new(ResourcesSettings::default()),
+        RunGraphSettings {
+            scheduling_latency: Duration::new(0, 0),
+        },
+    )
+    .unwrap();
+    run_graph.process_block();
+    for i in 1..10 {
+        assert_eq!(
+            std::cmp::Ordering::Equal,
+            compare(
+                run_graph.graph_output_buffers().get_channel(0),
+                run_graph.graph_output_buffers().get_channel(i),
+            ),
+        );
+    }
+}
+fn compare<T: PartialOrd>(a: &[T], b: &[T]) -> std::cmp::Ordering {
+    for (v, w) in a.iter().zip(b.iter()) {
+        match v.partial_cmp(w) {
+            Some(std::cmp::Ordering::Equal) => continue,
+            ord => return ord.unwrap(),
+        }
+    }
+    return a.len().cmp(&b.len());
 }

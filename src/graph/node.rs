@@ -12,7 +12,7 @@ use super::{Gen, GenContext, GenState, NodeKey, Task};
 /// It also must not be dropped while a Task exists with pointers to the buffers
 /// of the Node. Graph has a mechanism to ensure this.
 pub(super) struct Node {
-    // name: &'static str,
+    pub(super) name: &'static str,
     /// index by input_channel
     input_constants: *mut [Sample],
     /// index by `output_channel * block_size + sample_index`
@@ -27,7 +27,7 @@ pub(super) struct Node {
 unsafe impl Send for Node {}
 
 impl Node {
-    pub fn new(_name: &'static str, gen: Box<dyn Gen + Send>) -> Self {
+    pub fn new(name: &'static str, gen: Box<dyn Gen + Send>) -> Self {
         let num_outputs = gen.num_outputs();
         let block_size = 0;
         let output_buffers =
@@ -36,7 +36,7 @@ impl Node {
         let output_buffers_first_ptr = std::ptr::null_mut();
 
         Node {
-            // name,
+            name,
             input_constants: Box::into_raw(
                 vec![0.0 as Sample; gen.num_inputs()].into_boxed_slice(),
             ),
@@ -149,6 +149,13 @@ impl Node {
             list.push(unsafe { (*self.gen).output_desc(i) });
         }
         list
+    }
+    pub(super) fn input_desc(&self, input: usize) -> &'static str {
+        unsafe { (*self.gen).input_desc(input) }
+    }
+
+    pub(super) fn output_desc(&self, output: usize) -> &'static str {
+        unsafe { (*self.gen).output_desc(output) }
     }
 }
 impl Drop for Node {
