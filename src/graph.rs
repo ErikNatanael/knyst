@@ -540,8 +540,8 @@ impl GenOrGraph for Graph {
         parent_graph_sample_rate: Sample,
         parent_graph_oversampling: Oversampling,
     ) -> (Option<Graph>, Box<dyn Gen + Send>) {
-        if self.block_size() != parent_graph_block_size {
-            panic!("Warning: You are pushing a graph with a different block size. The library is not currently equipped to handle this. In a future version this will work seamlesly.")
+        if self.block_size() <= parent_graph_block_size && self.num_inputs() > 0 {
+            panic!("Warning: You are pushing a graph with a larger block size and with Graph inputs. An inner Graph with a larger block size cannot have inputs since the inputs for the entire inner block would not have been calculated yet.")
         }
         if self.sample_rate != parent_graph_sample_rate {
             eprintln!("Warning: You are pushing a graph with a different sample rate. This is currently allowed, but expect bugs unless you deal with resampling manually.")
@@ -2851,8 +2851,6 @@ impl Scheduler {
                             Duration::from_secs_f64(mtm.musical_time_to_secs_f64(mt));
                         let timestamp = ((duration_from_start).as_secs_f64() * *sample_rate as f64
                             + *latency) as u64;
-                        dbg!(duration_from_start);
-                        dbg!(timestamp);
                         scheduling_queue.push(ScheduledChange {
                             timestamp,
                             key,

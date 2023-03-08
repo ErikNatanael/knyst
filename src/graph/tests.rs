@@ -939,8 +939,11 @@ fn beat_scheduling() {
 
 #[test]
 fn inner_graph_different_block_size() {
+    // An inner graph should get to have any valid block size and be converted
+    // to the block size of the outer graph. An inner graph with a larger block
+    // size cannot have inputs though.
     const SR: u64 = 44100;
-    const BLOCK_SIZE: usize = 2_usize.pow(11);
+    const BLOCK_SIZE: usize = 2_usize.pow(5);
     let graph_settings = GraphSettings {
         block_size: BLOCK_SIZE,
         sample_rate: SR as f32,
@@ -984,15 +987,17 @@ fn inner_graph_different_block_size() {
         },
     )
     .unwrap();
-    run_graph.process_block();
-    for i in 1..10 {
-        assert_eq!(
-            std::cmp::Ordering::Equal,
-            compare(
-                run_graph.graph_output_buffers().get_channel(0),
-                run_graph.graph_output_buffers().get_channel(i),
-            ),
-        );
+    for _block_num in 0..10 {
+        run_graph.process_block();
+        for i in 1..10 {
+            assert_eq!(
+                std::cmp::Ordering::Equal,
+                compare(
+                    run_graph.graph_output_buffers().get_channel(0),
+                    run_graph.graph_output_buffers().get_channel(i),
+                ),
+            );
+        }
     }
 }
 fn compare<T: PartialOrd>(a: &[T], b: &[T]) -> std::cmp::Ordering {
