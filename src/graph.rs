@@ -515,9 +515,9 @@ pub trait GenOrGraph {
 impl<T: Gen + Send + 'static> GenOrGraph for T {
     fn components(
         self,
-        parent_graph_block_size: usize,
-        parent_graph_sample_rate: Sample,
-        parent_graph_oversampling: Oversampling,
+        _parent_graph_block_size: usize,
+        _parent_graph_sample_rate: Sample,
+        _parent_graph_oversampling: Oversampling,
     ) -> (Option<Graph>, Box<dyn Gen + Send>) {
         (None, Box::new(self))
     }
@@ -765,6 +765,17 @@ impl Oversampling {
             Oversampling::X32 => 32,
         }
     }
+    pub fn from_usize(x: usize) -> Option<Self> {
+        match x {
+            1 => Some(Oversampling::X1),
+            2 => Some(Oversampling::X2),
+            4 => Some(Oversampling::X4),
+            8 => Some(Oversampling::X8),
+            16 => Some(Oversampling::X16),
+            32 => Some(Oversampling::X32),
+            _ => None,
+        }
+    }
 }
 
 /// Pass to Graph::new to set the options the Graph is created with in an ergonomic and clear way.
@@ -807,7 +818,8 @@ impl Default for GraphSettings {
     }
 }
 
-// Hold on to an allocation and drop it when we're done. Can be easily wrapped in an Arc
+/// Hold on to an allocation and drop it when we're done. Can be easily wrapped
+/// in an Arc. This ensures we free the memory.
 struct OwnedRawBuffer {
     ptr: *mut [f32],
 }
@@ -931,7 +943,8 @@ impl Graph {
             ring_buffer_size,
         } = options;
         let inputs_buffers_ptr = Box::<[Sample]>::into_raw(
-            vec![0.0 as Sample; block_size * max_node_inputs].into_boxed_slice(),
+            vec![0.0 as Sample; block_size * oversampling.as_usize() * max_node_inputs]
+                .into_boxed_slice(),
         );
         let inputs_buffers_ptr = Arc::new(OwnedRawBuffer {
             ptr: inputs_buffers_ptr,
@@ -982,7 +995,10 @@ impl Graph {
         let graph_gen =
             self.create_graph_gen(self.block_size, self.sample_rate, Oversampling::X1)?;
         let mut node = Node::new("graph", graph_gen);
-        node.init(block_size, self.sample_rate);
+        node.init(
+            block_size * self.oversampling.as_usize(),
+            self.sample_rate * self.oversampling.as_usize() as f32,
+        );
         self.recalculation_required = true;
         Ok(node)
     }
@@ -1178,7 +1194,10 @@ impl Graph {
             .enumerate()
             .map(|(i, &name)| (name, i))
             .collect();
-        node.init(self.block_size, self.sample_rate);
+        node.init(
+            self.block_size * self.oversampling.as_usize(),
+            self.sample_rate * self.oversampling.as_usize() as f32,
+        );
         let key = self.get_nodes_mut().insert(node);
         self.node_input_edges.insert(key, vec![]);
         self.node_feedback_edges.insert(key, vec![]);
@@ -1496,8 +1515,8 @@ impl Graph {
     ) {
         if let Some(ggc) = &mut self.graph_gen_communicator {
             ggc.scheduler.start(
-                self.sample_rate,
-                self.block_size,
+                self.sample_rate * self.oversampling.as_usize() as f32,
+                self.block_size * self.oversampling.as_usize(),
                 latency,
                 start_ts,
                 musical_time_map.clone(),
@@ -2465,7 +2484,11 @@ impl Graph {
         let first_sample = self.inputs_buffers_ptr.ptr.cast::<f32>();
         for &node_key in &self.node_order {
             let num_inputs = nodes[node_key].num_inputs();
-            let mut input_buffers = NodeBufferRef::new(first_sample, num_inputs, self.block_size);
+            let mut input_buffers = NodeBufferRef::new(
+                first_sample,
+                num_inputs,
+                self.block_size * self.oversampling.as_usize(),
+            );
             // Collect inputs into the node's input buffer
             let input_edges = &self.node_input_edges[node_key];
             let graph_input_edges = &self.graph_input_edges[node_key];
@@ -2477,7 +2500,7 @@ impl Graph {
             for input_edge in input_edges {
                 let source = &nodes[input_edge.source];
                 let mut output_values = source.output_buffers();
-                for sample_index in 0..self.block_size {
+                for sample_index in 0..(self.block_size * self.oversampling.as_usize()) {
                     let from_channel = input_edge.from_output_index;
                     let to_channel = input_edge.to_input_index;
                     inputs_to_copy.push((
@@ -2493,7 +2516,7 @@ impl Graph {
             for feedback_edge in feedback_input_edges {
                 let source = &nodes[feedback_edge.source];
                 let mut output_values = source.output_buffers();
-                for i in 0..self.block_size {
+                for i in 0..(self.block_size * self.oversampling.as_usize()) {
                     inputs_to_copy.push((
                         unsafe { output_values.ptr_to_sample(feedback_edge.from_output_index, i) },
                         unsafe { input_buffers.ptr_to_sample(feedback_edge.from_output_index, i) },
@@ -2595,8 +2618,12 @@ impl Graph {
         self.calculate_node_order();
         let block_size = self.block_size;
         let sample_rate = self.sample_rate;
+        let oversampling = self.oversampling;
         for (_key, n) in self.get_nodes_mut() {
-            n.init(block_size, sample_rate);
+            n.init(
+                block_size * oversampling.as_usize(),
+                sample_rate * oversampling.as_usize() as f32,
+            );
         }
         // self.tasks = self.generate_tasks();
         // self.output_tasks = self.generate_output_tasks();
@@ -2760,6 +2787,7 @@ enum Scheduler {
         /// convert wall clock time to number of samples since the audio thread
         /// started.
         start_ts: Instant,
+        /// Sample rate including oversampling
         sample_rate: u64,
         /// if the ts of the change is less than this number of samples in the future, send it to the GraphGen
         max_duration_to_send: u64,

@@ -7,6 +7,7 @@ use std::{
 };
 
 use rtrb::Producer;
+use rubato::{FftFixedInOut, Resampler};
 use slotmap::SlotMap;
 
 use crate::Resources;
@@ -34,7 +35,7 @@ pub(super) fn make_graph_gen(
     new_task_data_consumer: rtrb::Consumer<TaskData>,
     arc_inputs_buffers_ptr: Arc<OwnedRawBuffer>,
 ) -> Box<dyn Gen + Send> {
-    let graph_gen = GraphGen {
+    let graph_gen = Box::new(GraphGen {
         sample_rate: sample_rate * oversampling.as_usize() as f32,
         current_task_data,
         block_size: block_size * oversampling.as_usize(),
@@ -49,24 +50,37 @@ pub(super) fn make_graph_gen(
         task_data_to_be_dropped_producer,
         new_task_data_consumer,
         _arc_inputs_buffers_ptr: arc_inputs_buffers_ptr,
-    };
+    });
     // TODO:
     // If the graph is the same as the parent Graph, do no conversion.
     // Otherwise, first convert oversampling to that of the parent if necessary.
     // Then convert sample rate further if necessary.
     // Then convert block size if necessary.
+    let graph_gen: Box<dyn Gen + Send + 'static> = if oversampling != parent_oversampling {
+        let graph_oversampling_converter = GraphConvertOversamplingGen::new(
+            Node::new("GraphConvertOversamplingGen", graph_gen),
+            parent_sample_rate as usize * parent_oversampling.as_usize(),
+            sample_rate as usize * oversampling.as_usize(),
+            // Use the inner block size here because that conversion is done afterwards if necessary
+            block_size * parent_oversampling.as_usize(),
+            block_size * oversampling.as_usize(),
+        );
+        Box::new(graph_oversampling_converter)
+    } else {
+        graph_gen
+    };
     if parent_block_size != block_size {
         if parent_block_size < block_size && num_inputs > 0 {
             panic!("An inner Graph cannot have inputs if it has a larger block size since the inputs will not be sufficiently filled.");
         }
         let graph_block_converter_gen = GraphBlockConverterGen::new(
-            Node::new("GraphBlockConverterGen", Box::new(graph_gen)),
+            Node::new("GraphBlockConverterGen", graph_gen),
             parent_block_size,
             block_size,
         );
         Box::new(graph_block_converter_gen)
     } else {
-        Box::new(graph_gen)
+        graph_gen
     }
 }
 
@@ -87,7 +101,6 @@ enum BlockConverterSpecies {
     InnerSmallOuterLarge {
         /// How many times the inner block size goes into the outer block size
         num_batches: usize,
-        // TODO: Input buffer needs buffering because it gets passed to the Node as an NodeBufferRef
         /// This buffer is used to hold the inputs to the inner graph so that they
         /// can be passed to the node. It only needs to have as many channels as the
         /// inner node has inputs. It could have been a Vec if not for the interface
@@ -151,7 +164,7 @@ impl GraphBlockConverterGen {
 
         let offset = *batch_counter * parent_block_size;
         let mut node_outputs = graph_gen_node.output_buffers();
-        for (output_channel, node_output) in ctx.outputs.split_mut().zip(node_outputs.split_mut()) {
+        for (output_channel, node_output) in ctx.outputs.iter_mut().zip(node_outputs.iter_mut()) {
             for sample in 0..parent_block_size {
                 output_channel[sample] = node_output[sample + offset];
             }
@@ -286,6 +299,227 @@ impl Gen for GraphBlockConverterGen {
 }
 
 unsafe impl Send for GraphBlockConverterGen {}
+
+pub(super) struct GraphConvertOversamplingGen {
+    graph_gen_node: Node,
+    oversampling_rate: usize,
+    /// Inner GraphGen sample rate with oversampling applied
+    inner_sample_rate: Sample,
+    /// Inner block size with oversampling applied
+    inner_block_size: usize,
+    /// Resamples any input to the Graph
+    input_resampler: FftFixedInOut<Sample>,
+    // TODO: Remove this conversion and enable using NodeBufferRef directly
+    parent_inputs_conversion: Vec<Vec<Sample>>,
+    // TODO: Remove this conversion and enable using NodeBufferRef directly
+    inner_outputs_conversion: Vec<Vec<Sample>>,
+    /// This buffer is used to hold the inputs to the inner graph so that they
+    /// can be passed to the node. It only needs to have as many channels as the
+    /// inner node has inputs. It could have been a Vec if not for the interface
+    /// for calling Node::process which needs to work with raw pointers in every
+    /// other situation.
+    inputs_oversampled_buffers_ptr: Arc<OwnedRawBuffer>,
+    inputs_oversampled_buffers: Vec<Vec<Sample>>,
+    /// Resamples output from the Graph
+    output_resampler: FftFixedInOut<Sample>,
+    outputs_buffer: Vec<Vec<Sample>>,
+}
+
+impl GraphConvertOversamplingGen {
+    pub(super) fn new(
+        graph_gen_node: Node,
+        parent_sample_rate: usize,
+        inner_sample_rate: usize,
+        parent_block_size: usize,
+        inner_block_size: usize,
+    ) -> Self {
+        dbg!(inner_sample_rate);
+        dbg!(parent_sample_rate);
+        dbg!(inner_block_size);
+        let oversampling_rate = if inner_sample_rate > parent_sample_rate {
+            assert_eq!(inner_sample_rate % parent_sample_rate, 0);
+            assert_eq!(
+                parent_block_size * inner_sample_rate / parent_sample_rate,
+                inner_block_size
+            );
+            inner_sample_rate / parent_sample_rate
+        } else {
+            assert_eq!(parent_sample_rate % inner_sample_rate, 0);
+            assert_eq!(
+                inner_block_size * parent_sample_rate / inner_sample_rate,
+                parent_block_size
+            );
+            parent_sample_rate / inner_sample_rate
+        };
+        dbg!(oversampling_rate);
+        let input_resampler = FftFixedInOut::<Sample>::new(
+            parent_sample_rate,
+            inner_sample_rate,
+            inner_block_size,
+            graph_gen_node.num_inputs(),
+        )
+        .unwrap();
+        // let inputs_buffer =
+        //     vec![
+        //         vec![0.0; parent_block_size * inner_sample_rate / parent_sample_rate];
+        //         graph_gen_node.num_inputs()
+        //     ];
+        let inputs_oversampled_buffers = input_resampler.output_buffer_allocate();
+        let output_resampler = FftFixedInOut::<Sample>::new(
+            inner_sample_rate,
+            parent_sample_rate,
+            parent_block_size,
+            graph_gen_node.num_outputs(),
+        )
+        .unwrap();
+        dbg!(graph_gen_node.num_outputs());
+        let outputs_buffer = output_resampler.output_buffer_allocate();
+        dbg!(output_resampler.input_frames_next());
+        // let outputs_buffer =
+        //     vec![vec![0.0 as Sample; parent_block_size]; graph_gen_node.num_outputs()];
+        let inner_outputs_conversion =
+            vec![vec![0.0 as Sample; inner_block_size]; graph_gen_node.num_outputs()];
+        // let inner_outputs_conversion = output_resampler.input_buffer_allocate();
+        let parent_inputs_conversion =
+            vec![vec![0.0 as Sample; parent_block_size]; graph_gen_node.num_inputs()];
+        // let parent_inputs_conversion = input_resampler.input_buffer_allocate();
+
+        let parent_inputs_oversampled_buffers_ptr = Box::<[Sample]>::into_raw(
+            vec![0.0 as Sample; inner_block_size * graph_gen_node.num_inputs()].into_boxed_slice(),
+        );
+        let parent_inputs_oversampled_buffers_ptr = Arc::new(OwnedRawBuffer {
+            ptr: parent_inputs_oversampled_buffers_ptr,
+        });
+        Self {
+            graph_gen_node,
+            oversampling_rate,
+            inner_sample_rate: inner_sample_rate as Sample,
+            inner_block_size,
+            input_resampler,
+            parent_inputs_conversion,
+            inner_outputs_conversion,
+            inputs_oversampled_buffers_ptr: parent_inputs_oversampled_buffers_ptr,
+            inputs_oversampled_buffers,
+            output_resampler,
+            outputs_buffer,
+        }
+    }
+}
+impl Gen for GraphConvertOversamplingGen {
+    fn process(&mut self, ctx: GenContext, resources: &mut Resources) -> GenState {
+        let input_buffers = if self.graph_gen_node.num_inputs() > 0 {
+            // Convert inputs to the inner sample rate
+            for i in 0..ctx.inputs.channels() {
+                let inp = ctx.inputs.get_channel(i);
+                let conv = &mut self.parent_inputs_conversion[i];
+                for (&inp, conv) in inp.iter().zip(conv.iter_mut()) {
+                    *conv = inp;
+                }
+            }
+            self.input_resampler.process_into_buffer(
+                self.parent_inputs_conversion.as_slice(),
+                &mut self.inputs_oversampled_buffers,
+                None,
+            );
+            // TODO: Can a Vec based output be converted to a NodeBufferRef for free?
+            // Copy into out NodeBufferRef structure
+            let input_buffers_first = self.inputs_oversampled_buffers_ptr.ptr.cast::<f32>();
+            let mut converted_inputs = NodeBufferRef::new(
+                input_buffers_first,
+                self.graph_gen_node.num_inputs(),
+                self.inner_block_size,
+            );
+            assert_eq!(ctx.inputs.channels(), self.graph_gen_node.num_inputs());
+            for (vec_channel, noderef_channel) in self
+                .inputs_oversampled_buffers
+                .iter()
+                .zip(converted_inputs.iter_mut())
+            {
+                for (&vec_val, noderef_val) in vec_channel.iter().zip(noderef_channel.iter_mut()) {
+                    *noderef_val = vec_val;
+                }
+            }
+
+            converted_inputs
+        } else {
+            NodeBufferRef::null_buffer()
+        };
+
+        // The GraphGen does nothing with the sample rate parameter sent here,
+        // replacing it by its own sample rate.
+        let gen_state = self.graph_gen_node.process(&input_buffers, 0., resources);
+        // dbg!(self.graph_gen_node.output_buffers().get_channel(0));
+
+        // TODO: Remove this step if we can get NodeBufferRef compatible with &[AsRef<[f32]>]
+        /*
+                for (vec_channel, noderef_channel) in self
+                    .inner_outputs_conversion
+                    .iter_mut()
+                    .zip(self.graph_gen_node.output_buffers().iter())
+                {
+                    for (vec_val, &noderef_val) in vec_channel.iter_mut().zip(noderef_channel.iter()) {
+                        *vec_val = noderef_val;
+                    }
+                }
+
+                // dbg!(self.graph_gen_node.output_buffers().get_channel(0));
+                // dbg!(&self.inner_outputs_conversion);
+                // Convert outputs to the parent sample rate
+                let _res = self.output_resampler.process_into_buffer(
+                    self.inner_outputs_conversion.as_slice(),
+                    &mut self.outputs_buffer,
+                    None,
+                );
+
+                for (vec_channel, noderef_channel) in self.outputs_buffer.iter().zip(ctx.outputs.iter_mut())
+                {
+                    for (&vec_val, noderef_val) in vec_channel.iter().zip(noderef_channel.iter_mut()) {
+                        *noderef_val = vec_val;
+                    }
+                }
+        */
+        for (from_graph, to_out) in self
+            .graph_gen_node
+            .output_buffers()
+            .iter()
+            .zip(ctx.outputs.iter_mut())
+        {
+            assert!(from_graph.len() / self.oversampling_rate == to_out.len());
+            for i in 0..(self.inner_block_size / self.oversampling_rate) {
+                to_out[i] = from_graph[i * self.oversampling_rate];
+            }
+        }
+        // dbg!(ctx.outputs.get_channel(0));
+        gen_state
+    }
+
+    fn num_inputs(&self) -> usize {
+        self.graph_gen_node.num_inputs()
+    }
+
+    fn num_outputs(&self) -> usize {
+        self.graph_gen_node.num_outputs()
+    }
+
+    fn init(&mut self, _block_size: usize, _sample_rate: Sample) {
+        self.graph_gen_node
+            .init(self.inner_block_size, self.inner_sample_rate);
+    }
+
+    fn input_desc(&self, input: usize) -> &'static str {
+        self.graph_gen_node.input_desc(input)
+    }
+
+    fn output_desc(&self, output: usize) -> &'static str {
+        self.graph_gen_node.output_desc(output)
+    }
+
+    fn name(&self) -> &'static str {
+        self.graph_gen_node.name
+    }
+}
+
+unsafe impl Send for GraphConvertOversamplingGen {}
 
 /// This gets placed as a dyn Gen in a Node in a Graph. It's how the Graph gets
 /// run. The Graph communicates with the GraphGen in a thread safe way.
@@ -438,15 +672,15 @@ impl Gen for GraphGen {
                     }
                 }
                 if let Some(from_relative_sample_nr) = do_empty_buffer {
-                    for channel in ctx.outputs.split_mut() {
+                    for channel in ctx.outputs.iter_mut() {
                         for sample in &mut channel[from_relative_sample_nr..] {
                             *sample = 0.0;
                         }
                     }
                 }
                 if let Some(from_relative_sample_nr) = do_mend_connections {
-                    let num_channels = ctx.inputs.channels().min(ctx.outputs.channels());
-                    for channel in 0..num_channels {
+                    let channels = ctx.inputs.channels().min(ctx.outputs.channels());
+                    for channel in 0..channels {
                         let input = ctx.inputs.get_channel(channel);
                         // Safety: We are only holding one &mut to a channel at a time.
                         let output = unsafe { ctx.outputs.get_channel_mut(channel) };
@@ -466,8 +700,8 @@ impl Gen for GraphGen {
                 ctx.outputs.fill(0.0);
             }
             GenState::FreeSelfMendConnections => {
-                let num_channels = ctx.inputs.channels().min(ctx.outputs.channels());
-                for channel in 0..num_channels {
+                let channels = ctx.inputs.channels().min(ctx.outputs.channels());
+                for channel in 0..channels {
                     let input = ctx.inputs.get_channel(channel);
                     // Safety: We are only holding a &mut to one channel at a time.
                     let output = unsafe { ctx.outputs.get_channel_mut(channel) };

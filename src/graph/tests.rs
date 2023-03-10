@@ -1009,3 +1009,77 @@ fn compare<T: PartialOrd>(a: &[T], b: &[T]) -> std::cmp::Ordering {
     }
     return a.len().cmp(&b.len());
 }
+
+#[test]
+fn inner_graph_different_oversampling() {
+    // An inner graph should get to have any valid block size and be converted
+    // to the block size of the outer graph. An inner graph with a larger block
+    // size cannot have inputs though.
+    const SR: u64 = 44100;
+    const BLOCK_SIZE: usize = 16;
+    let graph_settings = GraphSettings {
+        block_size: BLOCK_SIZE,
+        sample_rate: SR as f32,
+        oversampling: Oversampling::X1,
+        num_outputs: 10,
+        ..Default::default()
+    };
+    let freq = 442.0;
+    let mut graph = Graph::new(graph_settings);
+    let node = graph.push(WavetableOscillatorOwned::new(Wavetable::sine()));
+    graph
+        .connect(constant(freq).to(&node).to_label("freq"))
+        .unwrap();
+    graph.connect(node.to_graph_out().to_index(0)).unwrap();
+    for i in 1..=4 {
+        let graph_settings = GraphSettings {
+            block_size: BLOCK_SIZE,
+            oversampling: Oversampling::from_usize(2_usize.pow(i)).unwrap(),
+            sample_rate: SR as f32,
+            num_outputs: 1,
+            ..Default::default()
+        };
+        let mut inner_graph = Graph::new(graph_settings);
+        let node = inner_graph.push(WavetableOscillatorOwned::new(Wavetable::sine()));
+        let amp = inner_graph.push(Mult);
+
+        inner_graph.connect(node.to(&amp).to_index(0)).unwrap();
+        inner_graph
+            .connect(constant(1.0).to(&amp).to_index(1))
+            .unwrap();
+        inner_graph.connect(amp.to_graph_out().to_index(0)).unwrap();
+        inner_graph
+            .connect(constant(freq).to(&node).to_label("freq"))
+            .unwrap();
+        let inner_graph = graph.push(inner_graph);
+        graph
+            .connect(inner_graph.to_graph_out().to_index(i as usize))
+            .unwrap();
+    }
+
+    graph.update();
+    let (mut run_graph, _, _) = RunGraph::new(
+        &mut graph,
+        Resources::new(ResourcesSettings::default()),
+        RunGraphSettings {
+            scheduling_latency: Duration::new(0, 0),
+        },
+    )
+    .unwrap();
+    for _block_num in 0..5 {
+        run_graph.process_block();
+        run_graph.process_block();
+        for i in 1..=4 {
+            dbg!(run_graph.graph_output_buffers().get_channel(0));
+            dbg!(run_graph.graph_output_buffers().get_channel(i));
+            dbg!(i);
+            assert_eq!(
+                std::cmp::Ordering::Equal,
+                compare(
+                    run_graph.graph_output_buffers().get_channel(0),
+                    run_graph.graph_output_buffers().get_channel(i),
+                ),
+            );
+        }
+    }
+}

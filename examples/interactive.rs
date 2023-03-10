@@ -35,6 +35,7 @@ fn main() -> Result<()> {
 
     let sample_rate = backend.sample_rate() as f32;
     let block_size = backend.block_size().unwrap_or(64);
+    dbg!(block_size);
     let resources = Resources::new(ResourcesSettings::default());
     let top_level_graph = Graph::new(GraphSettings {
         block_size,
@@ -73,10 +74,13 @@ fn main() -> Result<()> {
     k.connect(amp.to_graph_out().channels(2));
 
     let sub_graph = Graph::new(GraphSettings {
-        block_size,
+        block_size: block_size / 2,
+        // block_size,
         sample_rate,
         num_outputs,
+        oversampling: knyst::graph::Oversampling::X2,
         name: String::from("subgraph"),
+        num_inputs: 0,
         ..Default::default()
     });
 
@@ -232,6 +236,7 @@ fn main() -> Result<()> {
         // Short sleep time to minimise latency
         std::thread::sleep(std::time::Duration::from_millis(1));
     }
+    // std::thread::sleep(Duration::from_millis(10000));
     Ok(())
 }
 
