@@ -581,7 +581,7 @@ fn index_routing() {
     let mult = graph.push(Mult);
     let five = graph.push(
         gen(move |ctx, _resources| {
-            let out_chan = ctx.outputs.split_mut().next().unwrap();
+            let out_chan = ctx.outputs.iter_mut().next().unwrap();
             for o0 in out_chan {
                 *o0 = 5.;
             }
@@ -591,7 +591,7 @@ fn index_routing() {
     );
     let nine = graph.push(
         gen(move |ctx, _resources| {
-            let out_chan = ctx.outputs.split_mut().next().unwrap();
+            let out_chan = ctx.outputs.iter_mut().next().unwrap();
             for o0 in out_chan {
                 *o0 = 9.;
             }
@@ -649,7 +649,7 @@ fn index_routing_advanced() {
     );
     let five = graph.push(
         gen(move |ctx, _resources| {
-            for o0 in ctx.outputs.split_mut().next().unwrap() {
+            for o0 in ctx.outputs.iter_mut().next().unwrap() {
                 *o0 = 5.;
             }
             GenState::Continue
@@ -658,7 +658,7 @@ fn index_routing_advanced() {
     );
     let nine = graph.push(
         gen(move |ctx, _resources| {
-            for o0 in ctx.outputs.split_mut().next().unwrap() {
+            for o0 in ctx.outputs.iter_mut().next().unwrap() {
                 *o0 = 9.;
             }
             GenState::Continue
@@ -802,7 +802,7 @@ fn start_nodes_with_sample_precision() {
     // push before starting the graph
     let n0 = graph.push_at_time(
         gen(move |ctx, _resources| {
-            let out_chan = ctx.outputs.split_mut().next().unwrap();
+            let out_chan = ctx.outputs.iter_mut().next().unwrap();
             for sample in out_chan {
                 *sample = counter0;
                 counter0 += 1.0;

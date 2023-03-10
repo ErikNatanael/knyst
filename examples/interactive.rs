@@ -329,7 +329,7 @@ fn handle_special_keys(c: char, mut k: KnystCommands, state: &mut State) -> bool
             // in debug mode it should panic because of assert_no_alloc.
             k.push(
                 gen(|ctx, resources| {
-                    let out = ctx.outputs.split_mut().next().unwrap();
+                    let out = ctx.outputs.iter_mut().next().unwrap();
                     let new_allocation: Vec<Sample> = ctx
                         .inputs
                         .get_channel(0)
@@ -386,7 +386,7 @@ fn fundsp_reverb_gen(sample_rate: f64, mix: f32) -> ClosureGen {
         let in0 = ctx.inputs.get_channel(0);
         let in1 = ctx.inputs.get_channel(1);
         let block_size = ctx.block_size();
-        let mut outputs = ctx.outputs.split_mut();
+        let mut outputs = ctx.outputs.iter_mut();
         let out0 = outputs.next().unwrap();
         let out1 = outputs.next().unwrap();
         // With an f32 fundsp AudioUnit we can pass input/output buffers

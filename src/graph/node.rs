@@ -325,8 +325,18 @@ impl NodeBufferRef {
         self.block_size - self.block_start_offset
     }
     /// Returns an iterator to the channels in this NodeBufferRef
-    pub fn split_mut(&mut self) -> NodeBufferRefSplitMut {
-        NodeBufferRefSplitMut {
+    pub fn iter(&mut self) -> NodeBufferRefIter {
+        NodeBufferRefIter {
+            buf: self.buf,
+            num_channels: self.num_channels,
+            block_size: self.block_size,
+            block_start_offset: self.block_start_offset,
+            _phantom_data: std::marker::PhantomData,
+        }
+    }
+    /// Returns an iterator to the channels in this NodeBufferRef
+    pub fn iter_mut(&mut self) -> NodeBufferRefIterMut {
+        NodeBufferRefIterMut {
             buf: self.buf,
             num_channels: self.num_channels,
             block_size: self.block_size,
@@ -348,15 +358,49 @@ impl NodeBufferRef {
     }
 }
 /// A variant of a NodeBufferRef that can yield &mut[Sample] to all the channels.
-pub struct NodeBufferRefSplitMut<'a> {
+pub struct NodeBufferRefIterMut<'a> {
     buf: *mut Sample,
     num_channels: usize,
     block_size: usize,
     block_start_offset: usize,
     _phantom_data: std::marker::PhantomData<&'a mut ()>,
 }
-impl<'a> Iterator for NodeBufferRefSplitMut<'a> {
+impl<'a> Iterator for NodeBufferRefIterMut<'a> {
     type Item = &'a mut [Sample];
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.num_channels == 0 {
+            return None;
+        }
+        assert!(!self.buf.is_null());
+        let buffer_channel_slice = unsafe {
+            let channel_start_ptr = self.buf.add(self.block_start_offset);
+            std::slice::from_raw_parts_mut(
+                channel_start_ptr,
+                self.block_size - self.block_start_offset,
+            )
+        };
+        unsafe {
+            self.buf = self.buf.add(self.block_size);
+        }
+        self.num_channels -= 1;
+        Some(buffer_channel_slice)
+    }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.num_channels, Some(self.num_channels))
+    }
+}
+
+/// A variant of a NodeBufferRef that can yield &[Sample] to all the channels.
+pub struct NodeBufferRefIter<'a> {
+    buf: *mut Sample,
+    num_channels: usize,
+    block_size: usize,
+    block_start_offset: usize,
+    _phantom_data: std::marker::PhantomData<&'a mut ()>,
+}
+impl<'a> Iterator for NodeBufferRefIter<'a> {
+    type Item = &'a [Sample];
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.num_channels == 0 {

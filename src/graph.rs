@@ -619,7 +619,7 @@ type ProcessFn = Box<dyn FnMut(GenContext, &mut Resources) -> GenState + Send>;
 /// use knyst::prelude::*;
 /// use fastapprox::fast::tanh;
 /// let closure_gen = gen(move |ctx, _resources| {
-///     let mut outputs = ctx.outputs.split_mut();
+///     let mut outputs = ctx.outputs.iter_mut();
 ///     let out0 = outputs.next().unwrap();
 ///     let out1 = outputs.next().unwrap();
 ///     for ((((o0, o1), i0), i1), dist) in out0
