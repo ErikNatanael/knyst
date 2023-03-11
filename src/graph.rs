@@ -55,6 +55,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
+use self::connection::NodeOutput;
+
 use super::Resources;
 /// The graph consists of (simplified)
 /// 1. a list of nodes
@@ -172,6 +174,12 @@ impl NodeAddress {
                 graph_id,
             }),
             _ => None,
+        }
+    }
+    pub fn out(&self, channel: impl Into<connection::NodeChannel>) -> NodeOutput {
+        NodeOutput {
+            from_node: self.clone(),
+            from_channel: channel.into(),
         }
     }
 }
