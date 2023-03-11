@@ -416,6 +416,7 @@ impl Gen for GraphConvertOversamplingGen {
                     *conv = inp;
                 }
             }
+            // TODO: Upsample here without rubato
             self.input_resampler.process_into_buffer(
                 self.parent_inputs_conversion.as_slice(),
                 &mut self.inputs_oversampled_buffers,
@@ -478,6 +479,7 @@ impl Gen for GraphConvertOversamplingGen {
                     }
                 }
         */
+        // TODO: Use an antialiasing filter on the output here before copying
         for (from_graph, to_out) in self
             .graph_gen_node
             .output_buffers()

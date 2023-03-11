@@ -65,6 +65,7 @@ pub mod audio_backend;
 pub mod buffer;
 pub mod controller;
 pub mod envelope;
+mod filter;
 pub mod graph;
 pub mod prelude;
 pub mod scheduling;
