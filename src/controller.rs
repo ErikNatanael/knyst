@@ -3,8 +3,9 @@ use std::time::{Duration, Instant};
 use crate::{
     buffer::Buffer,
     graph::{
-        connection::ConnectionError, Connection, GenOrGraph, GenOrGraphEnum, Graph, GraphId,
-        GraphSettings, NodeAddress, ParameterChange,
+        connection::{ConnectionBundle, ConnectionError, InputBundle},
+        Connection, GenOrGraph, GenOrGraphEnum, Graph, GraphId, GraphSettings, NodeAddress,
+        ParameterChange,
     },
     scheduling::MusicalTimeMap,
     wavetable::Wavetable,
@@ -51,10 +52,20 @@ pub struct KnystCommands {
 }
 
 impl KnystCommands {
-    pub fn push(&mut self, gen_or_graph: impl GenOrGraph) -> NodeAddress {
-        self.push_to_graph(gen_or_graph, self.top_level_graph_id)
+    pub fn push_without_inputs(&mut self, gen_or_graph: impl GenOrGraph) -> NodeAddress {
+        self.push_to_graph_without_inputs(gen_or_graph, self.top_level_graph_id)
     }
-    pub fn push_to_graph(
+    pub fn push(
+        &mut self,
+        gen_or_graph: impl GenOrGraph,
+        inputs: impl Into<InputBundle>,
+    ) -> NodeAddress {
+        let addr = self.push_to_graph_without_inputs(gen_or_graph, self.top_level_graph_id);
+        let inputs: InputBundle = inputs.into();
+        self.connect_bundle(inputs.to(&addr));
+        addr
+    }
+    pub fn push_to_graph_without_inputs(
         &mut self,
         gen_or_graph: impl GenOrGraph,
         graph_id: GraphId,
@@ -68,8 +79,25 @@ impl KnystCommands {
         self.sender.send(command).unwrap();
         new_node_address
     }
+    pub fn push_to_graph(
+        &mut self,
+        gen_or_graph: impl GenOrGraph,
+        graph_id: GraphId,
+        inputs: impl Into<InputBundle>,
+    ) -> NodeAddress {
+        let new_node_address = self.push_to_graph_without_inputs(gen_or_graph, graph_id);
+        let inputs: InputBundle = inputs.into();
+        self.connect_bundle(inputs.to(&new_node_address));
+        new_node_address
+    }
     pub fn connect(&mut self, connection: Connection) {
         self.sender.send(Command::Connect(connection)).unwrap();
+    }
+    pub fn connect_bundle(&mut self, bundle: impl Into<ConnectionBundle>) {
+        let bundle = bundle.into();
+        for c in bundle.as_connections() {
+            self.connect(c);
+        }
     }
     pub fn disconnect(&mut self, connection: Connection) {
         self.sender.send(Command::Disconnect(connection)).unwrap();

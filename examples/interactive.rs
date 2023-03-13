@@ -4,6 +4,7 @@ use knyst::{
     controller::{self, KnystCommands},
     envelope::{Curve, Envelope},
     graph::{ClosureGen, Mult, NodeAddress},
+    inputs,
     prelude::*,
     trig::OnceTrig,
     wavetable::{Oscillator, Wavetable, WavetableOscillatorOwned},
@@ -53,23 +54,26 @@ fn main() -> Result<()> {
     let num_outputs = backend.num_outputs();
 
     // Nodes are pushed to the top level graph if no graph id is specified
-    let node0 = k.push(WavetableOscillatorOwned::new(Wavetable::sine()));
-    k.connect(constant(ROOT_FREQ).to(&node0).to_label("freq"));
-    let modulator = k.push(WavetableOscillatorOwned::new(Wavetable::sine()));
-    k.connect(constant(5.).to(&modulator).to_label("freq"));
-    let mod_amp = k.push(Mult);
-    k.connect(modulator.to(&mod_amp));
-    k.connect(constant(0.25).to(&mod_amp).to_index(1));
+    let modulator = k.push(
+        WavetableOscillatorOwned::new(Wavetable::sine()),
+        // The `inputs` macro accepts multiple tuples in the format
+        // `(channel : constant ; node_outputs)` where the constant and the node_outputs are
+        // optional
+        inputs!(("freq" : 5.)),
+    );
+    let mod_amp = k.push(Mult, inputs!((0 ; modulator.out(0)), (1 : 0.25)));
+    let node0 = k.push(
+        WavetableOscillatorOwned::new(Wavetable::sine()),
+        inputs!(("freq": ROOT_FREQ ; mod_amp.out(0))),
+    );
     let env = Envelope {
+        // Points are given in the format (value, time_to_reach_value)
         points: vec![(0.25, 0.02), (0.125, 0.1), (0.0, 0.5)],
         curves: vec![Curve::Linear, Curve::Linear, Curve::Exponential(2.0)],
         ..Default::default()
     };
-    let env = k.push(env.to_gen());
-    let amp = k.push(Mult);
-    k.connect(node0.to(&amp));
-    k.connect(env.to(&amp).to_index(1));
-    k.connect(mod_amp.to(&node0).to_label("freq"));
+    let env = k.push(env.to_gen(), inputs!());
+    let amp = k.push(Mult, inputs!((0 ; node0.out(0)), (1 ; env.out(0))));
     k.connect(amp.to_graph_out().channels(2));
 
     let sub_graph = Graph::new(GraphSettings {
@@ -81,7 +85,7 @@ fn main() -> Result<()> {
     });
 
     let sub_graph_id = sub_graph.id();
-    let sub_graph = k.push(sub_graph);
+    let sub_graph = k.push(sub_graph, inputs!());
     k.connect(sub_graph.to_graph_out().channels(2));
 
     // Store the nodes that would be connected to the reverb if it's toggled on.
@@ -105,15 +109,14 @@ fn main() -> Result<()> {
             let mut rng = thread_rng();
             let harmony_nodes: Vec<NodeAddress> = (0..chords[0].len())
                 .map(|_| {
-                    let node =
-                        k.push_to_graph(Oscillator::new(harmony_wavetable_id.into()), sub_graph_id);
-                    let amp = k.push_to_graph(Mult, sub_graph_id);
-
-                    k.connect(constant(400.).to(&node).to_label("freq"));
-                    k.connect(node.to(&amp));
-                    k.connect(constant(0.02).to(&amp).to_index(1));
-                    k.connect(amp.to_graph_out());
-                    k.connect(amp.to_graph_out().to_index(1));
+                    let node = k.push_to_graph(
+                        Oscillator::new(harmony_wavetable_id.into()),
+                        sub_graph_id,
+                        ("freq", 400.),
+                    );
+                    let amp =
+                        k.push_to_graph(Mult, sub_graph_id, inputs!((0 ; node.out(0)), (1 : 0.02)));
+                    k.connect(amp.to_graph_out().channels(2));
                     node
                 })
                 .collect();
@@ -197,7 +200,7 @@ fn main() -> Result<()> {
                             ParameterChange::now(mod_amp.clone(), new_freq * 0.1).i(1),
                         );
                         // Trigger the envelope to restart
-                        let trig = k.push(OnceTrig::new());
+                        let trig = k.push(OnceTrig::new(), inputs!());
                         k.connect(trig.to(&state.lead_env_address).to_label("restart_trig"));
                         write!(
                             stdout,
@@ -265,7 +268,7 @@ fn handle_special_keys(c: char, mut k: KnystCommands, state: &mut State) -> bool
                         let id = k.insert_buffer(buffer);
                         let reader =
                             BufferReader::new(knyst::IdOrKey::Id(id), 1.0, StopAction::FreeSelf);
-                        let reader = k.push(reader);
+                        let reader = k.push(reader, inputs!());
                         k.connect(reader.to_graph_out());
                         k.connect(reader.to_graph_out().to_index(1));
                     }
@@ -310,7 +313,7 @@ fn handle_special_keys(c: char, mut k: KnystCommands, state: &mut State) -> bool
             // Here's an example of what you mustn't do. If you run this program
             // in debug mode it should panic because of assert_no_alloc.
             k.push(
-                gen(|ctx, resources| {
+                gen(|ctx, _resources| {
                     let out = ctx.outputs.split_mut().next().unwrap();
                     let new_allocation: Vec<Sample> = ctx
                         .inputs
@@ -325,6 +328,7 @@ fn handle_special_keys(c: char, mut k: KnystCommands, state: &mut State) -> bool
                 })
                 .output("out")
                 .input("in"),
+                inputs!(),
             );
             true
         }
@@ -339,7 +343,7 @@ fn insert_reverb(
     _block_size: usize,
 ) -> NodeAddress {
     let mix = 0.5;
-    let reverb = k.push(fundsp_reverb_gen(sample_rate, mix));
+    let reverb = k.push(fundsp_reverb_gen(sample_rate, mix), inputs!());
     for input in inputs {
         // Clear all connections from this node to the outputs of the graph it is in.
         k.disconnect(Connection::clear_to_graph_outputs(&input));
@@ -447,6 +451,6 @@ async fn spawn_note(k: &mut KnystCommands, freq: f32, length_seconds: f32) {
     note_graph.connect(sig.to(&amp)).unwrap();
     note_graph.connect(env.to(&amp).to_index(1)).unwrap();
     note_graph.connect(amp.to_graph_out()).unwrap();
-    let note_graph = k.push(note_graph);
+    let note_graph = k.push(note_graph, inputs!());
     k.connect(note_graph.to_graph_out().channels(2));
 }
