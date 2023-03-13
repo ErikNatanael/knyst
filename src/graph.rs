@@ -31,6 +31,7 @@
 #[cfg(loom)]
 use loom::sync::atomic::Ordering;
 
+#[macro_use]
 pub mod connection;
 mod graph_gen;
 mod node;

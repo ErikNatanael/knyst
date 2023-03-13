@@ -889,12 +889,14 @@ fn beat_scheduling() {
         },
     )
     .unwrap();
-    graph.change_musical_time_map(|mtm| {
-        mtm.insert(
-            crate::scheduling::TempoChange::NewTempo { bpm: 120.0 },
-            Superbeats::from_beats(1),
-        );
-    });
+    graph
+        .change_musical_time_map(|mtm| {
+            mtm.insert(
+                crate::scheduling::TempoChange::NewTempo { bpm: 120.0 },
+                Superbeats::from_beats(1),
+            );
+        })
+        .unwrap();
     graph
         .schedule_change(ParameterChange::beats(
             node.clone(),

@@ -262,6 +262,18 @@ impl Connection {
     pub fn ti(self, index: usize) -> Self {
         self.to_index(index)
     }
+    pub fn from_channel(self, channel: impl Into<NodeChannel>) -> Self {
+        match channel.into() {
+            NodeChannel::Index(index) => self.from_index(index),
+            NodeChannel::Label(label) => self.from_label(label),
+        }
+    }
+    pub fn to_channel(self, channel: impl Into<NodeChannel>) -> Self {
+        match channel.into() {
+            NodeChannel::Index(index) => self.to_index(index),
+            NodeChannel::Label(label) => self.to_label(label),
+        }
+    }
     pub fn from_index(mut self, index: usize) -> Self {
         match &mut self {
             Connection::Node {
@@ -410,6 +422,43 @@ pub struct NodeOutput {
     pub(super) from_node: NodeAddress,
     pub(super) from_channel: NodeChannel,
 }
+impl NodeOutput {
+    pub(super) fn to_node(&self, node: &NodeAddress) -> Connection {
+        let connection = Connection::Node {
+            source: self.from_node.clone(),
+            from_index: None,
+            from_label: None,
+            sink: node.clone(),
+            to_index: None,
+            to_label: None,
+            channels: 1,
+            feedback: false,
+        };
+        match self.from_channel {
+            NodeChannel::Label(label) => connection.from_label(label),
+            NodeChannel::Index(index) => connection.from_index(index),
+        }
+    }
+}
+impl IntoIterator for NodeOutput {
+    type Item = NodeOutput;
+
+    type IntoIter = NodeOutputIntoIter;
+
+    fn into_iter(self) -> Self::IntoIter {
+        NodeOutputIntoIter { no: Some(self) }
+    }
+}
+pub struct NodeOutputIntoIter {
+    no: Option<NodeOutput>,
+}
+impl Iterator for NodeOutputIntoIter {
+    type Item = NodeOutput;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.no.take()
+    }
+}
 
 #[derive(Clone, Debug)]
 pub enum ConstantOrNodeOutput {
@@ -435,7 +484,7 @@ pub struct ConnectionBundle {
     inputs: Vec<(NodeChannel, ConstantOrNodeOutput)>,
 }
 impl ConnectionBundle {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             to_node: None,
             inputs: Vec::new(),
@@ -444,11 +493,42 @@ impl ConnectionBundle {
     pub fn to(&mut self, node_address: &NodeAddress) {
         self.to_node = Some(node_address.clone());
     }
+    pub fn push_node_outputs(
+        &mut self,
+        channel: NodeChannel,
+        node_outputs: impl IntoIterator<Item = NodeOutput>,
+    ) {
+        for no in node_outputs {
+            self.inputs
+                .push((channel, ConstantOrNodeOutput::NodeOutput(no)));
+        }
+    }
     pub fn push_input(&mut self, input_channel: NodeChannel, source: ConstantOrNodeOutput) {
         self.inputs.push((input_channel, source));
     }
-    pub fn as_connections(&self) -> Vec<Connection> {
-        todo!()
+    /// Convert to [`Connection`]s. Returns None if the node whose inputs to set
+    /// has not been specified.
+    pub fn as_connections(&self) -> Option<Vec<Connection>> {
+        if let Some(to_node) = &self.to_node {
+            let mut connections = Vec::with_capacity(self.inputs.len());
+            for (channel, input) in &self.inputs {
+                connections.push(match input {
+                    ConstantOrNodeOutput::Constant(con) => {
+                        constant(con.0).to(to_node).to_channel(*channel)
+                    }
+                    ConstantOrNodeOutput::NodeOutput(no) => {
+                        no.to_node(to_node).to_channel(*channel)
+                    }
+                });
+            }
+            Some(connections)
+        } else {
+            None
+        }
+    }
+    pub fn extend(mut self, other: ConnectionBundle) -> Self {
+        self.inputs.extend(other.inputs);
+        self
     }
 }
 
@@ -476,8 +556,21 @@ impl<const N: usize> From<[(usize, Sample); N]> for ConnectionBundle {
         vec.into()
     }
 }
-impl<const N: usize> From<[(&'static str, Sample, NodeOutput); N]> for ConnectionBundle {
-    fn from(array_of_bundles: [(&'static str, Sample, NodeOutput); N]) -> Self {
+impl<const N: usize, O: IntoIterator<Item = NodeOutput>> From<[(usize, Sample, O); N]>
+    for ConnectionBundle
+{
+    fn from(array_of_bundles: [(usize, Sample, O); N]) -> Self {
+        let vec: Vec<ConnectionBundle> = array_of_bundles
+            .into_iter()
+            .map(|(index, con, output)| (index, con, output).into())
+            .collect();
+        vec.into()
+    }
+}
+impl<const N: usize, O: IntoIterator<Item = NodeOutput>> From<[(&'static str, Sample, O); N]>
+    for ConnectionBundle
+{
+    fn from(array_of_bundles: [(&'static str, Sample, O); N]) -> Self {
         let vec: Vec<ConnectionBundle> = array_of_bundles
             .into_iter()
             .map(|(label, con, output)| (label, con, output).into())
@@ -522,25 +615,53 @@ impl From<(usize, Sample)> for ConnectionBundle {
         }
     }
 }
-impl From<(&'static str, Sample, NodeOutput)> for ConnectionBundle {
-    fn from((label, constant, node_output): (&'static str, Sample, NodeOutput)) -> Self {
+// impl<O: IntoIterator<Item = NodeOutput>> From<(&'static str, O)> for ConnectionBundle {
+//     fn from((label, constant, node_outputs): (&'static str, O)) -> Self {
+//         let mut inputs = Vec::new();
+//         for no in node_outputs {
+//             inputs.push((label.into(), no.into()));
+//         }
+//         Self {
+//             to_node: None,
+//             inputs,
+//         }
+//     }
+// }
+// impl<O: IntoIterator<Item = NodeOutput>> From<(usize, O)> for ConnectionBundle {
+//     fn from((index, constant, node_outputs): (usize, O)) -> Self {
+//         let mut inputs = Vec::new();
+//         for no in node_outputs {
+//             inputs.push((index.into(), no.into()));
+//         }
+//         Self {
+//             to_node: None,
+//             inputs,
+//         }
+//     }
+// }
+impl<O: IntoIterator<Item = NodeOutput>> From<(&'static str, Sample, O)> for ConnectionBundle {
+    fn from((label, constant, node_outputs): (&'static str, Sample, O)) -> Self {
+        let mut inputs = Vec::new();
+        inputs.push((label.into(), Constant(constant).into()));
+        for no in node_outputs {
+            inputs.push((label.into(), no.into()));
+        }
         Self {
             to_node: None,
-            inputs: vec![
-                (label.into(), Constant(constant).into()),
-                (label.into(), node_output.into()),
-            ],
+            inputs,
         }
     }
 }
-impl From<(usize, Sample, NodeOutput)> for ConnectionBundle {
-    fn from((index, constant, node_output): (usize, Sample, NodeOutput)) -> Self {
+impl<O: IntoIterator<Item = NodeOutput>> From<(usize, Sample, O)> for ConnectionBundle {
+    fn from((index, constant, node_outputs): (usize, Sample, O)) -> Self {
+        let mut inputs = Vec::new();
+        inputs.push((index.into(), Constant(constant).into()));
+        for no in node_outputs {
+            inputs.push((index.into(), no.into()));
+        }
         Self {
             to_node: None,
-            inputs: vec![
-                (index.into(), Constant(constant).into()),
-                (index.into(), node_output.into()),
-            ],
+            inputs,
         }
     }
 }
@@ -570,32 +691,32 @@ impl From<(usize, Sample, NodeOutput)> for ConnectionBundle {
 //         }
 //     }
 // }
-impl<
-        L: IntoIterator<Item = NodeChannel>,
-        S: IntoIterator<Item = Sample>,
-        N: IntoIterator<Item = NodeOutput>,
-    > From<(L, S, N)> for ConnectionBundle
-{
-    fn from((labels, constants, node_outputs): (L, S, N)) -> Self {
-        let mut inputs: Vec<(NodeChannel, ConstantOrNodeOutput)> = Vec::new();
-        let labels = labels.into_iter().collect::<Vec<_>>();
-        let constants = constants.into_iter().collect::<Vec<_>>();
-        let node_outputs = node_outputs.into_iter().collect::<Vec<_>>();
-        let longest = labels.len().max(constants.len()).max(node_outputs.len());
-        let mut labels = labels.into_iter().cycle();
-        let mut constants = constants.into_iter().cycle();
-        let mut node_outputs = node_outputs.into_iter().cycle();
-        for _i in 0..longest {
-            let label = labels.next().unwrap();
-            inputs.push((label.into(), Constant(constants.next().unwrap()).into()));
-            inputs.push((label.into(), node_outputs.next().unwrap().into()));
-        }
-        Self {
-            to_node: None,
-            inputs,
-        }
-    }
-}
+// impl<
+//         L: IntoIterator<Item = NodeChannel>,
+//         S: IntoIterator<Item = Sample>,
+//         N: IntoIterator<Item = NodeOutput>,
+//     > From<(L, S, N)> for ConnectionBundle
+// {
+//     fn from((labels, constants, node_outputs): (L, S, N)) -> Self {
+//         let mut inputs: Vec<(NodeChannel, ConstantOrNodeOutput)> = Vec::new();
+//         let labels = labels.into_iter().collect::<Vec<_>>();
+//         let constants = constants.into_iter().collect::<Vec<_>>();
+//         let node_outputs = node_outputs.into_iter().collect::<Vec<_>>();
+//         let longest = labels.len().max(constants.len()).max(node_outputs.len());
+//         let mut labels = labels.into_iter().cycle();
+//         let mut constants = constants.into_iter().cycle();
+//         let mut node_outputs = node_outputs.into_iter().cycle();
+//         for _i in 0..longest {
+//             let label = labels.next().unwrap();
+//             inputs.push((label.into(), Constant(constants.next().unwrap()).into()));
+//             inputs.push((label.into(), node_outputs.next().unwrap().into()));
+//         }
+//         Self {
+//             to_node: None,
+//             inputs,
+//         }
+//     }
+// }
 // impl<C: IntoIterator<Item = &'static str>, S: IntoIterator<Item = Sample>> From<(C, S)>
 //     for ConnectionBundle
 // {
@@ -643,56 +764,51 @@ impl<
 //     }
 // }
 //
-pub struct ConnectionBuilder {
-    channel: NodeChannel,
-    constant: Option<Sample>,
-    node_outputs: Vec<NodeOutput>,
-}
-impl ConnectionBuilder {
-    pub fn new(channel: impl Into<NodeChannel>) -> Self {
-        Self {
-            channel: channel.into(),
-            constant: None,
-            node_outputs: vec![],
-        }
-    }
-    pub fn constant(mut self, v: Sample) -> Self {
-        self.constant = Some(v);
-        self
-    }
-    pub fn node(mut self, n: NodeOutput) -> Self {
-        self.node_outputs.push(n);
-        self
-    }
-}
-impl From<ConnectionBuilder> for ConnectionBundle {
-    fn from(v: ConnectionBuilder) -> Self {
-        let mut cb = ConnectionBundle::new();
-        if let Some(c) = v.constant {
-            cb.push_input(v.channel, ConstantOrNodeOutput::Constant(c.into()));
-        }
-        for no in v.node_outputs {
-            cb.push_input(v.channel, ConstantOrNodeOutput::NodeOutput(no));
-        }
-        cb
-    }
-}
-// impl From<Vec<ConnectionBuilder>> for ConnectionBundle {
-//     fn from(v: Vec<ConnectionBuilder>) -> Self {
-//         todo!()
-//     }
-// }
+//
 
-mod tests {
-    use crate::{
-        graph::{
-            connection::{ConnectionBuilder, NodeChannel, NodeOutput},
-            NodeAddress,
-        },
-        Sample,
+// We cannot allow the pattern (&'static str, IntoIterator<Item = NodeOutput>)
+// because "f32 might implement IntoIterator in the future", but maybe we can
+// make a macro instead.
+#[macro_export]
+macro_rules! inputs {
+    (($channel:literal : $constant:expr)) => {
+        ConnectionBundle::from(($channel, $constant))
     };
+    (($channel:literal : $constant:expr), $($y:tt), +) => {
+        ConnectionBundle::from(($channel, $constant)).extend(inputs!($($y),+))
+    };
+    (($channel:literal : $constant:expr; $nodes:expr)) => {
+        ConnectionBundle::from(($channel, $constant, $nodes))
+    };
+    (($channel:literal : $constant:expr; $nodes:expr), $($y:tt), +) => {
+        ConnectionBundle::from(($channel, $constant, $nodes)).extend(inputs!($($y),+))
+    };
+    (($channel:literal ; $nodes:expr)) => {
+        {
+            let mut c = ConnectionBundle::new();
+            c.push_node_outputs(($channel).into(), $nodes);
+            c
+        }
+    };
+    (($channel:literal ; $nodes:expr), $($y:tt), +) => {
+        {
+            let mut c = ConnectionBundle::new();
+            c.push_node_outputs(($channel).into(), $nodes);
+            c.extend(inputs!($($y),+))
+        }
+    };
+    () => {
+        ConnectionBundle {
+            to_node: None,
+            inputs: vec![],
+        }
+    };
+}
 
+#[cfg(test)]
+mod tests {
     use super::ConnectionBundle;
+    use crate::graph::NodeAddress;
 
     #[test]
     fn connection_bundles() {
@@ -702,45 +818,39 @@ mod tests {
             NodeAddress::new()
         }
         fn connect(b: impl Into<ConnectionBundle>) {
-            let _b = b.into();
+            let b = b.into();
+            b.as_connections();
         }
 
-        fn i(chan: impl Into<NodeChannel>) -> ConnectionBuilder {
-            ConnectionBuilder::new(chan)
-        }
-        // let _c: ConnectionBundle = ("freq", 440.0).into();
         let node = NodeAddress::new();
-        let _c: ConnectionBundle = ("freq", 440.0, node.out(0)).into();
-        let _c: ConnectionBundle = [("freq", 440.0, node.out(0))].into();
-        // let _c: ConnectionBundle = [("freq", 440.0, node.out(0)).into()].into();
-        //
-        // connect(vec![("freq", 440.0, node.out(0)).into(), (1, 0.0).into()]);
+        let _c: ConnectionBundle = ("freq", 440.0, [node.out(0)]).into();
+        let _c: ConnectionBundle = [("freq", 440.0, [node.out(0)])].into();
         connect(vec![
-            ("freq", 440.0, node.out(0)).into(),
+            ("freq", 440.0, [node.out(0), node.out(1)]).into(),
+            (1, 0.0).into(),
+        ]);
+        connect(vec![
+            ("freq", 440.0, [node.out(0), node.out(1)]).into(),
+            ("phase", 0.0, [node.out(2)]).into(),
+            (1, 0.0).into(),
+        ]);
+        connect(vec![
+            ("freq", 440.0, [node.out(0)]).into(),
             ("phase", 0.0).into(),
             ("amp", 0.5).into(),
         ]);
-        connect(("freq", 440.0, node.out(0)));
-        connect((0, 440.0, node.out(0)));
+        connect(("freq", 440.0, [node.out(0)]));
+        connect((0, 440.0, [node.out(0)]));
         connect((0, 440.0));
-        // connect(vec![
-        //     i("freq").constant(440.).node(node.out(0)),
-        //     i(2).node(node.out(1)),
-        //     i("phase").constant(0.0),
-        // ]);
-        // connect([
-        //     ("freq", 440.0, node.out(0)).into(),
-        //     ("phase", 0.0).into(),
-        //     ("amp", 0.5).into(),
-        //     ("weirdness", 0.1).into(),
-        // ]);
-        // let _c: ConnectionBundle = [
-        //     ("freq", 440.0),
-        //     ("phase", 0.0),
-        //     ("amp", 0.5),
-        //     ("weirdness", 0.1),
-        // ]
-        // .into();
+        connect(inputs!((0 : 440.0)));
+        connect(inputs!(("freq" : 440.; [node.out(0)])));
+        connect(inputs!(
+            ("freq" : 440. ; [node.out(0)]),
+            (1 : 0.0),
+            ("amp" ; [node.out(2), node.out(3)])
+        ));
+        connect(inputs!((0 : 440.0), (1 : 110.)));
+        connect(inputs!((0 : 440.0), ("freq" : 440. ; [node.out(0)])));
         connect([
             ("freq", 440.0),
             ("phase", 0.0),
@@ -749,32 +859,16 @@ mod tests {
         ]);
         connect([(0, 440.0), (1, 0.0), (2, 0.5), (3, 0.1)]);
         connect([
-            ("freq", 440.0, node.out(0)),
-            ("phase", 0.0, node.out(1)),
-            ("amp", 0.5, node.out(2)),
-            ("weirdness", 0.1, node.out(3)),
+            ("freq", 440.0, [node.out(0)]),
+            ("phase", 0.0, [node.out(1)]),
+            ("amp", 0.5, [node.out(2)]),
+            ("weirdness", 0.1, [node.out(3)]),
         ]);
         let node = push_node(DNode, [("freq", 440.), ("phase", 0.)]);
         let node = push_node(
             DNode,
-            vec![("freq", 0.0, node.out(0)).into(), ("phase", 0.0).into()],
+            vec![("freq", 0.0, [node.out(0)]).into(), ("phase", 0.0).into()],
         );
-        // let node = push_node(
-        //     DNode,
-        //     vec![
-        //         i("freq").constant(0.0).node(node.out(0)),
-        //         i("phase").constant(0.5),
-        //     ],
-        // );
-        // let _c: ConnectionBundle = (["freq", "phase"], [440.0, 0.0]).into();
-        // (Iter<NodeChannel>, Iter<Sample>, Iter<NodeOutput>)
-        let _c: ConnectionBundle = (["freq".into()], [440.0], []).into();
-        let _c: ConnectionBundle = ([0.into(), 1.into()], [0.0], [node.out(0)]).into();
-        // (Iter<&'static str>, Iter<Sample>, Iter<NodeOutput>)
-        // let _c: ConnectionBundle =
-        //     (["freq", "phase"], [440.0, 0.0], [node.out(0), node.out(1)]).into();
-        // // Send a node.out(0) to both inputs
-        // (Iter<usize>, Iter<Sample>, Iter<NodeOutput>)
-        // let _c: ConnectionBundle = ([0, 1], [0.0], [node.out(0)]).into();
+        connect([(0, 0.0, [node.out(0)]), (1, 0.0, [node.out(0)])]);
     }
 }

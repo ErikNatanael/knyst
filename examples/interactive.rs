@@ -4,6 +4,7 @@ use knyst::{
     controller::{self, KnystCommands},
     envelope::{Curve, Envelope},
     graph::{ClosureGen, Mult, NodeAddress},
+    inputs,
     prelude::*,
     trig::OnceTrig,
     wavetable::{Oscillator, Wavetable, WavetableOscillatorOwned},
@@ -53,23 +54,26 @@ fn main() -> Result<()> {
     let num_outputs = backend.num_outputs();
 
     // Nodes are pushed to the top level graph if no graph id is specified
-    let node0 = k.push(WavetableOscillatorOwned::new(Wavetable::sine()));
-    k.connect(constant(ROOT_FREQ).to(&node0).to_label("freq"));
-    let modulator = k.push(WavetableOscillatorOwned::new(Wavetable::sine()));
-    k.connect(constant(5.).to(&modulator).to_label("freq"));
-    let mod_amp = k.push(Mult);
-    k.connect(modulator.to(&mod_amp));
-    k.connect(constant(0.25).to(&mod_amp).to_index(1));
+    let modulator = k.push_with_inputs(
+        WavetableOscillatorOwned::new(Wavetable::sine()),
+        // The `inputs` macro accepts multiple tuples in the format
+        // `(channel : constant ; node_outputs)` where the constant and the node_outputs are
+        // optional
+        inputs!(("freq" : 5.)),
+    );
+    let mod_amp = k.push_with_inputs(Mult, inputs!((0 ; modulator.out(0)), (1 : 0.25)));
+    let node0 = k.push_with_inputs(
+        WavetableOscillatorOwned::new(Wavetable::sine()),
+        inputs!(("freq": ROOT_FREQ ; mod_amp.out(0))),
+    );
     let env = Envelope {
+        // Points are given in the format (value, time_to_reach_value)
         points: vec![(0.25, 0.02), (0.125, 0.1), (0.0, 0.5)],
         curves: vec![Curve::Linear, Curve::Linear, Curve::Exponential(2.0)],
         ..Default::default()
     };
     let env = k.push(env.to_gen());
-    let amp = k.push(Mult);
-    k.connect(node0.to(&amp));
-    k.connect(env.to(&amp).to_index(1));
-    k.connect(mod_amp.to(&node0).to_label("freq"));
+    let amp = k.push_with_inputs(Mult, inputs!((0 ; node0.out(0)), (1 ; env.out(0))));
     k.connect(amp.to_graph_out().channels(2));
 
     let sub_graph = Graph::new(GraphSettings {
@@ -105,15 +109,17 @@ fn main() -> Result<()> {
             let mut rng = thread_rng();
             let harmony_nodes: Vec<NodeAddress> = (0..chords[0].len())
                 .map(|_| {
-                    let node =
-                        k.push_to_graph(Oscillator::new(harmony_wavetable_id.into()), sub_graph_id);
-                    let amp = k.push_to_graph(Mult, sub_graph_id);
-
-                    k.connect(constant(400.).to(&node).to_label("freq"));
-                    k.connect(node.to(&amp));
-                    k.connect(constant(0.02).to(&amp).to_index(1));
-                    k.connect(amp.to_graph_out());
-                    k.connect(amp.to_graph_out().to_index(1));
+                    let node = k.push_to_graph_with_inputs(
+                        Oscillator::new(harmony_wavetable_id.into()),
+                        sub_graph_id,
+                        ("freq", 400.),
+                    );
+                    let amp = k.push_to_graph_with_inputs(
+                        Mult,
+                        sub_graph_id,
+                        inputs!((0 ; node.out(0)), (1 : 0.02)),
+                    );
+                    k.connect(amp.to_graph_out().channels(2));
                     node
                 })
                 .collect();
@@ -310,7 +316,7 @@ fn handle_special_keys(c: char, mut k: KnystCommands, state: &mut State) -> bool
             // Here's an example of what you mustn't do. If you run this program
             // in debug mode it should panic because of assert_no_alloc.
             k.push(
-                gen(|ctx, resources| {
+                gen(|ctx, _resources| {
                     let out = ctx.outputs.split_mut().next().unwrap();
                     let new_allocation: Vec<Sample> = ctx
                         .inputs
