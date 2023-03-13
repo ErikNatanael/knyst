@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 use crate::{
     buffer::Buffer,
     graph::{
-        connection::{ConnectionBundle, ConnectionError},
+        connection::{ConnectionBundle, ConnectionError, InputBundle},
         Connection, GenOrGraph, GenOrGraphEnum, Graph, GraphId, GraphSettings, NodeAddress,
         ParameterChange,
     },
@@ -58,14 +58,11 @@ impl KnystCommands {
     pub fn push_with_inputs(
         &mut self,
         gen_or_graph: impl GenOrGraph,
-        inputs: impl Into<ConnectionBundle>,
+        inputs: impl Into<InputBundle>,
     ) -> NodeAddress {
         let addr = self.push_to_graph(gen_or_graph, self.top_level_graph_id);
-        let mut inputs: ConnectionBundle = inputs.into();
-        inputs.to(&addr);
-        for c in inputs.as_connections().unwrap() {
-            self.connect(c)
-        }
+        let inputs: InputBundle = inputs.into();
+        self.connect_bundle(inputs.to(&addr));
         addr
     }
     pub fn push_to_graph(
@@ -86,14 +83,11 @@ impl KnystCommands {
         &mut self,
         gen_or_graph: impl GenOrGraph,
         graph_id: GraphId,
-        inputs: impl Into<ConnectionBundle>,
+        inputs: impl Into<InputBundle>,
     ) -> NodeAddress {
         let new_node_address = self.push_to_graph(gen_or_graph, graph_id);
-        let mut inputs: ConnectionBundle = inputs.into();
-        inputs.to(&new_node_address);
-        for c in inputs.as_connections().unwrap() {
-            self.connect(c)
-        }
+        let inputs: InputBundle = inputs.into();
+        self.connect_bundle(inputs.to(&new_node_address));
         new_node_address
     }
     pub fn connect(&mut self, connection: Connection) {
@@ -101,7 +95,7 @@ impl KnystCommands {
     }
     pub fn connect_bundle(&mut self, bundle: impl Into<ConnectionBundle>) {
         let bundle = bundle.into();
-        for c in bundle.as_connections().unwrap() {
+        for c in bundle.as_connections() {
             self.connect(c);
         }
     }
