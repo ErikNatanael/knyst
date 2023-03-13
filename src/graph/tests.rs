@@ -1,5 +1,10 @@
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
 
+use crate::graph::{FreeError, ScheduleError};
+use crate::prelude::*;
+use crate::time::{Superbeats, Superseconds};
 use crate::{
     buffer::{Buffer, BufferReader},
     controller::Controller,
@@ -7,7 +12,8 @@ use crate::{
     ResourcesSettings,
 };
 
-use super::*;
+use super::{Gen, RunGraph};
+
 // Outputs its input value + 1
 struct OneGen {}
 impl Gen for OneGen {
@@ -772,7 +778,7 @@ fn sending_buffer_to_resources() {
         crate::StopAction::FreeSelf,
     );
     buffer_reader.looping = true;
-    let br = k.push(buffer_reader);
+    let br = k.push(buffer_reader, inputs!());
     k.connect(br.to_graph_out());
     // Process the Controller and RunGraph in order
     controller.run(300);

@@ -6,5 +6,6 @@ pub use crate::graph::{
     gen, Connection, GenContext, GenState, Graph, GraphInput, GraphSettings, Mult, PanMonoToStereo,
     ParameterChange, Ramp, RunGraphSettings,
 };
+pub use crate::inputs;
 pub use crate::wavetable::{Wavetable, WavetableKey, TABLE_POWER, TABLE_SIZE};
 pub use crate::{AnyData, Resources, ResourcesSettings, Sample, StopAction};
