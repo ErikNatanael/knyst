@@ -784,9 +784,7 @@ macro_rules! inputs {
         }
     };
     () => {
-        InputBundle{
-            inputs: vec![],
-        }
+        InputBundle::new()
     };
 }
 

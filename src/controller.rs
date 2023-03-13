@@ -52,20 +52,20 @@ pub struct KnystCommands {
 }
 
 impl KnystCommands {
-    pub fn push(&mut self, gen_or_graph: impl GenOrGraph) -> NodeAddress {
-        self.push_to_graph(gen_or_graph, self.top_level_graph_id)
+    pub fn push_without_inputs(&mut self, gen_or_graph: impl GenOrGraph) -> NodeAddress {
+        self.push_to_graph_without_inputs(gen_or_graph, self.top_level_graph_id)
     }
-    pub fn push_with_inputs(
+    pub fn push(
         &mut self,
         gen_or_graph: impl GenOrGraph,
         inputs: impl Into<InputBundle>,
     ) -> NodeAddress {
-        let addr = self.push_to_graph(gen_or_graph, self.top_level_graph_id);
+        let addr = self.push_to_graph_without_inputs(gen_or_graph, self.top_level_graph_id);
         let inputs: InputBundle = inputs.into();
         self.connect_bundle(inputs.to(&addr));
         addr
     }
-    pub fn push_to_graph(
+    pub fn push_to_graph_without_inputs(
         &mut self,
         gen_or_graph: impl GenOrGraph,
         graph_id: GraphId,
@@ -79,13 +79,13 @@ impl KnystCommands {
         self.sender.send(command).unwrap();
         new_node_address
     }
-    pub fn push_to_graph_with_inputs(
+    pub fn push_to_graph(
         &mut self,
         gen_or_graph: impl GenOrGraph,
         graph_id: GraphId,
         inputs: impl Into<InputBundle>,
     ) -> NodeAddress {
-        let new_node_address = self.push_to_graph(gen_or_graph, graph_id);
+        let new_node_address = self.push_to_graph_without_inputs(gen_or_graph, graph_id);
         let inputs: InputBundle = inputs.into();
         self.connect_bundle(inputs.to(&new_node_address));
         new_node_address

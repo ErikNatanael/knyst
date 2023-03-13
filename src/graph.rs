@@ -56,7 +56,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
-use self::connection::NodeOutput;
+use self::connection::{ConnectionBundle, NodeOutput};
 
 use super::Resources;
 /// The graph consists of (simplified)
@@ -1822,6 +1822,19 @@ impl Graph {
         }
         // If no error was encountered we end up here and a recalculation is required.
         self.recalculation_required = true;
+        Ok(())
+    }
+    pub fn connect_bundle(
+        &mut self,
+        bundle: impl Into<ConnectionBundle>,
+    ) -> Result<(), ConnectionError> {
+        let bundle = bundle.into();
+        for con in bundle.as_connections() {
+            match self.connect(con) {
+                Ok(_) => (),
+                Err(e) => return Err(e),
+            }
+        }
         Ok(())
     }
     /// Create or clear a connection in the Graph. Will call child Graphs until
