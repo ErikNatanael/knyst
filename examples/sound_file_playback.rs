@@ -51,6 +51,7 @@ fn main() -> anyhow::Result<()> {
         BufferReaderMulti::new(buffer, 1.0, StopAction::FreeSelf)
             .channels(2)
             .looping(true),
+        inputs!(),
     );
     // Connect the buffer to the outputs.
     k.connect(buf_playback_node.to_graph_out().channels(2));

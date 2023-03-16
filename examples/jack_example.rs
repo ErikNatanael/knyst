@@ -31,29 +31,33 @@ fn main() -> Result<()> {
         RunGraphSettings::default(),
         controller::print_error_handler,
     )?;
-    let node0 = k.push(WavetableOscillatorOwned::new(Wavetable::sine()));
-    k.connect(constant(440.).to(&node0).to_label("freq"));
-    let modulator = k.push(WavetableOscillatorOwned::new(Wavetable::sine()));
-    k.connect(constant(5.).to(&modulator).to_label("freq"));
-    let mod_amp = k.push(Mult);
-    k.connect(modulator.to(&mod_amp));
-    k.connect(constant(0.25).to(&mod_amp).to_index(1));
-    let amp = k.push(Mult);
-    k.connect(node0.to(&amp));
-    k.connect(constant(0.5).to(&amp).to_index(1));
-    k.connect(mod_amp.to(&amp).to_index(1));
+    let node0 = k.push(
+        WavetableOscillatorOwned::new(Wavetable::sine()),
+        inputs!(("freq" : 440.)),
+    );
+    let modulator = k.push(
+        WavetableOscillatorOwned::new(Wavetable::sine()),
+        inputs!(("freq" : 5.)),
+    );
+    let mod_amp = k.push(Mult, inputs!((0 ; modulator.out(0)), (1 : 0.25)));
+    let amp = k.push(
+        Mult,
+        inputs!((0 ; node0.out(0)), (1 : 0.5 ; mod_amp.out(0))),
+    );
     k.connect(amp.to_graph_out());
-    let node1 = k.push(WavetableOscillatorOwned::new(Wavetable::sine()));
-    k.connect(constant(220.).to(&node1).to_label("freq"));
-    let modulator = k.push(WavetableOscillatorOwned::new(Wavetable::sine()));
-    k.connect(constant(3.).to(&modulator).to_label("freq"));
-    let mod_amp = k.push(Mult);
-    k.connect(modulator.to(&mod_amp));
-    k.connect(constant(0.25).to(&mod_amp).to_index(1));
-    let amp = k.push(Mult);
-    k.connect(node1.to(&amp));
-    k.connect(constant(0.5).to(&amp).to_index(1));
-    k.connect(mod_amp.to(&amp).to_index(1));
+    let node1 = k.push(
+        WavetableOscillatorOwned::new(Wavetable::sine()),
+        inputs!(("freq" : 220.)),
+    );
+    let modulator = k.push(
+        WavetableOscillatorOwned::new(Wavetable::sine()),
+        inputs!(("freq" : 3.)),
+    );
+    let mod_amp = k.push(Mult, inputs!((0 ; modulator.out(0)), (1 : 0.25)));
+    let amp = k.push(
+        Mult,
+        inputs!((0 ; node1.out(0)), (1 : 0.5 ; mod_amp.out(0))),
+    );
     k.connect(amp.to_graph_out().to_index(1));
     let mut input = String::new();
     loop {
