@@ -37,7 +37,7 @@
 //! you can run in a real time thread or non real time to generate samples.
 //! Using the [`audio_backend`]s this process is automated for you.
 //!
-
+#![feature(portable_simd)]
 #![deny(rustdoc::broken_intra_doc_links)] // error if there are broken intra-doc links
 
 #[warn(missing_docs)]
@@ -65,7 +65,7 @@ pub mod audio_backend;
 pub mod buffer;
 pub mod controller;
 pub mod envelope;
-mod filter;
+pub mod filter;
 pub mod graph;
 pub mod prelude;
 pub mod scheduling;

@@ -3,6 +3,7 @@ use knyst::{
     audio_backend::{CpalBackend, CpalBackendOptions},
     controller::{self, KnystCommands},
     envelope::{Curve, Envelope},
+    filter::HalfbandFilter,
     graph::{ClosureGen, Mult, NodeAddress},
     prelude::*,
     trig::OnceTrig,
@@ -72,6 +73,9 @@ fn main() -> Result<()> {
     k.connect(env.to(&amp).to_index(1));
     k.connect(mod_amp.to(&node0).to_label("freq"));
     k.connect(amp.to_graph_out().channels(2));
+    let filter = k.push(HalfbandFilter::new(6, false));
+    k.connect(amp.to(&filter));
+    // k.connect(filter.to_graph_out().channels(2));
 
     let sub_graph = Graph::new(GraphSettings {
         block_size: block_size / 2,

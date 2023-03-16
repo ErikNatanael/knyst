@@ -10,7 +10,7 @@ use rtrb::Producer;
 use rubato::{FftFixedInOut, Resampler};
 use slotmap::SlotMap;
 
-use crate::Resources;
+use crate::{filter::HalfbandFilter, Resources};
 
 use super::{
     node::Node, Gen, GenContext, GenState, NodeBufferRef, NodeKey, Oversampling, OwnedRawBuffer,
@@ -307,12 +307,6 @@ pub(super) struct GraphConvertOversamplingGen {
     inner_sample_rate: Sample,
     /// Inner block size with oversampling applied
     inner_block_size: usize,
-    /// Resamples any input to the Graph
-    input_resampler: FftFixedInOut<Sample>,
-    // TODO: Remove this conversion and enable using NodeBufferRef directly
-    parent_inputs_conversion: Vec<Vec<Sample>>,
-    // TODO: Remove this conversion and enable using NodeBufferRef directly
-    inner_outputs_conversion: Vec<Vec<Sample>>,
     /// This buffer is used to hold the inputs to the inner graph so that they
     /// can be passed to the node. It only needs to have as many channels as the
     /// inner node has inputs. It could have been a Vec if not for the interface
@@ -320,9 +314,7 @@ pub(super) struct GraphConvertOversamplingGen {
     /// other situation.
     inputs_oversampled_buffers_ptr: Arc<OwnedRawBuffer>,
     inputs_oversampled_buffers: Vec<Vec<Sample>>,
-    /// Resamples output from the Graph
-    output_resampler: FftFixedInOut<Sample>,
-    outputs_buffer: Vec<Vec<Sample>>,
+    downsampling_filter: Vec<HalfbandFilter>,
 }
 
 impl GraphConvertOversamplingGen {
@@ -336,6 +328,8 @@ impl GraphConvertOversamplingGen {
         dbg!(inner_sample_rate);
         dbg!(parent_sample_rate);
         dbg!(inner_block_size);
+        let num_input_channels = graph_gen_node.num_inputs();
+        let num_output_channels = graph_gen_node.num_outputs();
         let oversampling_rate = if inner_sample_rate > parent_sample_rate {
             assert_eq!(inner_sample_rate % parent_sample_rate, 0);
             assert_eq!(
@@ -352,29 +346,12 @@ impl GraphConvertOversamplingGen {
             parent_sample_rate / inner_sample_rate
         };
         dbg!(oversampling_rate);
-        let input_resampler = FftFixedInOut::<Sample>::new(
-            parent_sample_rate,
-            inner_sample_rate,
-            inner_block_size,
-            graph_gen_node.num_inputs(),
-        )
-        .unwrap();
+        let inputs_oversampled_buffers = vec![vec![0.0; inner_block_size]; num_input_channels];
         // let inputs_buffer =
         //     vec![
         //         vec![0.0; parent_block_size * inner_sample_rate / parent_sample_rate];
         //         graph_gen_node.num_inputs()
         //     ];
-        let inputs_oversampled_buffers = input_resampler.output_buffer_allocate();
-        let output_resampler = FftFixedInOut::<Sample>::new(
-            inner_sample_rate,
-            parent_sample_rate,
-            parent_block_size,
-            graph_gen_node.num_outputs(),
-        )
-        .unwrap();
-        dbg!(graph_gen_node.num_outputs());
-        let outputs_buffer = output_resampler.output_buffer_allocate();
-        dbg!(output_resampler.input_frames_next());
         // let outputs_buffer =
         //     vec![vec![0.0 as Sample; parent_block_size]; graph_gen_node.num_outputs()];
         let inner_outputs_conversion =
@@ -395,56 +372,53 @@ impl GraphConvertOversamplingGen {
             oversampling_rate,
             inner_sample_rate: inner_sample_rate as Sample,
             inner_block_size,
-            input_resampler,
-            parent_inputs_conversion,
-            inner_outputs_conversion,
             inputs_oversampled_buffers_ptr: parent_inputs_oversampled_buffers_ptr,
             inputs_oversampled_buffers,
-            output_resampler,
-            outputs_buffer,
+            downsampling_filter: vec![HalfbandFilter::new(12, true); num_output_channels],
         }
     }
 }
 impl Gen for GraphConvertOversamplingGen {
     fn process(&mut self, ctx: GenContext, resources: &mut Resources) -> GenState {
-        let input_buffers = if self.graph_gen_node.num_inputs() > 0 {
-            // Convert inputs to the inner sample rate
-            for i in 0..ctx.inputs.channels() {
-                let inp = ctx.inputs.get_channel(i);
-                let conv = &mut self.parent_inputs_conversion[i];
-                for (&inp, conv) in inp.iter().zip(conv.iter_mut()) {
-                    *conv = inp;
-                }
-            }
-            // TODO: Upsample here without rubato
-            self.input_resampler.process_into_buffer(
-                self.parent_inputs_conversion.as_slice(),
-                &mut self.inputs_oversampled_buffers,
-                None,
-            );
-            // TODO: Can a Vec based output be converted to a NodeBufferRef for free?
-            // Copy into out NodeBufferRef structure
-            let input_buffers_first = self.inputs_oversampled_buffers_ptr.ptr.cast::<f32>();
-            let mut converted_inputs = NodeBufferRef::new(
-                input_buffers_first,
-                self.graph_gen_node.num_inputs(),
-                self.inner_block_size,
-            );
-            assert_eq!(ctx.inputs.channels(), self.graph_gen_node.num_inputs());
-            for (vec_channel, noderef_channel) in self
-                .inputs_oversampled_buffers
-                .iter()
-                .zip(converted_inputs.iter_mut())
-            {
-                for (&vec_val, noderef_val) in vec_channel.iter().zip(noderef_channel.iter_mut()) {
-                    *noderef_val = vec_val;
-                }
-            }
+        // let input_buffers = if self.graph_gen_node.num_inputs() > 0 {
+        //     // Convert inputs to the inner sample rate
+        //     for i in 0..ctx.inputs.channels() {
+        //         let inp = ctx.inputs.get_channel(i);
+        //         let conv = &mut self.parent_inputs_conversion[i];
+        //         for (&inp, conv) in inp.iter().zip(conv.iter_mut()) {
+        //             *conv = inp;
+        //         }
+        //     }
+        //     // TODO: Upsample here without rubato
+        //     self.input_resampler.process_into_buffer(
+        //         self.parent_inputs_conversion.as_slice(),
+        //         &mut self.inputs_oversampled_buffers,
+        //         None,
+        //     );
+        //     // TODO: Can a Vec based output be converted to a NodeBufferRef for free?
+        //     // Copy into out NodeBufferRef structure
+        //     let input_buffers_first = self.inputs_oversampled_buffers_ptr.ptr.cast::<f32>();
+        //     let mut converted_inputs = NodeBufferRef::new(
+        //         input_buffers_first,
+        //         self.graph_gen_node.num_inputs(),
+        //         self.inner_block_size,
+        //     );
+        //     assert_eq!(ctx.inputs.channels(), self.graph_gen_node.num_inputs());
+        //     for (vec_channel, noderef_channel) in self
+        //         .inputs_oversampled_buffers
+        //         .iter()
+        //         .zip(converted_inputs.iter_mut())
+        //     {
+        //         for (&vec_val, noderef_val) in vec_channel.iter().zip(noderef_channel.iter_mut()) {
+        //             *noderef_val = vec_val;
+        //         }
+        //     }
 
-            converted_inputs
-        } else {
-            NodeBufferRef::null_buffer()
-        };
+        //     converted_inputs
+        // } else {
+        //     NodeBufferRef::null_buffer()
+        // };
+        let input_buffers = NodeBufferRef::null_buffer();
 
         // The GraphGen does nothing with the sample rate parameter sent here,
         // replacing it by its own sample rate.
@@ -480,11 +454,12 @@ impl Gen for GraphConvertOversamplingGen {
                 }
         */
         // TODO: Use an antialiasing filter on the output here before copying
-        for (from_graph, to_out) in self
+        for ((from_graph, to_out), filter) in self
             .graph_gen_node
             .output_buffers()
             .iter()
             .zip(ctx.outputs.iter_mut())
+            .zip(self.downsampling_filter.iter_mut())
         {
             assert!(from_graph.len() / self.oversampling_rate == to_out.len());
             for i in 0..(self.inner_block_size / self.oversampling_rate) {

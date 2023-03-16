@@ -18,6 +18,7 @@ all-features = true
 [features]
 serde-derive = ["dep:serde"]
 debug-warn-on-alloc = ["assert_no_alloc/warn_debug"]
+default = ["cpal"]
 
 [dependencies]
 slotmap = "1.0"
@@ -41,6 +42,8 @@ crossbeam-channel = "0.5.6"
 serde = { version = "1.0", features = ["derive"], optional = true }
 assert_no_alloc = { version = "1.1.2" }
 rubato = "0.12.0"
+# For portable simd for bandlimit filter
+core_simd = { git = "https://github.com/rust-lang/portable-simd" }
 
 # For concurrency testing
 [target.'cfg(loom)'.dependencies]

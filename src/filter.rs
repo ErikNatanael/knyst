@@ -1,74 +1,320 @@
-/*
- *
- * void ButterworthLowpassFilter0100SixthOrder(const double src[], double dest[], int size)
-{
-    const int NZEROS = 6;
-    const int NPOLES = 6;
-    const double GAIN = 2.936532839e+03;
+use core_simd::simd::f32x4;
 
-    double xv[NZEROS+1] = {0.0}, yv[NPOLES+1] = {0.0};
+use crate::graph::{Gen, GenState};
+// use std::simd::f32x4;
 
-    for (int i = 0; i < size; i++)
-      {
-        xv[0] = xv[1]; xv[1] = xv[2]; xv[2] = xv[3]; xv[3] = xv[4]; xv[4] = xv[5]; xv[5] = xv[6];
-        xv[6] = src[i] / GAIN;
-        yv[0] = yv[1]; yv[1] = yv[2]; yv[2] = yv[3]; yv[3] = yv[4]; yv[4] = yv[5]; yv[5] = yv[6];
-        yv[6] =   (xv[0] + xv[6]) + 6.0 * (xv[1] + xv[5]) + 15.0 * (xv[2] + xv[4])
-                     + 20.0 * xv[3]
-                     + ( -0.0837564796 * yv[0]) + (  0.7052741145 * yv[1])
-                     + ( -2.5294949058 * yv[2]) + (  4.9654152288 * yv[3])
-                     + ( -5.6586671659 * yv[4]) + (  3.5794347983 * yv[5]);
-        dest[i] = yv[6];
-    }
+// below is a polyphase iir halfband filter (cutoff at fs/4) consisting of cascades of allpasses
+// translated from the freely available source code at https://www.musicdsp.org/en/latest/Filters/39-polyphase-filters.html
+// no changes to the algorithm, just some rust-ifying and simple simding for independent samples
+#[derive(Copy, Clone)]
+struct Allpass {
+    a: f32x4,
+    x0: f32x4,
+    x1: f32x4,
+    x2: f32x4,
+
+    y0: f32x4,
+    y1: f32x4,
+    y2: f32x4,
 }
- */
 
-// Bra resurs? https://www.musicdsp.org/en/latest/Filters/276-biquad-butterworth-chebyshev-n-order-m-channel-optimized-filters.html
-use crate::Sample;
+impl Default for Allpass {
+    fn default() -> Allpass {
+        Allpass {
+            a: f32x4::splat(0.),
 
-///
-/// Uses f64 internally for filter stability.
-struct ButterworthLowpass<const ORDER: usize> {
-    x: Vec<f64>,
-    y: Vec<f64>,
-    coefficients: Vec<f64>,
-}
-impl<const ORDER: usize> ButterworthLowpass<ORDER> {
-    const MAKE_UP_GAIN: f64 = 2.936532839e+03;
-    pub fn new(cutoff_freq: Sample, sample_freq: Sample) -> Self {
-        let mut coefficients = vec![0.0; ORDER];
-        let gamma = std::f64::consts::PI as / (ORDER as f64 * 2.);
-        // First coefficient is always 1
-        coefficients[0] = 1.0;
-        for i in 0..ORDER {
-            let last = if i == 0 { 1.0 } else { coefficients[i - 1] };
-            coefficients[i + 1] =
-                ((i as Sample * gamma).cos() / ((i + 1) as Sample * gamma).sin()) * last;
-        }
-        // Adjust for
-        Self {
-            x: vec![0.0 as Sample; ORDER + 1],
-            y: vec![0.0 as Sample; ORDER + 1],
-            coefficients,
+            x0: f32x4::splat(0.),
+            x1: f32x4::splat(0.),
+            x2: f32x4::splat(0.),
+
+            y0: f32x4::splat(0.),
+            y1: f32x4::splat(0.),
+            y2: f32x4::splat(0.),
         }
     }
-    pub fn tick(&mut self, input: Sample) -> Sample {
-        self.x.as_mut_slice().rotate_left(1);
-        self.x[6] = input / ButterworthLowpass::<ORDER>::MAKE_UP_GAIN;
-        self.y.as_mut_slice().rotate_left(1);
-        let x = &mut self.x;
-        let y = &mut self.y;
-        y[6] = x[0]
-            + x[6]
-            + 6.0 * (x[1] + x[5])
-            + 15. * (x[2] + x[4])
-            + 20. * x[3]
-            + (-0.0837564796 * y[0])
-            + (0.7052741145 * y[1])
-            + (-2.5294949058 * y[2])
-            + (4.9654152288 * y[3])
-            + (-5.6586671659 * y[4])
-            + (3.5794347983 * y[5]);
-        y[6]
+}
+impl Allpass {
+    fn process(&mut self, input: f32x4) -> f32x4 {
+        //shuffle inputs
+        self.x2 = self.x1;
+        self.x1 = self.x0;
+        self.x0 = input;
+
+        //shuffle outputs
+        self.y2 = self.y1;
+        self.y1 = self.y0;
+
+        //allpass filter 1
+        let output = self.x2 + ((input - self.y2) * self.a);
+
+        self.y0 = output;
+        output
+    }
+}
+#[derive(Copy, Clone)]
+struct AllpassCascade {
+    allpasses: [Allpass; 6],
+    num_filters: usize,
+}
+
+impl AllpassCascade {
+    fn process(&mut self, input: f32x4) -> f32x4 {
+        let mut output = input;
+        for i in 0..self.num_filters {
+            output = self.allpasses[i].process(output)
+        }
+        output
+    }
+}
+#[derive(Copy, Clone)]
+pub struct HalfbandFilter {
+    filter_a: AllpassCascade,
+    filter_b: AllpassCascade,
+    old_out: f32x4,
+}
+
+impl HalfbandFilter {
+    pub fn new(order: usize, steep: bool) -> HalfbandFilter {
+        let a_coefficients: Vec<f32>;
+        let b_coefficients: Vec<f32>;
+
+        if steep {
+            //rejection=104dB, transition band=0.01
+            if order == 12 {
+                a_coefficients = vec![
+                    0.036681502163648017,
+                    0.2746317593794541,
+                    0.56109896978791948,
+                    0.769741833862266,
+                    0.8922608180038789,
+                    0.962094548378084,
+                ];
+
+                b_coefficients = vec![
+                    0.13654762463195771,
+                    0.42313861743656667,
+                    0.6775400499741616,
+                    0.839889624849638,
+                    0.9315419599631839,
+                    0.9878163707328971,
+                ];
+            }
+            //rejection=86dB, transition band=0.01
+            else if order == 10 {
+                a_coefficients = vec![
+                    0.051457617441190984,
+                    0.35978656070567017,
+                    0.6725475931034693,
+                    0.8590884928249939,
+                    0.9540209867860787,
+                ];
+
+                b_coefficients = vec![
+                    0.18621906251989334,
+                    0.529951372847964,
+                    0.7810257527489514,
+                    0.9141815687605308,
+                    0.985475023014907,
+                ];
+            }
+            //rejection=69dB, transition band=0.01
+            else if order == 8 {
+                a_coefficients = vec![
+                    0.07711507983241622,
+                    0.4820706250610472,
+                    0.7968204713315797,
+                    0.9412514277740471,
+                ];
+
+                b_coefficients = vec![
+                    0.2659685265210946,
+                    0.6651041532634957,
+                    0.8841015085506159,
+                    0.9820054141886075,
+                ];
+            }
+            //rejection=51dB, transition band=0.01
+            else if order == 6 {
+                a_coefficients = vec![0.1271414136264853, 0.6528245886369117, 0.9176942834328115];
+
+                b_coefficients = vec![0.40056789819445626, 0.8204163891923343, 0.9763114515836773];
+            }
+            //rejection=53dB,transition band=0.05
+            else if order == 4 {
+                a_coefficients = vec![0.12073211751675449, 0.6632020224193995];
+
+                b_coefficients = vec![0.3903621872345006, 0.890786832653497];
+            }
+            //order=2, rejection=36dB, transition band=0.1
+            else {
+                a_coefficients = vec![0.23647102099689224];
+                b_coefficients = vec![0.7145421497126001];
+            }
+        }
+        //softer slopes, more attenuation and less stopband ripple
+        else {
+            //rejection=150dB, transition band=0.05
+            if order == 12 {
+                a_coefficients = vec![
+                    0.01677466677723562,
+                    0.13902148819717805,
+                    0.3325011117394731,
+                    0.53766105314488,
+                    0.7214184024215805,
+                    0.8821858402078155,
+                ];
+                b_coefficients = vec![
+                    0.06501319274445962,
+                    0.23094129990840923,
+                    0.4364942348420355,
+                    0.6329609551399348, //0.06329609551399348
+                    0.80378086794111226,
+                    0.9599687404800694,
+                ];
+            }
+            //rejection=133dB, transition band=0.05
+            else if order == 10 {
+                a_coefficients = vec![
+                    0.02366831419883467,
+                    0.18989476227180174,
+                    0.43157318062118555,
+                    0.6632020224193995,
+                    0.860015542499582,
+                ];
+                b_coefficients = vec![
+                    0.09056555904993387,
+                    0.3078575723749043,
+                    0.5516782402507934,
+                    0.7652146863779808,
+                    0.95247728378667541,
+                ];
+            }
+            //rejection=106dB, transition band=0.05
+            else if order == 8 {
+                a_coefficients = vec![
+                    0.03583278843106211,
+                    0.2720401433964576,
+                    0.5720571972357003,
+                    0.827124761997324,
+                ];
+
+                b_coefficients = vec![
+                    0.1340901419430669,
+                    0.4243248712718685,
+                    0.7062921421386394,
+                    0.9415030941737551,
+                ];
+            }
+            //rejection=80dB, transition band=0.05
+            else if order == 6 {
+                a_coefficients = vec![0.06029739095712437, 0.4125907203610563, 0.7727156537429234];
+
+                b_coefficients = vec![0.21597144456092948, 0.6043586264658363, 0.9238861386532906];
+            }
+            //rejection=70dB,transition band=0.1
+            else if order == 4 {
+                a_coefficients = vec![0.07986642623635751, 0.5453536510711322];
+
+                b_coefficients = vec![0.28382934487410993, 0.8344118914807379];
+            }
+            //order=2, rejection=36dB, transition band=0.1
+            else {
+                a_coefficients = vec![0.23647102099689224];
+                b_coefficients = vec![0.7145421497126001];
+            }
+        }
+        let mut allpasses_a = [Allpass::default(); 6];
+        for i in 0..order / 2 {
+            allpasses_a[i].a = f32x4::splat(a_coefficients[i]);
+        }
+        let filter_a = AllpassCascade {
+            num_filters: order / 2,
+            allpasses: allpasses_a,
+        };
+        let mut allpasses_b = [Allpass::default(); 6];
+        for i in 0..order / 2 {
+            allpasses_b[i].a = f32x4::splat(b_coefficients[i]);
+        }
+        let filter_b = AllpassCascade {
+            num_filters: order / 2,
+            allpasses: allpasses_b,
+        };
+        HalfbandFilter {
+            filter_a,
+            filter_b,
+            old_out: f32x4::splat(0.),
+        }
+    }
+    pub fn process(&mut self, input: f32x4) -> f32x4 {
+        let output = (self.filter_a.process(input) + self.old_out) * f32x4::splat(0.5);
+        self.old_out = self.filter_b.process(input);
+        output
+    }
+}
+
+impl Gen for HalfbandFilter {
+    fn process(
+        &mut self,
+        ctx: crate::graph::GenContext,
+        _resources: &mut crate::Resources,
+    ) -> crate::graph::GenState {
+        let input = ctx.inputs.get_channel(0);
+        let output = ctx.outputs.iter_mut().next().unwrap();
+        for (inp, out) in input.chunks(4).zip(output.chunks_mut(4)) {
+            let chunk_out = self.process(f32x4::from_slice(inp));
+            chunk_out.copy_to_slice(out);
+        }
+        GenState::Continue
+    }
+
+    fn num_inputs(&self) -> usize {
+        1
+    }
+
+    fn num_outputs(&self) -> usize {
+        1
+    }
+}
+
+impl Default for HalfbandFilter {
+    fn default() -> HalfbandFilter {
+        let a_coefficients = vec![
+            0.01677466677723562,
+            0.13902148819717805,
+            0.3325011117394731,
+            0.53766105314488,
+            0.7214184024215805,
+            0.8821858402078155,
+        ];
+
+        let b_coefficients = vec![
+            0.06501319274445962,
+            0.23094129990840923,
+            0.4364942348420355,
+            0.6329609551399348, //0.06329609551399348
+            0.80378086794111226,
+            0.9599687404800694,
+        ];
+        let mut allpasses_a = [Allpass::default(); 6];
+        for i in 0..12 / 2 {
+            allpasses_a[i].a = f32x4::splat(a_coefficients[i]);
+        }
+        let filter_a = AllpassCascade {
+            num_filters: 12 / 2,
+            allpasses: allpasses_a,
+        };
+        let mut allpasses_b = [Allpass::default(); 6];
+        for i in 0..12 / 2 {
+            allpasses_b[i].a = f32x4::splat(b_coefficients[i]);
+        }
+        let filter_b = AllpassCascade {
+            num_filters: 12 / 2,
+            allpasses: allpasses_b,
+        };
+        HalfbandFilter {
+            filter_a,
+            filter_b,
+            old_out: f32x4::splat(0.0),
+        }
     }
 }
