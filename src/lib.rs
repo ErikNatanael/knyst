@@ -38,8 +38,8 @@
 //! Using the [`audio_backend`]s this process is automated for you.
 //!
 #![deny(rustdoc::broken_intra_doc_links)] // error if there are broken intra-doc links
-
-#[warn(missing_docs)]
+#![warn(missing_docs)]
+#![warn(clippy::pedantic)]
 use buffer::{Buffer, BufferKey};
 use core::fmt::Debug;
 use downcast_rs::{impl_downcast, Downcast};
@@ -73,23 +73,32 @@ pub mod trig;
 pub mod wavetable;
 pub mod xorrng;
 
+/// Combined error type for Knyst, containing any other error in the library.
 #[derive(thiserror::Error, Debug)]
 pub enum KnystError {
+    /// Error making a connection inside a [`Graph`]
     #[error("There was an error adding or removing connections between nodes: {0}")]
     ConnectionError(#[from] graph::connection::ConnectionError),
+    /// Error freeing a node from a [`Graph`]
     #[error("There was an error freeing a node: {0}")]
     FreeError(#[from] graph::FreeError),
+    /// Error pushing a node to a [`Graph`]
     #[error("There was an error pushing a node: {0}]")]
     PushError(#[from] graph::PushError),
+    /// Error scheduling a change
     #[error("There was an error scheduling a change: {0}")]
     ScheduleError(#[from] graph::ScheduleError),
+    /// Error from creating a RunGraph
     #[error("There was an error with the RunGraph: {0}")]
     RunGraphError(#[from] graph::run_graph::RunGraphError),
+    /// Error from interacting with [`Resources`]
     #[error("Resources error : {0}")]
     ResourcesError(#[from] ResourcesError),
 }
 
+/// The current sample type used throughout Knyst
 pub type Sample = f32;
+/// Trait for
 pub trait AnyData: Downcast + Send + Debug {}
 impl_downcast!(AnyData);
 
@@ -108,6 +117,11 @@ pub enum StopAction {
     FreeGraphMendConnections,
 }
 impl StopAction {
+    /// Convert the [`StopAction`] into a [`GenState`].
+    ///
+    /// `stop_sample` is only used for the `FreeGraph` and
+    /// `FreeGraphMendConnections` variants to communicate from what sample time
+    /// the graph outputs should be 0.
     #[must_use]
     pub fn to_gen_state(&self, stop_sample: usize) -> GenState {
         match self {
@@ -125,8 +139,9 @@ impl StopAction {
 pub struct ResourcesSettings {
     /// The maximum number of wavetables that can be added to the Resources. The standard wavetables will always be available regardless.
     pub max_wavetables: usize,
-    /// The maximum number of buffers that can be added to the Resources
+    /// The maximum number of buffers that can be added to the Resources.
     pub max_buffers: usize,
+    /// The maximum number of user data objects that can be added.
     pub max_user_data: usize,
 }
 impl Default for ResourcesSettings {
@@ -139,22 +154,31 @@ impl Default for ResourcesSettings {
     }
 }
 
+/// Error from changing a [`Resources`]
 #[derive(thiserror::Error, Debug)]
 pub enum ResourcesError {
+    /// No space for more wavetables. Increase the `max_wavetables` setting if you need to hold more.
     #[error("There is not enough space to insert the given Wavetable. You can create a Resources with more space or remove old Wavetables")]
     WavetablesFull(Wavetable),
+    /// No space for more buffers. Increase the `max_buffers` setting if you need to hold more.
     #[error("There is not enough space to insert the given Buffer. You can create a Resources with more space or remove old Buffers")]
     BuffersFull(Buffer),
+    /// Tried to replace a buffer, but that buffer doesn't exist.
     #[error("The key for replacement did not exist.")]
     ReplaceBufferKeyInvalid(Buffer),
+    /// The `BufferId` doesn't match any buffer in the `Resources`.
     #[error("The id supplied does not match any buffer.")]
     BufferIdNotFound(BufferId),
+    /// The `WavetableId` doesn't match any wavetable in the `Resources`.
     #[error("The id supplied does not match any wavetable.")]
     WavetableIdNotFound(WavetableId),
+    /// Tried to replace a wavetable, but the WavetableKey supplied doesn't exist.
     #[error("The key for replacement did not exist.")]
     ReplaceWavetableKeyInvalid(Wavetable),
 }
 
+/// Used for holding either an Id (user facing identifier) or Key (internal
+/// identifier) for certain APIs.
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub enum IdOrKey<I, K>
 where
@@ -166,12 +190,19 @@ where
 }
 
 type IdType = u64;
+/// A unique id for a Buffer. Can be converted to a [`BufferKey`] by the [`Resources`].
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct BufferId(IdType);
 
 impl BufferId {
+    /// Generate a new unique `BufferId`
     pub fn new() -> Self {
         Self(NEXT_BUFFER_ID.fetch_add(1, std::sync::atomic::Ordering::Release))
+    }
+}
+impl Default for BufferId {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -179,12 +210,19 @@ impl BufferId {
 pub(crate) static NEXT_BUFFER_ID: AtomicU64 = AtomicU64::new(0);
 pub(crate) static NEXT_WAVETABLE_ID: AtomicU64 = AtomicU64::new(0);
 
+/// A unique id for a Wavetable. Can be converted to a [`WavetableKey`] by the [`Resources`].
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct WavetableId(IdType);
 
 impl WavetableId {
+    /// Generate a new unique `WavetableId`
     pub fn new() -> Self {
         Self(NEXT_WAVETABLE_ID.fetch_add(1, std::sync::atomic::Ordering::Release))
+    }
+}
+impl Default for WavetableId {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -201,10 +239,10 @@ impl From<WavetableId> for IdOrKey<WavetableId, WavetableKey> {
 ///
 /// You can also add any resource you need to be shared between nodes using [`AnyData`].
 pub struct Resources {
-    pub buffers: SlotMap<BufferKey, Buffer>,
-    pub buffer_ids: SecondaryMap<BufferKey, BufferId>,
-    pub wavetables: SlotMap<WavetableKey, Wavetable>,
-    pub wavetable_ids: SecondaryMap<WavetableKey, WavetableId>,
+    buffers: SlotMap<BufferKey, Buffer>,
+    buffer_ids: SecondaryMap<BufferKey, BufferId>,
+    wavetables: SlotMap<WavetableKey, Wavetable>,
+    wavetable_ids: SecondaryMap<WavetableKey, WavetableId>,
     /// UserData is meant for data that needs to be read by many nodes and
     /// updated for all of them simultaneously. Strings are used as keys for
     /// simplicity. A HopSlotMap could be used, but it would require sending and
@@ -214,9 +252,14 @@ pub struct Resources {
     /// to make Resources user extendable, plese get in touch.
     pub user_data: HashMap<String, Box<dyn AnyData>>,
 
+    /// A realtime safe shared random number generator
     pub rng: fastrand::Rng,
 }
 
+/// Command to modify the [`Resources`] instance while it is being used on the
+/// audio thread. Prefer the methods on [`KnystCommands`] to making these
+/// directly.
+#[allow(missing_docs)]
 pub enum ResourcesCommand {
     InsertBuffer {
         id: BufferId,
@@ -241,6 +284,10 @@ pub enum ResourcesCommand {
         wavetable: Wavetable,
     },
 }
+
+/// Response to a [`ResourcesCommand`]. Usually used to send anything that
+/// deallocates away from the audio thread, but also reports any errors.
+#[allow(missing_docs)]
 pub enum ResourcesResponse {
     InsertBuffer(Result<BufferKey, ResourcesError>),
     RemoveBuffer(Result<Option<Buffer>, ResourcesError>),
@@ -251,6 +298,7 @@ pub enum ResourcesResponse {
 }
 
 impl Resources {
+    /// Create a new `Resources` using `settings`
     #[must_use]
     pub fn new(settings: ResourcesSettings) -> Self {
         // let user_data = HopSlotMap::with_capacity_and_key(1000);

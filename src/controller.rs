@@ -1,3 +1,11 @@
+//! API for interacting with a running top level [`Graph`] from any number of
+//! threads without having to manually keep track of running [`Graph::update`]
+//! regularly.
+//!
+//! [`KnystCommands`] gives you a convenient API for sending messages to the
+//! [`Controller`]. The API is similar to calling methods on [`Graph`] directly,
+//! but also includes modifying [`Resources`].
+
 use std::time::{Duration, Instant};
 
 use crate::{
@@ -30,8 +38,6 @@ enum Command {
     ChangeMusicalTimeMap(Box<dyn FnOnce(&mut MusicalTimeMap) + Send>),
 }
 
-impl Command {}
-
 /// [`KnystCommands`] sends commands to the [`Controller`] which should hold the
 /// top level [`Graph`]. The API is as close as possible to that of an owned
 /// [`Graph`].
@@ -52,9 +58,11 @@ pub struct KnystCommands {
 }
 
 impl KnystCommands {
+    /// Push a Gen or Graph to the top level Graph without specifying any inputs.
     pub fn push_without_inputs(&mut self, gen_or_graph: impl GenOrGraph) -> NodeAddress {
         self.push_to_graph_without_inputs(gen_or_graph, self.top_level_graph_id)
     }
+    /// Push a Gen or Graph to the top level Graph.
     pub fn push(
         &mut self,
         gen_or_graph: impl GenOrGraph,
@@ -65,6 +73,7 @@ impl KnystCommands {
         self.connect_bundle(inputs.to(&addr));
         addr
     }
+    /// Push a Gen or Graph to the Graph with the specified id without specifying inputs.
     pub fn push_to_graph_without_inputs(
         &mut self,
         gen_or_graph: impl GenOrGraph,
@@ -79,6 +88,7 @@ impl KnystCommands {
         self.sender.send(command).unwrap();
         new_node_address
     }
+    /// Push a Gen or Graph to the Graph with the specified id.
     pub fn push_to_graph(
         &mut self,
         gen_or_graph: impl GenOrGraph,
@@ -90,29 +100,44 @@ impl KnystCommands {
         self.connect_bundle(inputs.to(&new_node_address));
         new_node_address
     }
+    /// Create a new connections
     pub fn connect(&mut self, connection: Connection) {
         self.sender.send(Command::Connect(connection)).unwrap();
     }
+    /// Make several connections at once using any of the ConnectionBundle
+    /// notations
     pub fn connect_bundle(&mut self, bundle: impl Into<ConnectionBundle>) {
         let bundle = bundle.into();
         for c in bundle.as_connections() {
             self.connect(c);
         }
     }
+    /// Disconnect (undo) a [`Connection`]
     pub fn disconnect(&mut self, connection: Connection) {
         self.sender.send(Command::Disconnect(connection)).unwrap();
     }
+    /// Free any nodes that are not currently connected to the graph's outputs
+    /// via any chain of connections.
     pub fn free_disconnected_nodes(&mut self) {
         self.sender.send(Command::FreeDisconnectedNodes).unwrap();
     }
+    /// Free a node and try to mend connections between the inputs and the
+    /// outputs of the node.
     pub fn free_node_mend_connections(&mut self, node: NodeAddress) {
         self.sender
             .send(Command::FreeNodeMendConnections(node))
             .unwrap();
     }
+    /// Free a node.
     pub fn free_node(&mut self, node: NodeAddress) {
         self.sender.send(Command::FreeNode(node)).unwrap();
     }
+    /// Schedule a change to be made.
+    ///
+    /// NB: Changes are buffered and the scheduler needs to be regularly updated
+    /// for them to be sent to the audio thread. If you are getting your
+    /// [`KnystCommands`] through `AudioBackend::start_processing` this is taken
+    /// care of automatically.
     pub fn schedule_change(&mut self, change: ParameterChange) {
         self.sender.send(Command::ScheduleChange(change)).unwrap();
     }

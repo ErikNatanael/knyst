@@ -107,6 +107,8 @@ impl RunGraph {
     pub fn graph_input_buffers(&mut self) -> &mut NodeBufferRef {
         &mut self.input_node_buffer_ref
     }
+    /// Receive and apply any commands to modify the [`Resources`]. Commands are
+    /// normally sent by a [`KnystCommands`] via a [`Controller`].
     pub fn run_resources_communication(&mut self, max_commands_to_process: usize) {
         let mut i = 0;
         while let Ok(command) = self.resources_command_receiver.pop() {
@@ -137,6 +139,8 @@ impl RunGraph {
     pub fn graph_output_buffers(&self) -> &NodeBufferRef {
         &self.output_node_buffer_ref
     }
+    /// Returns the block size of the resulting output and input buffer(s) of
+    /// the top level [`Graph`].
     pub fn block_size(&self) -> usize {
         self.output_node_buffer_ref.block_size()
     }
