@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::graph::{FreeError, ScheduleError};
+use crate::graph::{FreeError, Oversampling, ScheduleError};
 use crate::prelude::*;
 use crate::time::{Superbeats, Superseconds};
 use crate::{

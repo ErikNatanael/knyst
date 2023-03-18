@@ -10,7 +10,10 @@ use rtrb::Producer;
 use rubato::{FftFixedInOut, Resampler};
 use slotmap::SlotMap;
 
-use crate::{filter::HalfbandFilter, Resources};
+use crate::{
+    filter::{hiir::StandardDownsampler2X, HalfbandFilter},
+    Resources,
+};
 
 use super::{
     node::Node, Gen, GenContext, GenState, NodeBufferRef, NodeKey, Oversampling, OwnedRawBuffer,
@@ -315,6 +318,7 @@ pub(super) struct GraphConvertOversamplingGen {
     inputs_oversampled_buffers_ptr: Arc<OwnedRawBuffer>,
     inputs_oversampled_buffers: Vec<Vec<Sample>>,
     downsampling_filter: Vec<HalfbandFilter>,
+    downsamplers: Vec<StandardDownsampler2X>,
 }
 
 impl GraphConvertOversamplingGen {
@@ -367,6 +371,8 @@ impl GraphConvertOversamplingGen {
         let parent_inputs_oversampled_buffers_ptr = Arc::new(OwnedRawBuffer {
             ptr: parent_inputs_oversampled_buffers_ptr,
         });
+
+        let downsamplers = vec![StandardDownsampler2X::new(); num_output_channels];
         Self {
             graph_gen_node,
             oversampling_rate,
@@ -375,6 +381,7 @@ impl GraphConvertOversamplingGen {
             inputs_oversampled_buffers_ptr: parent_inputs_oversampled_buffers_ptr,
             inputs_oversampled_buffers,
             downsampling_filter: vec![HalfbandFilter::new(12, true); num_output_channels],
+            downsamplers,
         }
     }
 }
@@ -454,17 +461,28 @@ impl Gen for GraphConvertOversamplingGen {
                 }
         */
         // TODO: Use an antialiasing filter on the output here before copying
-        for ((from_graph, to_out), filter) in self
+        // for ((from_graph, to_out), filter) in self
+        //     .graph_gen_node
+        //     .output_buffers()
+        //     .iter()
+        //     .zip(ctx.outputs.iter_mut())
+        //     .zip(self.downsampling_filter.iter_mut())
+        // {
+        //     assert!(from_graph.len() / self.oversampling_rate == to_out.len());
+        //     for i in 0..(self.inner_block_size / self.oversampling_rate) {
+        //         to_out[i] = from_graph[i * self.oversampling_rate];
+        //     }
+        // }
+        for ((from_graph, to_out), downsampler) in self
             .graph_gen_node
             .output_buffers()
             .iter()
             .zip(ctx.outputs.iter_mut())
-            .zip(self.downsampling_filter.iter_mut())
+            .zip(self.downsamplers.iter_mut())
         {
-            assert!(from_graph.len() / self.oversampling_rate == to_out.len());
-            for i in 0..(self.inner_block_size / self.oversampling_rate) {
-                to_out[i] = from_graph[i * self.oversampling_rate];
-            }
+            // If we want more than 2x we need to stack downsamplers
+            assert!(from_graph.len() / 2 == to_out.len());
+            downsampler.process_block(from_graph, to_out);
         }
         // dbg!(ctx.outputs.get_channel(0));
         gen_state

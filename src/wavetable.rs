@@ -113,6 +113,18 @@ impl Wavetable {
         wt
     }
     #[must_use]
+    pub fn saw() -> Self {
+        let wavetable_size = TABLE_SIZE;
+        let mut wt = Wavetable::new();
+        // Fill buffer with a sine
+        let per_sample = 2.0 / wavetable_size as Sample;
+        for i in 0..wavetable_size {
+            wt.buffer[i] = -1. + per_sample * i as Sample;
+        }
+        wt.update_diff_buffer();
+        wt
+    }
+    #[must_use]
     pub fn multi_sine(num_harmonics: usize) -> Self {
         let mut wt = Wavetable::new();
         wt.fill_sine(num_harmonics, 1.0);
@@ -355,7 +367,6 @@ impl Gen for WavetableOscillatorOwned {
             self.set_freq(freq);
             *o = self.next_sample();
         }
-        // dbg!(output);
         GenState::Continue
     }
     fn input_desc(&self, input: usize) -> &'static str {
@@ -373,6 +384,9 @@ impl Gen for WavetableOscillatorOwned {
     fn init(&mut self, _block_size: usize, sample_rate: Sample) {
         self.freq_to_phase_inc =
             TABLE_SIZE as f64 * FRACTIONAL_PART as f64 * (1.0 / sample_rate as f64);
+    }
+    fn name(&self) -> &'static str {
+        "WavetableOscillatorOwned"
     }
 }
 
@@ -524,5 +538,8 @@ impl Gen for Oscillator {
     fn init(&mut self, _block_size: usize, sample_rate: Sample) {
         self.freq_to_phase_inc =
             TABLE_SIZE as f64 * FRACTIONAL_PART as f64 * (1.0 / sample_rate as f64);
+    }
+    fn name(&self) -> &'static str {
+        "Oscillator"
     }
 }

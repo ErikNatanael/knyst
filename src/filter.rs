@@ -1,6 +1,8 @@
 use core_simd::simd::f32x4;
 
 use crate::graph::{Gen, GenState};
+
+pub mod hiir;
 // use std::simd::f32x4;
 
 // below is a polyphase iir halfband filter (cutoff at fs/4) consisting of cascades of allpasses

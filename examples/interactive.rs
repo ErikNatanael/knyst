@@ -77,13 +77,12 @@ fn main() -> Result<()> {
     let env = k.push(env.to_gen(), inputs!());
     let amp = k.push(Mult, inputs!((0 ; node0.out(0)), (1 ; env.out(0))));
     k.connect(amp.to_graph_out().channels(2));
-    let filter = k.push(HalfbandFilter::new(6, false));
-    k.connect(amp.to(&filter));
+    // let filter = k.push(HalfbandFilter::new(12, true), inputs!((0 ; amp.out(0))));
     // k.connect(filter.to_graph_out().channels(2));
 
     let sub_graph = Graph::new(GraphSettings {
-        block_size: block_size / 2,
-        // block_size,
+        // block_size: block_size / 2,
+        block_size,
         sample_rate,
         num_outputs,
         oversampling: knyst::graph::Oversampling::X2,

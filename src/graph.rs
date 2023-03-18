@@ -2736,6 +2736,25 @@ impl Graph {
     fn get_nodes(&self) -> &SlotMap<NodeKey, Node> {
         unsafe { &*self.nodes.get() }
     }
+
+    pub fn dump_nodes(&self) -> Vec<NodeDump> {
+        let mut dump = Vec::new();
+        let nodes = self.get_nodes();
+        for key in nodes.keys() {
+            if let Some(graph) = self.graphs_per_node.get(key) {
+                dump.push(NodeDump::Graph(graph.dump_nodes()));
+            } else {
+                dump.push(NodeDump::Node(nodes.get(key).unwrap().name.to_string()))
+            }
+        }
+        dump
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum NodeDump {
+    Node(String),
+    Graph(Vec<NodeDump>),
 }
 
 /// Safety: The GraphGen is given access to an Arc<UnsafeCell<SlotMap<NodeKey,
