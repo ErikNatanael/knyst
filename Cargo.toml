@@ -65,7 +65,6 @@ tokio = {version = "1.26.0", features=["rt", "time", "macros", "rt-multi-thread"
 name = "large_sine_graph"
 harness = false
 
-
 [[example]]
 name = "jack_example"
 path = "examples/jack_example.rs"
