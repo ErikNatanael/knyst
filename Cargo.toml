@@ -41,7 +41,6 @@ cpal = {version = "0.14.0", optional = true }
 crossbeam-channel = "0.5.6"
 serde = { version = "1.0", features = ["derive"], optional = true }
 assert_no_alloc = { version = "1.1.2" }
-rubato = "0.12.0"
 # For portable simd for bandlimit filter
 core_simd = { git = "https://github.com/rust-lang/portable-simd" }
 
@@ -72,6 +71,10 @@ harness = false
 [[example]]
 name = "jack_example"
 path = "examples/jack_example.rs"
+required-features = ["jack"]
+[[example]]
+name = "jack_filter_test"
+path = "examples/jack_filter_test.rs"
 required-features = ["jack"]
 
 [[example]]

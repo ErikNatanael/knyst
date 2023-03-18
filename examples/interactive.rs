@@ -3,7 +3,6 @@ use knyst::{
     audio_backend::{CpalBackend, CpalBackendOptions},
     controller::{self, KnystCommands},
     envelope::{Curve, Envelope},
-    filter::HalfbandFilter,
     graph::{ClosureGen, Mult, NodeAddress},
     inputs,
     prelude::*,
@@ -42,6 +41,7 @@ fn main() -> Result<()> {
     let top_level_graph = Graph::new(GraphSettings {
         block_size,
         sample_rate,
+        oversampling: knyst::graph::Oversampling::X2,
         num_outputs: backend.num_outputs(),
         ..Default::default()
     });
@@ -77,8 +77,6 @@ fn main() -> Result<()> {
     let env = k.push(env.to_gen(), inputs!());
     let amp = k.push(Mult, inputs!((0 ; node0.out(0)), (1 ; env.out(0))));
     k.connect(amp.to_graph_out().channels(2));
-    // let filter = k.push(HalfbandFilter::new(12, true), inputs!((0 ; amp.out(0))));
-    // k.connect(filter.to_graph_out().channels(2));
 
     let sub_graph = Graph::new(GraphSettings {
         // block_size: block_size / 2,
@@ -341,7 +339,7 @@ fn handle_special_keys(c: char, mut k: KnystCommands, state: &mut State) -> bool
             // Here's an example of what you mustn't do. If you run this program
             // in debug mode it should panic because of assert_no_alloc.
             k.push(
-                gen(|ctx, resources| {
+                gen(|ctx, _resources| {
                     let out = ctx.outputs.iter_mut().next().unwrap();
                     let new_allocation: Vec<Sample> = ctx
                         .inputs

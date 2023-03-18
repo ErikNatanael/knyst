@@ -7,13 +7,9 @@ use std::{
 };
 
 use rtrb::Producer;
-use rubato::{FftFixedInOut, Resampler};
 use slotmap::SlotMap;
 
-use crate::{
-    filter::{hiir::StandardDownsampler2X, HalfbandFilter},
-    Resources,
-};
+use crate::{filter::hiir::StandardDownsampler2X, Resources};
 
 use super::{
     node::Node, Gen, GenContext, GenState, NodeBufferRef, NodeKey, Oversampling, OwnedRawBuffer,
@@ -60,7 +56,10 @@ pub(super) fn make_graph_gen(
     // Then convert sample rate further if necessary.
     // Then convert block size if necessary.
     let graph_gen: Box<dyn Gen + Send + 'static> = if oversampling != parent_oversampling {
-        let graph_oversampling_converter = GraphConvertOversamplingGen::new(
+        if num_inputs > 0 {
+            panic!("Oversampling is currently not implemented for Graphs with inputs. This will be supported in the future.");
+        }
+        let graph_oversampling_converter = GraphConvertOversampling2XGen::new(
             Node::new("GraphConvertOversamplingGen", graph_gen),
             parent_sample_rate as usize * parent_oversampling.as_usize(),
             sample_rate as usize * oversampling.as_usize(),
@@ -303,25 +302,16 @@ impl Gen for GraphBlockConverterGen {
 
 unsafe impl Send for GraphBlockConverterGen {}
 
-pub(super) struct GraphConvertOversamplingGen {
+pub(super) struct GraphConvertOversampling2XGen {
     graph_gen_node: Node,
-    oversampling_rate: usize,
     /// Inner GraphGen sample rate with oversampling applied
     inner_sample_rate: Sample,
     /// Inner block size with oversampling applied
     inner_block_size: usize,
-    /// This buffer is used to hold the inputs to the inner graph so that they
-    /// can be passed to the node. It only needs to have as many channels as the
-    /// inner node has inputs. It could have been a Vec if not for the interface
-    /// for calling Node::process which needs to work with raw pointers in every
-    /// other situation.
-    inputs_oversampled_buffers_ptr: Arc<OwnedRawBuffer>,
-    inputs_oversampled_buffers: Vec<Vec<Sample>>,
-    downsampling_filter: Vec<HalfbandFilter>,
     downsamplers: Vec<StandardDownsampler2X>,
 }
 
-impl GraphConvertOversamplingGen {
+impl GraphConvertOversampling2XGen {
     pub(super) fn new(
         graph_gen_node: Node,
         parent_sample_rate: usize,
@@ -329,10 +319,7 @@ impl GraphConvertOversamplingGen {
         parent_block_size: usize,
         inner_block_size: usize,
     ) -> Self {
-        dbg!(inner_sample_rate);
-        dbg!(parent_sample_rate);
-        dbg!(inner_block_size);
-        let num_input_channels = graph_gen_node.num_inputs();
+        // let num_input_channels = graph_gen_node.num_inputs();
         let num_output_channels = graph_gen_node.num_outputs();
         let oversampling_rate = if inner_sample_rate > parent_sample_rate {
             assert_eq!(inner_sample_rate % parent_sample_rate, 0);
@@ -349,43 +336,39 @@ impl GraphConvertOversamplingGen {
             );
             parent_sample_rate / inner_sample_rate
         };
-        dbg!(oversampling_rate);
-        let inputs_oversampled_buffers = vec![vec![0.0; inner_block_size]; num_input_channels];
-        // let inputs_buffer =
-        //     vec![
-        //         vec![0.0; parent_block_size * inner_sample_rate / parent_sample_rate];
-        //         graph_gen_node.num_inputs()
-        //     ];
-        // let outputs_buffer =
-        //     vec![vec![0.0 as Sample; parent_block_size]; graph_gen_node.num_outputs()];
-        let inner_outputs_conversion =
-            vec![vec![0.0 as Sample; inner_block_size]; graph_gen_node.num_outputs()];
-        // let inner_outputs_conversion = output_resampler.input_buffer_allocate();
-        let parent_inputs_conversion =
-            vec![vec![0.0 as Sample; parent_block_size]; graph_gen_node.num_inputs()];
-        // let parent_inputs_conversion = input_resampler.input_buffer_allocate();
+        assert!(oversampling_rate == 2);
+        // let inputs_oversampled_buffers = vec![vec![0.0; inner_block_size]; num_input_channels];
+        // // let inputs_buffer =
+        // //     vec![
+        // //         vec![0.0; parent_block_size * inner_sample_rate / parent_sample_rate];
+        // //         graph_gen_node.num_inputs()
+        // //     ];
+        // // let outputs_buffer =
+        // //     vec![vec![0.0 as Sample; parent_block_size]; graph_gen_node.num_outputs()];
+        // let inner_outputs_conversion =
+        //     vec![vec![0.0 as Sample; inner_block_size]; graph_gen_node.num_outputs()];
+        // // let inner_outputs_conversion = output_resampler.input_buffer_allocate();
+        // let parent_inputs_conversion =
+        //     vec![vec![0.0 as Sample; parent_block_size]; graph_gen_node.num_inputs()];
+        // // let parent_inputs_conversion = input_resampler.input_buffer_allocate();
 
-        let parent_inputs_oversampled_buffers_ptr = Box::<[Sample]>::into_raw(
-            vec![0.0 as Sample; inner_block_size * graph_gen_node.num_inputs()].into_boxed_slice(),
-        );
-        let parent_inputs_oversampled_buffers_ptr = Arc::new(OwnedRawBuffer {
-            ptr: parent_inputs_oversampled_buffers_ptr,
-        });
+        // let parent_inputs_oversampled_buffers_ptr = Box::<[Sample]>::into_raw(
+        //     vec![0.0 as Sample; inner_block_size * graph_gen_node.num_inputs()].into_boxed_slice(),
+        // );
+        // let parent_inputs_oversampled_buffers_ptr = Arc::new(OwnedRawBuffer {
+        //     ptr: parent_inputs_oversampled_buffers_ptr,
+        // });
 
         let downsamplers = vec![StandardDownsampler2X::new(); num_output_channels];
         Self {
             graph_gen_node,
-            oversampling_rate,
             inner_sample_rate: inner_sample_rate as Sample,
             inner_block_size,
-            inputs_oversampled_buffers_ptr: parent_inputs_oversampled_buffers_ptr,
-            inputs_oversampled_buffers,
-            downsampling_filter: vec![HalfbandFilter::new(12, true); num_output_channels],
             downsamplers,
         }
     }
 }
-impl Gen for GraphConvertOversamplingGen {
+impl Gen for GraphConvertOversampling2XGen {
     fn process(&mut self, ctx: GenContext, resources: &mut Resources) -> GenState {
         // let input_buffers = if self.graph_gen_node.num_inputs() > 0 {
         //     // Convert inputs to the inner sample rate
@@ -514,7 +497,7 @@ impl Gen for GraphConvertOversamplingGen {
     }
 }
 
-unsafe impl Send for GraphConvertOversamplingGen {}
+unsafe impl Send for GraphConvertOversampling2XGen {}
 
 /// This gets placed as a dyn Gen in a Node in a Graph. It's how the Graph gets
 /// run. The Graph communicates with the GraphGen in a thread safe way.

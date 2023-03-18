@@ -553,7 +553,10 @@ impl GenOrGraph for Graph {
             panic!("Warning: You are pushing a graph with a larger block size and with Graph inputs. An inner Graph with a larger block size cannot have inputs since the inputs for the entire inner block would not have been calculated yet.")
         }
         if self.sample_rate != parent_graph_sample_rate {
-            eprintln!("Warning: You are pushing a graph with a different sample rate. This is currently allowed, but expect bugs unless you deal with resampling manually.")
+            eprintln!("Warning: You are pushing a graph with a different sample rate. This is currently allowed, but no automatic resampling will be allowed.");
+        }
+        if self.oversampling.as_usize() < parent_graph_oversampling.as_usize() {
+            panic!("You tried to push an inner graph with lower oversampling than its parent. This is not currently allowed.");
         }
         // Create the GraphGen from the new Graph
         let gen = self
@@ -758,30 +761,30 @@ new_key_type! {
 pub enum Oversampling {
     X1,
     X2,
-    X4,
-    X8,
-    X16,
-    X32,
+    // X4,
+    // X8,
+    // X16,
+    // X32,
 }
 impl Oversampling {
     pub fn as_usize(&self) -> usize {
         match self {
             Oversampling::X1 => 1,
             Oversampling::X2 => 2,
-            Oversampling::X4 => 4,
-            Oversampling::X8 => 8,
-            Oversampling::X16 => 16,
-            Oversampling::X32 => 32,
+            // Oversampling::X4 => 4,
+            // Oversampling::X8 => 8,
+            // Oversampling::X16 => 16,
+            // Oversampling::X32 => 32,
         }
     }
     pub fn from_usize(x: usize) -> Option<Self> {
         match x {
             1 => Some(Oversampling::X1),
             2 => Some(Oversampling::X2),
-            4 => Some(Oversampling::X4),
-            8 => Some(Oversampling::X8),
-            16 => Some(Oversampling::X16),
-            32 => Some(Oversampling::X32),
+            // 4 => Some(Oversampling::X4),
+            // 8 => Some(Oversampling::X8),
+            // 16 => Some(Oversampling::X16),
+            // 32 => Some(Oversampling::X32),
             _ => None,
         }
     }
@@ -1004,10 +1007,7 @@ impl Graph {
         let graph_gen =
             self.create_graph_gen(self.block_size, self.sample_rate, Oversampling::X1)?;
         let mut node = Node::new("graph", graph_gen);
-        node.init(
-            block_size * self.oversampling.as_usize(),
-            self.sample_rate * self.oversampling.as_usize() as f32,
-        );
+        node.init(block_size, self.sample_rate);
         self.recalculation_required = true;
         Ok(node)
     }
