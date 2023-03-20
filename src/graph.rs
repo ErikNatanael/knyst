@@ -1688,6 +1688,18 @@ impl Graph {
                 if source.key == sink.key {
                     return Err(ConnectionError::SameNode);
                 }
+                if !self.get_nodes().contains_key(source.key) {
+                    return Err(ConnectionError::NodeNotFound);
+                }
+                if !self.get_nodes().contains_key(sink.key) {
+                    return Err(ConnectionError::NodeNotFound);
+                }
+                if self.node_keys_pending_removal.contains(&source.key) {
+                    return Err(ConnectionError::NodeNotFound);
+                }
+                if self.node_keys_pending_removal.contains(&sink.key) {
+                    return Err(ConnectionError::NodeNotFound);
+                }
                 let to_index = if input_index.is_some() {
                     if let Some(i) = input_index {
                         i
@@ -1806,6 +1818,12 @@ impl Graph {
                     if sink.graph_id != self.id {
                         return try_disconnect_in_child_graphs(connection.clone());
                     }
+                    if !self.get_nodes().contains_key(sink.key) {
+                        return Err(ConnectionError::NodeNotFound);
+                    }
+                    if self.node_keys_pending_removal.contains(&sink.key) {
+                        return Err(ConnectionError::NodeNotFound);
+                    }
 
                     let input = if input_index.is_some() {
                         if let Some(i) = input_index {
@@ -1857,6 +1875,12 @@ impl Graph {
                 };
                 if source.graph_id != self.id {
                     return try_disconnect_in_child_graphs(connection.clone());
+                }
+                if !self.get_nodes().contains_key(source.key) {
+                    return Err(ConnectionError::NodeNotFound);
+                }
+                if self.node_keys_pending_removal.contains(&source.key) {
+                    return Err(ConnectionError::NodeNotFound);
                 }
                 if channels + to_index > self.num_outputs {
                     return Err(ConnectionError::ChannelOutOfBounds);
@@ -1911,6 +1935,12 @@ impl Graph {
                 };
                 if sink.graph_id != self.id {
                     return try_disconnect_in_child_graphs(connection.clone());
+                }
+                if !self.get_nodes().contains_key(sink.key) {
+                    return Err(ConnectionError::NodeNotFound);
+                }
+                if self.node_keys_pending_removal.contains(&sink.key) {
+                    return Err(ConnectionError::NodeNotFound);
                 }
                 let to_index = if to_index.is_some() {
                     if let Some(i) = to_index {
@@ -2025,6 +2055,18 @@ impl Graph {
                 if source.key == sink.key {
                     return Err(ConnectionError::SameNode);
                 }
+                if !self.get_nodes().contains_key(source.key) {
+                    return Err(ConnectionError::NodeNotFound);
+                }
+                if !self.get_nodes().contains_key(sink.key) {
+                    return Err(ConnectionError::NodeNotFound);
+                }
+                if self.node_keys_pending_removal.contains(&source.key) {
+                    return Err(ConnectionError::NodeNotFound);
+                }
+                if self.node_keys_pending_removal.contains(&sink.key) {
+                    return Err(ConnectionError::NodeNotFound);
+                }
                 let to_index = if input_index.is_some() {
                     if let Some(i) = input_index {
                         i
@@ -2136,6 +2178,12 @@ impl Graph {
                     if sink.graph_id != self.id {
                         return try_connect_to_graphs(connection);
                     }
+                    if !self.get_nodes().contains_key(sink.key) {
+                        return Err(ConnectionError::NodeNotFound);
+                    }
+                    if self.node_keys_pending_removal.contains(&sink.key) {
+                        return Err(ConnectionError::NodeNotFound);
+                    }
 
                     let input = if input_index.is_some() {
                         if let Some(i) = input_index {
@@ -2191,8 +2239,13 @@ impl Graph {
                 if source.graph_id != self.id {
                     return try_connect_to_graphs(connection);
                 }
+                if !self.get_nodes().contains_key(source.key) {
+                    return Err(ConnectionError::NodeNotFound);
+                }
+                if self.node_keys_pending_removal.contains(&source.key) {
+                    return Err(ConnectionError::NodeNotFound);
+                }
 
-                // TODO: Check that the source key exists first
                 let num_source_outputs = self
                     .node_output_index_to_name
                     .get(source.key)
@@ -2245,6 +2298,12 @@ impl Graph {
                 if sink.graph_id != self.id {
                     return try_connect_to_graphs(connection);
                 }
+                if !self.get_nodes().contains_key(sink.key) {
+                    return Err(ConnectionError::NodeNotFound);
+                }
+                if self.node_keys_pending_removal.contains(&sink.key) {
+                    return Err(ConnectionError::NodeNotFound);
+                }
                 // Find the index number, potentially from the label
                 let to_index = if to_index.is_some() {
                     if let Some(i) = to_index {
@@ -2293,6 +2352,12 @@ impl Graph {
 
                 if node.graph_id != self.id {
                     return try_connect_to_graphs(connection);
+                }
+                if !self.get_nodes().contains_key(node.key) {
+                    return Err(ConnectionError::NodeNotFound);
+                }
+                if self.node_keys_pending_removal.contains(&node.key) {
+                    return Err(ConnectionError::NodeNotFound);
                 }
                 if input_nodes {
                     let mut nodes_to_free = HashSet::new();
