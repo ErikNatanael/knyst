@@ -9,12 +9,13 @@ Knyst is a real time audio synthesis framework focusing on flexibility and perfo
 # Features
 
 - good runtime performance
+- real time changes to the audio graph via an async compatible interface
+- sample accurate node and parameter change scheduling to the graph
 - interopability with static Rust DSP libraries e.g. dasp and fundsp (they can be encapsulated in a node and added to the graph)
-- real time changes to the audio graph
-- sample accurate parameter changes
 - graphs can be nodes and changes can be applied to graphs within graphs at any depth
 - feedback connections to get a 1 block delayed output of a node
 - any number of inputs/outputs from a node
+- allows inner graphs with different block sizes using automatic buffering where necessary
 - choose your level of flexibility and optimisation: create a graph with lots of interconnected nodes or hard code it all into one node when you need more performance
 
 # Safety
@@ -25,13 +26,11 @@ Knyst uses a little bit of unsafe under the hood to improve performance in the m
 
 Vision for the future
 
-- sample accurate node addition to the graph
-- sample accurate connection change to the graph
 - automatic parameter change interpolation
 - automatic GUI generation from the graph incl. interactively changing connections and parameters
+- tools for musical time scheduling incl phrasing options e.g. rubato, accel./rit. and asymmetric time signatures
 - parallel processing of large graphs
 - automatic sample rate conversion
-- allowing graphs with differenc block sizes using automatic buffering
 - support no_std for embedded platforms
 
 # License
