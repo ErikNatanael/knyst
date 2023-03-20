@@ -12,7 +12,7 @@
 use anyhow::Result;
 use knyst::{
     audio_backend::{CpalBackend, CpalBackendOptions},
-    controller::{self, KnystCommands},
+    controller::KnystCommands,
     envelope::{Curve, Envelope},
     graph::{ClosureGen, Mult, NodeAddress},
     inputs,
