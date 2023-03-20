@@ -81,6 +81,7 @@ impl Superseconds {
     }
 
     /// Returns self - other if self is bigger than or equal to other, otherwise a SubsampleTime at 0
+    #[must_use]
     pub fn checked_sub(self, rhs: Self) -> Option<Self> {
         if self < rhs {
             None

@@ -7,6 +7,7 @@
 //!
 use crate::{
     graph::{self, Gen, GenState},
+    time::Superseconds,
     Sample,
 };
 
@@ -75,7 +76,16 @@ impl Gen for OnceTrig {
 /// *outputs*
 /// 0. "trig": A trigger sent at the interval.
 pub struct IntervalTrig {
-    counter: Vec<Sample>,
+    // counter: Vec<Sample>,
+    counter: Superseconds,
+}
+impl IntervalTrig {
+    #[allow(missing_docs)]
+    pub fn new() -> Self {
+        Self {
+            counter: Superseconds::ZERO,
+        }
+    }
 }
 
 impl Gen for IntervalTrig {
@@ -86,22 +96,20 @@ impl Gen for IntervalTrig {
     ) -> graph::GenState {
         let intervals_in_seconds = ctx.inputs.get_channel(0);
         let output = ctx.outputs.iter_mut().next().unwrap();
-        let mut counter_subtract = 0.0;
-        for ((interval, trig_out), count) in intervals_in_seconds
-            .iter()
-            .zip(output.iter_mut())
-            .zip(self.counter.iter_mut())
-        {
-            let interval_sample = *interval * ctx.sample_rate;
-            *trig_out = if (*count - counter_subtract) >= interval_sample {
-                counter_subtract += interval_sample;
+        let one_sample = Superseconds::from_samples(1, ctx.sample_rate as u64);
+        for (interval, trig_out) in intervals_in_seconds.iter().zip(output.iter_mut()) {
+            // Adding first makes the time until the first trigger the same as
+            // the time between subsequent triggers so it is more consistent.
+            self.counter += one_sample;
+            *trig_out = if self.counter.to_seconds_f64() as f32 >= *interval {
+                self.counter = self
+                    .counter
+                    .checked_sub(Superseconds::from_seconds_f64(*interval as f64))
+                    .unwrap();
                 1.0
             } else {
                 0.0
             };
-        }
-        for (i, count) in self.counter.iter_mut().enumerate() {
-            *count += i as f32 - counter_subtract;
         }
         GenState::Continue
     }
@@ -118,14 +126,63 @@ impl Gen for IntervalTrig {
         "trig"
     }
 
-    fn init(&mut self, block_size: usize, _sample_rate: graph::Sample) {
-        self.counter = vec![0.0; block_size];
-        for (i, count) in self.counter.iter_mut().enumerate() {
-            *count += i as f32;
-        }
+    fn init(&mut self, _block_size: usize, _sample_rate: graph::Sample) {
+        self.counter = Superseconds::ZERO;
     }
 
     fn name(&self) -> &'static str {
         "IntervalTrig"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use crate::prelude::*;
+    use crate::time::Superseconds;
+    use crate::trig::IntervalTrig;
+    use crate::*;
+    #[test]
+    fn regular_interval_trig() {
+        const SR: u64 = 44100;
+        const BLOCK_SIZE: usize = 128 as usize;
+        let graph_settings = GraphSettings {
+            block_size: BLOCK_SIZE,
+            sample_rate: SR as f32,
+            num_outputs: 2,
+            ..Default::default()
+        };
+        let mut graph = Graph::new(graph_settings);
+        let node = graph.push(IntervalTrig::new());
+        graph.connect(node.to_graph_out()).unwrap();
+        let every_8_samples = Superseconds::from_samples(8, SR).to_seconds_f64();
+        graph
+            .connect(constant(every_8_samples as f32).to(&node))
+            .unwrap();
+        let (mut run_graph, _, _) = RunGraph::new(
+            &mut graph,
+            Resources::new(ResourcesSettings::default()),
+            RunGraphSettings {
+                scheduling_latency: Duration::new(0, 0),
+            },
+        )
+        .unwrap();
+        graph.update();
+        run_graph.process_block();
+        // The 8th sample should be 1.0 and then every 8th sample after that
+        for (i, out) in run_graph
+            .graph_output_buffers()
+            .get_channel(0)
+            .iter()
+            .skip(7)
+            .enumerate()
+        {
+            assert_eq!(
+                *out,
+                if i % 8 == 0 { 1.0 } else { 0.0 },
+                "Failed at sample {i}"
+            );
+        }
     }
 }
