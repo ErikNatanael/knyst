@@ -71,7 +71,9 @@ use super::Resources;
 /// Each node contains a trait object on the heap with the sound generating object, a `Box<dyn Gen>` Each
 /// edge/connection specifies between which output/input of the nodes data is mapped.
 
+/// Current sample type of Knyst
 pub type Sample = f32;
+/// Unique id identifying a [`Graph`]. Is set from an atomic any time a [`Graph`] is created.
 pub type GraphId = u64;
 
 /// Get a unique id for a Graph from this by using `fetch_add`
@@ -120,6 +122,7 @@ impl From<RawNodeAddress> for NodeAddress {
 }
 
 impl NodeAddress {
+    /// Create a new [`Self`] not yet connected to a specific node, but with a unique id.
     pub fn new() -> Self {
         Self {
             unique_id: NEXT_ADDRESS_ID.fetch_add(1, Ordering::Relaxed),
@@ -158,6 +161,7 @@ impl NodeAddress {
             }
         }
     }
+    /// Retreive [`GraphId`] if one is set.
     pub fn graph_id(&self) -> Option<GraphId> {
         match self.graph_id.read() {
             Ok(data) => *data,
@@ -168,6 +172,7 @@ impl NodeAddress {
             }
         }
     }
+    /// Convert to a [`RawNodeAddress`] if possible.
     pub fn to_raw(&self) -> Option<RawNodeAddress> {
         match (self.node_key(), self.graph_id()) {
             (Some(node_key), Some(graph_id)) => Some(RawNodeAddress {
@@ -177,6 +182,7 @@ impl NodeAddress {
             _ => None,
         }
     }
+    /// Create a [`NodeOutput`] based on `self` and a specific channel.
     pub fn out(&self, channel: impl Into<connection::NodeChannel>) -> NodeOutput {
         NodeOutput {
             from_node: self.clone(),
@@ -186,6 +192,7 @@ impl NodeAddress {
 }
 
 impl NodeAddress {
+    /// Create a [`Connection`] from `self` to `sink_node`
     pub fn to(&self, sink_node: &NodeAddress) -> Connection {
         Connection::Node {
             source: self.clone(),
@@ -198,6 +205,7 @@ impl NodeAddress {
             feedback: false,
         }
     }
+    /// Create a [`Connection`] from `self` to a graph output.
     pub fn to_graph_out(&self) -> Connection {
         Connection::GraphOutput {
             source: self.clone(),
@@ -207,6 +215,7 @@ impl NodeAddress {
             channels: 1,
         }
     }
+    /// Create a feedback [`Connection`] from `self` to `sink_node`.
     pub fn feedback_to(&self, sink_node: &NodeAddress) -> Connection {
         Connection::Node {
             source: self.clone(),
@@ -221,8 +230,10 @@ impl NodeAddress {
     }
 }
 
+/// Convenience struct for the notation `GraphInput::to(node)`
 pub struct GraphInput;
 impl GraphInput {
+    /// Create a [`Connection`] from a graph input to `sink_node`
     pub fn to(sink_node: NodeAddress) -> Connection {
         Connection::GraphInput {
             from_index: 0,
@@ -234,63 +245,77 @@ impl GraphInput {
     }
 }
 
+/// A parameter (input constant) change to be scheduled on a [`Graph`].
 #[derive(Clone)]
 pub struct ParameterChange {
-    pub time: TimeKind,
+    /// When to apply the parameter change
+    pub time: Time,
+    /// What node to change
     pub node: NodeAddress,
+    /// Channel index
     pub input_index: Option<usize>,
+    /// Channel label, index takes precedence if both are set
     pub input_label: Option<&'static str>,
+    /// New value of the input constant
     pub value: Sample,
 }
 
 impl ParameterChange {
+    /// Schedule a change at a specific time in [`Superbeats`]
     pub fn beats(node: NodeAddress, value: Sample, beats: Superbeats) -> Self {
         Self {
             node,
             value,
-            time: TimeKind::Beats(beats),
+            time: Time::Beats(beats),
             input_index: None,
             input_label: None,
         }
     }
+    /// Schedule a change at a specific time in [`Superseconds`]
     pub fn superseconds(node: NodeAddress, value: Sample, superseconds: Superseconds) -> Self {
         Self {
             node,
             value,
-            time: TimeKind::Superseconds(superseconds),
+            time: Time::Superseconds(superseconds),
             input_index: None,
             input_label: None,
         }
     }
+    /// Schedule a change at a duration from right now.
     pub fn duration_from_now(node: NodeAddress, value: Sample, from_now: Duration) -> Self {
         Self {
             node,
             value,
-            time: TimeKind::DurationFromNow(from_now),
+            time: Time::DurationFromNow(from_now),
             input_index: None,
             input_label: None,
         }
     }
+    /// Schedule a change as soon as possible.
     pub fn now(node: NodeAddress, value: Sample) -> Self {
         Self {
             node,
             value,
-            time: TimeKind::Immediately,
+            time: Time::Immediately,
             input_index: None,
             input_label: None,
         }
     }
+    /// Set the index of the input channel to change
     pub fn index(self, index: usize) -> Self {
         self.i(index)
     }
+    /// Set the index of the input channel to change
     pub fn i(mut self, index: usize) -> Self {
         self.input_index = Some(index);
         self.input_label = None;
         self
     }
+    /// Set the label of the input channel to change
     pub fn label(self, label: &'static str) -> Self {
         self.l(label)
     }
+    /// Set the label of the input channel to change
     pub fn l(mut self, label: &'static str) -> Self {
         self.input_label = Some(label);
         self.input_index = None;
@@ -298,8 +323,10 @@ impl ParameterChange {
     }
 }
 
+/// Used to specify a time when a parameter change should be applied.
+#[allow(missing_docs)]
 #[derive(Clone, Copy)]
-pub enum TimeKind {
+pub enum Time {
     Beats(Superbeats),
     DurationFromNow(Duration),
     Superseconds(Superseconds),
@@ -428,12 +455,16 @@ struct OutputTask {
 }
 unsafe impl Send for OutputTask {}
 
+/// Error pushing a new node (Gen or Graph) to a Graph
+#[allow(missing_docs)]
 #[derive(thiserror::Error, Debug)]
 pub enum PushError {
     #[error("The target graph was not found. The GenOrGraph that was pushed is returned.")]
     GraphNotFound(GenOrGraphEnum),
 }
 
+/// Error freeing a node in a Graph
+#[allow(missing_docs)]
 #[derive(thiserror::Error, Debug, PartialEq)]
 pub enum FreeError {
     #[error("The graph containing the NodeAdress provided was not found. The node itself may or may not exist.")]
@@ -443,6 +474,7 @@ pub enum FreeError {
     #[error("The free action required making a new connection, but the connection failed.")]
     ConnectionError(#[from] Box<connection::ConnectionError>),
 }
+#[allow(missing_docs)]
 #[derive(thiserror::Error, Debug, PartialEq, Eq)]
 pub enum ScheduleError {
     #[error("The graph containing the NodeAdress provided was not found. The node itself may or may not exist.")]
@@ -457,6 +489,8 @@ pub enum ScheduleError {
     MusicalTimeMapCannotBeWrittenTo,
 }
 
+/// Holds either a boxed [`Gen`] or a [`Graph`]
+#[allow(missing_docs)]
 pub enum GenOrGraphEnum {
     Gen(Box<dyn Gen + Send>),
     Graph(Graph),
@@ -511,6 +545,7 @@ impl<T: GenOrGraph> From<T> for GenOrGraphEnum {
 ///
 /// ToNode allows us to generically push either something that implements Gen or
 /// a Graph using the same API.
+#[allow(missing_docs)]
 pub trait GenOrGraph {
     fn components(
         self,
@@ -607,8 +642,11 @@ pub trait Gen {
 
 /// Gives access to the inputs and outputs buffers of a node for processing.
 pub struct GenContext<'a, 'b> {
+    /// Input buffers to the Gen.
     pub inputs: &'a NodeBufferRef,
+    /// Output buffers the Gen is supposed to fill.
     pub outputs: &'b mut NodeBufferRef,
+    /// The sample rate of the [`GraphGen`] that the current Gen is in.
     pub sample_rate: Sample,
 }
 impl<'a, 'b> GenContext<'a, 'b> {
@@ -757,6 +795,8 @@ new_key_type! {
     struct NodeKey;
 }
 
+/// Describes the oversampling applied to a graph
+#[allow(missing_docs)]
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub enum Oversampling {
     X1,
@@ -767,6 +807,7 @@ pub enum Oversampling {
     // X32,
 }
 impl Oversampling {
+    /// Convert the oversampling ratio to a usize
     pub fn as_usize(&self) -> usize {
         match self {
             Oversampling::X1 => 1,
@@ -777,6 +818,7 @@ impl Oversampling {
             // Oversampling::X32 => 32,
         }
     }
+    /// Create Self from a ratio if that ratio is supported
     pub fn from_usize(x: usize) -> Option<Self> {
         match x {
             1 => Some(Oversampling::X1),
@@ -793,6 +835,7 @@ impl Oversampling {
 /// Pass to Graph::new to set the options the Graph is created with in an ergonomic and clear way.
 #[derive(Clone, Debug)]
 pub struct GraphSettings {
+    /// The name of the Graph
     pub name: String,
     /// The number of inputs to the Graph
     pub num_inputs: usize,
@@ -942,6 +985,7 @@ impl Default for Graph {
 }
 
 impl Graph {
+    /// Create a new empty [`Graph`] with a unique atomically generated [`GraphId`]
     pub fn new(options: GraphSettings) -> Self {
         let GraphSettings {
             name,
@@ -1012,9 +1056,11 @@ impl Graph {
         Ok(node)
     }
 
+    /// Return the number of input channels to the Graph
     pub fn num_inputs(&self) -> usize {
         self.num_inputs
     }
+    /// Return the number of output channels from the Graph
     pub fn num_outputs(&self) -> usize {
         self.num_outputs
     }
@@ -1036,6 +1082,7 @@ impl Graph {
     pub fn num_stored_nodes(&self) -> usize {
         self.get_nodes().len()
     }
+    #[allow(missing_docs)]
     pub fn id(&self) -> GraphId {
         self.id
     }
@@ -1536,6 +1583,9 @@ impl Graph {
         }
     }
 
+    /// Schedule a change to an input channel constant. The change will only be
+    /// applied if the [`Graph`] is running and its scheduler is regularly
+    /// updated.
     pub fn schedule_change(&mut self, change: ParameterChange) -> Result<(), ScheduleError> {
         if let Some(raw_node_address) = change.node.to_raw() {
             if raw_node_address.graph_id == self.id {
@@ -1783,7 +1833,7 @@ impl Graph {
                                 index: input,
                                 value: 0.0,
                             },
-                            TimeKind::Immediately,
+                            Time::Immediately,
                         );
                     } else {
                         // No GraphGen exists so we can set the constant directly.
@@ -1907,6 +1957,8 @@ impl Graph {
         self.recalculation_required = true;
         Ok(())
     }
+    /// Make several connections at once. If one connection fails the function
+    /// will return and any remaining connections will be lost.
     pub fn connect_bundle(
         &mut self,
         bundle: impl Into<ConnectionBundle>,
@@ -2111,7 +2163,7 @@ impl Graph {
                                 index: input,
                                 value,
                             },
-                            TimeKind::Immediately,
+                            Time::Immediately,
                         );
                     } else {
                         // No GraphGen exists so we can set the constant directly.
@@ -2345,6 +2397,8 @@ impl Graph {
             None
         }
     }
+    /// Apply a change to the internal [`MusicalTimeMap`] shared between all
+    /// [`Graphs`] in a tree. Call this only on the top level Graph.
     pub fn change_musical_time_map(
         &mut self,
         change_fn: impl FnOnce(&mut MusicalTimeMap),
@@ -2491,9 +2545,12 @@ impl Graph {
         self.node_order.extend(remaining_nodes.iter());
         self.disconnected_nodes = remaining_nodes;
     }
+    /// Returns the block size of the [`Graph`], not corrected for oversampling.
     pub fn block_size(&self) -> usize {
         self.block_size
     }
+    /// Return the number of nodes currently held by the Graph, including nodes
+    /// that are queued to be freed, but have not yet been freed.
     pub fn num_nodes(&self) -> usize {
         self.get_nodes().len()
     }
@@ -2737,6 +2794,8 @@ impl Graph {
         unsafe { &*self.nodes.get() }
     }
 
+    /// Create a dump of all nodes in the Graph. Currently only useful for
+    /// debugging.
     pub fn dump_nodes(&self) -> Vec<NodeDump> {
         let mut dump = Vec::new();
         let nodes = self.get_nodes();
@@ -2751,6 +2810,7 @@ impl Graph {
     }
 }
 
+#[allow(missing_docs)]
 #[derive(Clone, Debug)]
 pub enum NodeDump {
     Node(String),
@@ -2820,7 +2880,7 @@ enum ScheduledChangeKind {
 /// Before a Graph is running and changes scheduled will be stored in a queue.
 enum Scheduler {
     Stopped {
-        scheduling_queue: Vec<(NodeKey, ScheduledChangeKind, TimeKind)>,
+        scheduling_queue: Vec<(NodeKey, ScheduledChangeKind, Time)>,
     },
     Running {
         /// The starting time of the audio thread graph, relative to which time also
@@ -2881,7 +2941,7 @@ impl Scheduler {
             Scheduler::Running { .. } => (),
         }
     }
-    fn schedule(&mut self, key: NodeKey, change_kind: ScheduledChangeKind, time: TimeKind) {
+    fn schedule(&mut self, key: NodeKey, change_kind: ScheduledChangeKind, time: Time) {
         match self {
             Scheduler::Stopped { scheduling_queue } => {
                 scheduling_queue.push((key, change_kind, time))
@@ -2895,7 +2955,7 @@ impl Scheduler {
                 musical_time_map,
             } => {
                 match time {
-                    TimeKind::DurationFromNow(duration_from_now) => {
+                    Time::DurationFromNow(duration_from_now) => {
                         let timestamp = ((start_ts.elapsed() + duration_from_now).as_secs_f64()
                             * *sample_rate as f64
                             + *latency) as u64;
@@ -2905,7 +2965,7 @@ impl Scheduler {
                             kind: change_kind,
                         });
                     }
-                    TimeKind::Superseconds(superseconds) => {
+                    Time::Superseconds(superseconds) => {
                         let absolute_timestamp = superseconds.to_samples(*sample_rate);
                         scheduling_queue.push(ScheduledChange {
                             timestamp: absolute_timestamp,
@@ -2913,7 +2973,7 @@ impl Scheduler {
                             kind: change_kind,
                         });
                     }
-                    TimeKind::Beats(mt) => {
+                    Time::Beats(mt) => {
                         // TODO: Remove unwrap, return a Result
                         let mtm = musical_time_map.read().unwrap();
                         let duration_from_start =
@@ -2926,7 +2986,7 @@ impl Scheduler {
                             kind: change_kind,
                         });
                     }
-                    TimeKind::Immediately => {
+                    Time::Immediately => {
                         scheduling_queue.push(ScheduledChange {
                             timestamp: 0,
                             key,
@@ -2956,7 +3016,7 @@ impl Scheduler {
     }
     /// Schedules a change to be applied at the time of calling the function + the latency setting.
     fn schedule_now(&mut self, key: NodeKey, change: ScheduledChangeKind) {
-        self.schedule(key, change, TimeKind::DurationFromNow(Duration::new(0, 0)))
+        self.schedule(key, change, Time::DurationFromNow(Duration::new(0, 0)))
     }
     fn update(&mut self, timestamp: u64, rb_producer: &mut rtrb::Producer<ScheduledChange>) {
         match self {
@@ -3180,6 +3240,7 @@ pub struct Ramp {
 }
 
 impl Ramp {
+    #[allow(missing_docs)]
     pub fn new() -> Self {
         Self::default()
     }

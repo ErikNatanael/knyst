@@ -1,10 +1,17 @@
+//! Structs for dealing with time with determinism and high accuracy in seconds and beats.
+//!
+//! Heavily inspired by BillyDM's blog post: https://billydm.github.io/blog/time-keeping/
+
 use std::{ops, time::Duration};
 
+/// How many subsample tesimals fit in one second
 pub static SUBSAMPLE_TESIMALS_PER_SECOND: u32 = 282_240_000;
+/// How many beat tesimals fit in one beat
 pub static SUBBEAT_TESIMALS_PER_BEAT: u32 = 1_476_034_560;
 
 /// A description of time well suited for sample based wall clock time with
-/// lossless converstion between all common sample rates.
+/// lossless converstion between all common sample rates. Can only represent a
+/// positive time value.
 ///
 /// "tesimal" is a made up word to refer to a very short amount of time.
 ///
@@ -16,38 +23,42 @@ pub struct Superseconds {
     subsample_tesimals: u32,
 }
 impl Superseconds {
+    /// 0 seconds 0 tesmials
     pub const ZERO: Self = Self {
         seconds: 0,
         subsample_tesimals: 0,
     };
+    #[allow(missing_docs)]
     pub fn new(seconds: u32, subsample_tesimals: u32) -> Self {
         Self {
             seconds,
             subsample_tesimals,
         }
     }
-    pub fn zero() -> Self {
-        Self::new(0, 0)
-    }
+    /// Convert from subsample tesimals to a Supersecond.
     pub fn from_subsample_tesimals_u64(subsample_tesimals: u64) -> Self {
         let seconds = (subsample_tesimals / SUBSAMPLE_TESIMALS_PER_SECOND as u64) as u32;
         let subsample_tesimals =
             (subsample_tesimals - (seconds as u64 * SUBSAMPLE_TESIMALS_PER_SECOND as u64)) as u32;
         Self::new(seconds, subsample_tesimals)
     }
+    /// Convert seconds and tesimals to tesimals
     pub fn to_subsample_tesimals_u64(&self) -> u64 {
         self.seconds as u64 * SUBSAMPLE_TESIMALS_PER_SECOND as u64 + self.subsample_tesimals as u64
     }
+    #[allow(missing_docs)]
     pub fn from_seconds_f64(seconds_f64: f64) -> Self {
         let seconds = seconds_f64.floor() as u32;
         let subsample_tesimals =
             (seconds_f64.fract() * SUBSAMPLE_TESIMALS_PER_SECOND as f64) as u32;
         Self::new(seconds, subsample_tesimals)
     }
+    /// Convert from seconds in f64 and return any precision loss incurred in the conversion
     pub fn from_seconds_f64_return_precision_loss(seconds_f64: f64) -> (Self, f64) {
         let ts = Self::from_seconds_f64(seconds_f64);
         (ts, seconds_f64 - ts.to_seconds_f64())
     }
+    /// Convert to seconds in an f64. May be lossy depending on the value.
     pub fn to_seconds_f64(&self) -> f64 {
         self.seconds as f64
             + (self.subsample_tesimals as f64 / SUBSAMPLE_TESIMALS_PER_SECOND as f64)
@@ -171,12 +182,14 @@ pub struct Superbeats {
     beat_tesimals: u32,
 }
 impl Superbeats {
+    #[allow(missing_docs)]
     pub fn new(beats: u32, beat_tesimals: u32) -> Self {
         Self {
             beat_tesimals,
             beats,
         }
     }
+    /// Returns Superbeats with `beats` beats and 0 tesimals
     pub fn from_beats(beats: u32) -> Self {
         Self::new(beats, 0)
     }
@@ -191,6 +204,7 @@ impl Superbeats {
         let tesimals = (SUBBEAT_TESIMALS_PER_BEAT / FRACTION) * fractional_beats;
         Self::new(beats, tesimals)
     }
+    /// Convert from number of beats in an f32. May be lossy depending on the value
     pub fn from_beats_f32(beats: f32) -> Self {
         let fract = beats.fract();
         Self {
@@ -198,6 +212,7 @@ impl Superbeats {
             beat_tesimals: (fract * SUBBEAT_TESIMALS_PER_BEAT as f32) as u32,
         }
     }
+    /// Convert from number of beats in an f64. May be lossy depending on the value
     pub fn from_beats_f64(beats: f64) -> Self {
         let fract = beats.fract();
         Self {
@@ -205,12 +220,15 @@ impl Superbeats {
             beat_tesimals: (fract * SUBBEAT_TESIMALS_PER_BEAT as f64) as u32,
         }
     }
+    /// Convert to number of beats in an f32. May be lossy depending on the value
     pub fn as_beats_f32(&self) -> f32 {
         self.beats as f32 + (self.beat_tesimals as f32 / SUBBEAT_TESIMALS_PER_BEAT as f32)
     }
+    /// Convert to number of beats in an f64. May be lossy depending on the value
     pub fn as_beats_f64(&self) -> f64 {
         self.beats as f64 + (self.beat_tesimals as f64 / SUBBEAT_TESIMALS_PER_BEAT as f64)
     }
+    /// Returns `Some(self-v)` if v >= self, otherwise `None`
     pub fn checked_sub(&self, v: Self) -> Option<Self> {
         if self < &v {
             None

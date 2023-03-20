@@ -1,3 +1,8 @@
+//! Provides the [`RunGraph`] struct which safely wraps a running [`Graph`] and
+//! provides access to its outputs. Used internally by implementations of
+//! `AudioBackend`, but it can also be used directly for custom environments or
+//! for offline processing.
+
 use std::{
     sync::{Arc, RwLock},
     time::{Duration, Instant},
@@ -163,12 +168,14 @@ impl Drop for RunGraph {
 }
 unsafe impl Send for RunGraph {}
 
+#[allow(missing_docs)]
 #[derive(thiserror::Error, Debug, PartialEq)]
 pub enum RunGraphError {
     #[error("Unable to create a node from the Graph: {0}")]
     CouldNodeCreateNode(String),
 }
 
+/// Settings for a [`RunGraph`]
 pub struct RunGraphSettings {
     /// How much time is added to every *relative* scheduling event to ensure the Change has time to travel to the GraphGen.
     pub scheduling_latency: Duration,

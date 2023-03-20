@@ -1,3 +1,7 @@
+//! Connecting nodes/[`Gen`]s in a Graph is fundamentally done through a
+//! [`Connection`]. Additionally, a [`NodeAddress`] has convenience functions to
+//! generate [`Connection`]s and the [`ConnectionBundle`] API is often more
+//! convenient and ergonomic.
 use super::{FreeError, NodeAddress, Sample};
 
 /// Connection provides a convenient API for creating connections between nodes in a
@@ -11,56 +15,109 @@ use super::{FreeError, NodeAddress, Sample};
 pub enum Connection {
     /// node to node
     Node {
+        /// Connect from the output of the source node
         source: NodeAddress,
+        /// What output channel from the source node to connect from.
+        ///
+        /// Either from_index or from_label can be used, but index takes precedence if both are set.
         from_index: Option<usize>,
+        /// What output channel from the source node to connect from.
+        ///
+        /// Either from_index or from_label can be used, but index takes precedence if both are set.
         from_label: Option<&'static str>,
+        /// Connect to the input of the sink node
         sink: NodeAddress,
+        /// What input channel on the sink node to connect to.
+        ///
+        /// Either to_index or to_label can be used, but index takes precedence if both are set.
         /// if input_index and input_label are both None, the default is index 0
         to_index: Option<usize>,
+        /// What input channel on the sink node to connect to.
+        ///
+        /// Either to_index or to_label can be used, but index takes precedence if both are set.
         to_label: Option<&'static str>,
-        /// default: 1
+        /// How many channels to connect. Channels will wrap if this value is
+        /// larger than the number of channels on the sink and/or source nodes. Default: 1.
         channels: usize,
+        /// Set to true if this connection should be a feedback connection,
+        /// meaning gives the values from the previous block, but allows loops
+        /// in the [`Graph`].
         feedback: bool,
     },
-    /// constant to node
+    /// Set a node input constant. This sets the value immediately if the
+    /// [`Graph`] is not running. Otherwise it is equivalent to scheduling a
+    /// parameter change as soon as possible.
     Constant {
+        /// New constant value
         value: Sample,
+        /// The node whose input constant to set
         sink: Option<NodeAddress>,
+        /// What input channel to set the constant value of.
+        ///
+        /// Either to_index or to_label can be used, but index takes precedence if both are set.
+        /// if input_index and input_label are both None, the default is index 0
         to_index: Option<usize>,
+        /// What input channel to set the constant value of.
+        ///
+        /// Either to_index or to_label can be used, but index takes precedence if both are set.
         to_label: Option<&'static str>,
     },
     /// node to graph output
     GraphOutput {
+        /// From which node to connect to the graph output.
         source: NodeAddress,
+        /// What output channel from the source node to connect from.
+        ///
+        /// Either from_index or from_label can be used, but index takes precedence if both are set.
         from_index: Option<usize>,
+        /// What output channel from the source node to connect from.
+        ///
+        /// Either from_index or from_label can be used, but index takes precedence if both are set.
         from_label: Option<&'static str>,
+        /// What channel index of the graph outputs to connect to.
         to_index: usize,
+        /// How many channels to connect. Channels will wrap if this value is
+        /// larger than the number of channels on the sink and/or source nodes. Default: 1.
         channels: usize,
     },
     /// graph input to node
     GraphInput {
+        /// To which node a graph input will be connected
         sink: NodeAddress,
+        /// From what index of the [`Graph`] inputs we will connect
         from_index: usize,
+        /// What input channel to connect to.
+        ///
+        /// Either to_index or to_label can be used, but index takes precedence if both are set.
         /// if input_index and input_label are both None, the default is index 0
         to_index: Option<usize>,
+        /// What input channel to connect to.
+        ///
+        /// Either to_index or to_label can be used, but index takes precedence if both are set.
+        /// if input_index and input_label are both None, the default is index 0
         to_label: Option<&'static str>,
+        /// How many channels to connect. Channels will wrap if this value is
+        /// larger than the number of channels on the sink and/or source nodes. Default: 1.
         channels: usize,
     },
+    /// Clear connections related to a node
     Clear {
+        /// The node whose connections to clear
         node: NodeAddress,
-        /// connections to this node
+        /// If true, clear connections to this node
         input_nodes: bool,
-        /// constant input values of this node
+        /// If true, clear constant input values of this node
         input_constants: bool,
-        /// connections from this node to other nodes
+        /// If true, clear connections from this node to other nodes
         output_nodes: bool,
-        /// connections from this node to the graph output(s)
+        /// If true, clear connections from this node to the graph output(s)
         graph_outputs: bool,
-        /// connections from the graph inputs to the node
+        /// If true, clear connections from the graph inputs to the node
         graph_inputs: bool,
     },
 }
 
+/// Convenience function to create a constant input value change connection
 pub fn constant(value: Sample) -> Connection {
     Connection::Constant {
         value,
@@ -70,6 +127,7 @@ pub fn constant(value: Sample) -> Connection {
     }
 }
 impl Connection {
+    /// Create a connection from `source_node` to a graph output
     pub fn graph_output(source_node: &NodeAddress) -> Self {
         Self::GraphOutput {
             source: source_node.clone(),
@@ -79,6 +137,7 @@ impl Connection {
             channels: 1,
         }
     }
+    /// Create a connection from a graph_input to the `sink_node`
     pub fn graph_input(sink_node: &NodeAddress) -> Self {
         Self::GraphInput {
             sink: sink_node.clone(),
@@ -88,6 +147,7 @@ impl Connection {
             channels: 1,
         }
     }
+    /// Clear input constants of `node`
     pub fn clear_constants(node: &NodeAddress) -> Self {
         Self::Clear {
             node: node.clone(),
@@ -98,6 +158,7 @@ impl Connection {
             graph_inputs: false,
         }
     }
+    /// Clear connections from other nodes to this `node`'s input(s)
     pub fn clear_from_nodes(node: &NodeAddress) -> Self {
         Self::Clear {
             node: node.clone(),
@@ -108,6 +169,7 @@ impl Connection {
             graph_inputs: false,
         }
     }
+    /// Clear connections from the `node` specified to other nodes
     pub fn clear_to_nodes(node: &NodeAddress) -> Self {
         Self::Clear {
             node: node.clone(),
@@ -118,6 +180,7 @@ impl Connection {
             graph_inputs: false,
         }
     }
+    /// Clear connections from the `node` to the graph outputs
     pub fn clear_to_graph_outputs(node: &NodeAddress) -> Self {
         Self::Clear {
             node: node.clone(),
@@ -128,6 +191,7 @@ impl Connection {
             graph_inputs: false,
         }
     }
+    /// Clear connections from the graph inputs to the `node`
     pub fn clear_from_graph_inputs(node: &NodeAddress) -> Self {
         Self::Clear {
             node: node.clone(),
@@ -172,6 +236,7 @@ impl Connection {
         }
         self
     }
+    /// Set the channel to connect to by label
     pub fn to_label(mut self, label: &'static str) -> Self {
         match &mut self {
             Connection::Node {
@@ -205,6 +270,7 @@ impl Connection {
     pub fn tl(self, label: &'static str) -> Self {
         self.to_label(label)
     }
+    /// Set the channel to connect to by index
     pub fn to_index(mut self, index: usize) -> Self {
         match &mut self {
             Connection::Node {
@@ -234,6 +300,7 @@ impl Connection {
         }
         self
     }
+    /// Get the source channel index of the [`Connection`] if one is set
     pub fn get_from_index(&self) -> Option<usize> {
         match &self {
             Connection::Node { from_index, .. } => *from_index,
@@ -243,6 +310,7 @@ impl Connection {
             Connection::GraphInput { from_index, .. } => Some(*from_index),
         }
     }
+    /// Get the sink channel index of the [`Connection`] if one is set
     pub fn get_to_index(&self) -> Option<usize> {
         match &self {
             Connection::Node {
@@ -262,18 +330,21 @@ impl Connection {
     pub fn ti(self, index: usize) -> Self {
         self.to_index(index)
     }
+    /// Set the source channel
     pub fn from_channel(self, channel: impl Into<NodeChannel>) -> Self {
         match channel.into() {
             NodeChannel::Index(index) => self.from_index(index),
             NodeChannel::Label(label) => self.from_label(label),
         }
     }
+    /// Set the sink channel
     pub fn to_channel(self, channel: impl Into<NodeChannel>) -> Self {
         match channel.into() {
             NodeChannel::Index(index) => self.to_index(index),
             NodeChannel::Label(label) => self.to_label(label),
         }
     }
+    /// Set the source channel by index
     pub fn from_index(mut self, index: usize) -> Self {
         match &mut self {
             Connection::Node {
@@ -300,6 +371,7 @@ impl Connection {
         }
         self
     }
+    /// Set the source channel by label
     pub fn from_label(mut self, label: &'static str) -> Self {
         match &mut self {
             Connection::Node {
@@ -344,6 +416,7 @@ impl Connection {
         }
         self
     }
+    /// Set if the connection should be a feedback connection
     pub fn feedback(mut self, activate: bool) -> Self {
         match &mut self {
             Connection::Node { feedback, .. } => {
@@ -356,6 +429,7 @@ impl Connection {
         }
         self
     }
+    /// Get the source node address if one is set and the current variant has one.
     pub fn get_source_node(&self) -> Option<NodeAddress> {
         match self {
             Connection::Node { source, .. } => Some(source.clone()),
@@ -367,6 +441,8 @@ impl Connection {
     }
 }
 
+#[allow(missing_docs)]
+/// Error making a connection inside a [`Graph`]
 #[derive(thiserror::Error, Debug, PartialEq)]
 pub enum ConnectionError {
     #[error("The nodes that you are trying to connect are in different graphs. Nodes can only be connected within a graph.")]
@@ -393,6 +469,8 @@ pub enum ConnectionError {
     NodeFree(#[from] FreeError),
 }
 
+/// Describe a node's input or output channel by index or label
+#[allow(missing_docs)]
 #[derive(Clone, Copy, Debug)]
 pub enum NodeChannel {
     Label(&'static str),
@@ -409,6 +487,7 @@ impl From<usize> for NodeChannel {
     }
 }
 
+/// Value for an input constant.
 #[derive(Clone, Copy, Debug)]
 pub struct Constant(Sample);
 impl From<Sample> for Constant {
@@ -417,6 +496,7 @@ impl From<Sample> for Constant {
     }
 }
 
+/// A specific output from a specific node.
 #[derive(Clone, Debug)]
 pub struct NodeOutput {
     pub(super) from_node: NodeAddress,
@@ -449,6 +529,7 @@ impl IntoIterator for NodeOutput {
         NodeOutputIntoIter { no: Some(self) }
     }
 }
+/// Iterator for one NodeOutput. Will return one [`NodeOutput`], then `None`
 pub struct NodeOutputIntoIter {
     no: Option<NodeOutput>,
 }
@@ -460,6 +541,8 @@ impl Iterator for NodeOutputIntoIter {
     }
 }
 
+/// Hold either a constant value or a `NodeOutput`
+#[allow(missing_docs)]
 #[derive(Clone, Debug)]
 pub enum ConstantOrNodeOutput {
     Constant(Constant),
@@ -476,6 +559,9 @@ impl From<NodeOutput> for ConstantOrNodeOutput {
     }
 }
 
+/// Holds descriptions of several [`Connections`] to the same node. Can be used
+/// with the `input!` macro or one of several other syntax variations to connect
+/// inputs to a new node.
 #[derive(Clone)]
 pub struct ConnectionBundle {
     to_node: NodeAddress,
@@ -501,22 +587,26 @@ impl ConnectionBundle {
     }
 }
 
-/// `ConenctionBundle` allows you to build connections using a more intuitive
-/// less verbose syntax.
+/// `InputBundle` allows you to build connections using a more intuitive less
+/// verbose syntax. Can be converted to a [`ConnectionBundle`] by setting the
+/// sink node using the [`Self::to`] method.
 #[derive(Clone)]
 pub struct InputBundle {
     inputs: Vec<(NodeChannel, ConstantOrNodeOutput)>,
 }
 impl InputBundle {
+    /// New empty [`Self`]
     pub fn new() -> Self {
         Self { inputs: Vec::new() }
     }
+    /// Set the sink node to generate a [`ConnectionBundle`]
     pub fn to(self, node_address: &NodeAddress) -> ConnectionBundle {
         ConnectionBundle {
             to_node: node_address.clone(),
             inputs: self.inputs,
         }
     }
+    /// Add any number of node outputs as inputs to the channel specified.
     pub fn push_node_outputs(
         &mut self,
         channel: NodeChannel,
@@ -527,10 +617,12 @@ impl InputBundle {
                 .push((channel, ConstantOrNodeOutput::NodeOutput(no)));
         }
     }
+    /// Add an input from a source to the `input_channel`
     pub fn push_input(&mut self, input_channel: NodeChannel, source: ConstantOrNodeOutput) {
         self.inputs.push((input_channel, source));
     }
-    pub fn extend(mut self, other: InputBundle) -> Self {
+    /// Combine two [`Self`] into one
+    pub fn extend(mut self, other: Self) -> Self {
         self.inputs.extend(other.inputs);
         self
     }
@@ -755,6 +847,19 @@ impl<O: IntoIterator<Item = NodeOutput>> From<(usize, Sample, O)> for InputBundl
 // We cannot allow the pattern (&'static str, IntoIterator<Item = NodeOutput>)
 // because "f32 might implement IntoIterator in the future", but maybe we can
 // make a macro instead.
+/// Create an [`InputBundle`] using the syntax
+///
+/// ```
+/// # use knyst::{inputs, graph::connection::InputBundle};
+/// # let from_channel = 0;
+/// # let input_constant = 1.0;
+/// # let input_node_outputs = vec![];
+/// // Connect from channel 0
+/// let input_bundle = inputs![(0: input_constant ; input_node_outputs)];
+/// ```
+///
+/// where both `input_constant` and `input_node_outputs` are optional.
+/// Multiple tuples can be put in the same `inputs!` invocation.
 #[macro_export]
 macro_rules! inputs {
     (($channel:literal : $constant:expr)) => {
@@ -834,7 +939,7 @@ mod tests {
             ("amp" ; [node.out(2), node.out(3)])
         ));
         connect(inputs!((0 : 440.0), (1 : 110.)));
-        connect(inputs!((0 : 440.0), ("freq" : 440. ; [node.out(0)])));
+        connect(inputs![(0 : 440.0), ("freq" : 440. ; [node.out(0)])]);
         connect([
             ("freq", 440.0),
             ("phase", 0.0),

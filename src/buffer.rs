@@ -27,6 +27,7 @@ use crate::{BufferId, IdOrKey};
 
 use super::Sample;
 
+#[allow(missing_docs)]
 #[derive(thiserror::Error, Debug)]
 pub enum BufferError {
     #[error("Tried to load a file in an unsupported format: {0}")]
@@ -36,6 +37,7 @@ pub enum BufferError {
 }
 
 new_key_type! {
+    /// Refer to a specific buffer in a SlotMap
     pub struct BufferKey;
 }
 /// A buffer containing sound or data. Channels are stored interleaved in a 1-dimensional list.
@@ -50,6 +52,7 @@ pub struct Buffer {
 }
 
 impl Buffer {
+    /// Create an empty buffer with the specified options
     pub fn new(size: usize, num_channels: usize, sample_rate: f64) -> Self {
         Buffer {
             buffer: vec![0.0; size],
@@ -275,15 +278,19 @@ impl Buffer {
 #[derive(Clone, Debug)]
 pub struct BufferReader {
     buffer_key: IdOrKey<BufferId, BufferKey>,
+    /// read pointer in samples
     read_pointer: f64,
     rate: f64,
     base_rate: f64, // The basic rate for playing the buffer at normal speed
-    pub finished: bool,
+    /// true if Self has finished reading the buffer
+    finished: bool,
+    /// true if the [`BufferReader`] should loop the buffer
     pub looping: bool,
     stop_action: StopAction,
 }
 
 impl BufferReader {
+    #[allow(missing_docs)]
     pub fn new(
         buffer_key: IdOrKey<BufferId, BufferKey>,
         rate: f64,
@@ -299,9 +306,11 @@ impl BufferReader {
             stop_action,
         }
     }
+    /// Jump back to the start of the buffer
     pub fn reset(&mut self) {
         self.jump_to(0.0);
     }
+    /// Jump to a specific point in the buffer in samples
     pub fn jump_to(&mut self, new_pointer_pos: f64) {
         self.read_pointer = new_pointer_pos;
         self.finished = false;
@@ -400,12 +409,14 @@ pub struct BufferReaderMulti {
     rate: f64,
     num_channels: usize,
     base_rate: f64, // The basic rate for playing the buffer at normal speed
-    pub finished: bool,
+    finished: bool,
+    /// true if the BufferReaderMulti should loop the buffer
     pub looping: bool,
     stop_action: StopAction,
 }
 
 impl BufferReaderMulti {
+    #[allow(missing_docs)]
     pub fn new(buffer_key: BufferKey, rate: f64, stop_action: StopAction) -> Self {
         Self {
             buffer_key,
@@ -418,17 +429,21 @@ impl BufferReaderMulti {
             stop_action,
         }
     }
+    /// Set looping
     pub fn looping(mut self, looping: bool) -> Self {
         self.looping = looping;
         self
     }
+    /// Set the number of channels to read and play
     pub fn channels(mut self, num_channels: usize) -> Self {
         self.num_channels = num_channels;
         self
     }
+    /// Jump back to the start of the buffer
     pub fn reset(&mut self) {
         self.jump_to(0.0);
     }
+    /// Jump to a specific point in time in samples
     pub fn jump_to(&mut self, new_pointer_pos: f64) {
         self.read_pointer = new_pointer_pos;
         self.finished = false;

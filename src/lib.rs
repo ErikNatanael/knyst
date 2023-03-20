@@ -64,7 +64,7 @@ pub mod audio_backend;
 pub mod buffer;
 pub mod controller;
 pub mod envelope;
-pub mod filter;
+mod filter;
 pub mod graph;
 pub mod prelude;
 pub mod scheduling;
@@ -185,7 +185,9 @@ where
     I: Clone + Copy + Debug + Hash + Eq,
     K: Clone + Copy + Debug + Hash + Eq,
 {
+    #[allow(missing_docs)]
     Id(I),
+    #[allow(missing_docs)]
     Key(K),
 }
 
@@ -373,9 +375,16 @@ impl Resources {
             Err(data)
         }
     }
+    /// Returns the user data if the key exists. You have to cast it to the
+    /// original type yourself (see the documentation for `downcast`)
     pub fn get_user_data(&mut self, key: &String) -> Option<&mut Box<dyn AnyData>> {
         self.user_data.get_mut(key)
     }
+    /// Inserts a [`Wavetable`] and returns the [`WavetableKey`] if successful, mapping the
+    /// key to the given [`WavetableId`].
+    ///
+    /// # Errors
+    /// May fail if there is not room for any more wavetables in the `Resources`
     pub fn insert_wavetable_with_id(
         &mut self,
         wavetable: Wavetable,
@@ -389,15 +398,26 @@ impl Resources {
             Err(ResourcesError::WavetablesFull(wavetable))
         }
     }
+    /// Inserts a wavetable and returns the `WavetableKey` if successful.
+    ///
+    /// # Errors
+    /// May fail if there is not room for any more wavetables in the `Resources`
     pub fn insert_wavetable(
         &mut self,
         wavetable: Wavetable,
     ) -> Result<WavetableKey, ResourcesError> {
         self.insert_wavetable_with_id(wavetable, WavetableId::new())
     }
+    /// Removes a wavetable if the `wavetable_key` exists.
+    ///
+    /// NB: If this is called on the audio thread you have to send the Wavetable
+    /// to a different thread for deallocation.
     pub fn remove_wavetable(&mut self, wavetable_key: WavetableKey) -> Option<Wavetable> {
         self.wavetables.remove(wavetable_key)
     }
+    /// Replace the wavetable at the `wavetable_key` with a new [`Wavetable`].
+    /// The key is still valid. Returns the old [`Wavetable`] if successful,
+    /// otherwise returns the new one wrapped in an error.
     pub fn replace_wavetable(
         &mut self,
         wavetable_key: WavetableKey,
@@ -411,9 +431,18 @@ impl Resources {
             None => Err(ResourcesError::ReplaceWavetableKeyInvalid(wavetable)),
         }
     }
+    /// Inserts a buffer and returns the `BufferKey` if successful.
+    ///
+    /// # Errors
+    /// May fail if there is not room for any more buffers in the `Resources`
     pub fn insert_buffer(&mut self, buf: Buffer) -> Result<BufferKey, ResourcesError> {
         self.insert_buffer_with_id(buf, BufferId::new())
     }
+    /// Inserts a buffer and returns the `BufferKey` if successful, mapping the
+    /// key to the given [`BufferId`].
+    ///
+    /// # Errors
+    /// May fail if there is not room for any more buffers in the `Resources`
     pub fn insert_buffer_with_id(
         &mut self,
         buf: Buffer,
@@ -427,6 +456,9 @@ impl Resources {
             Err(ResourcesError::BuffersFull(buf))
         }
     }
+    /// Replace the buffer at the `buffer_key` with a new [`Buffer`].
+    /// The key is still valid. Returns the old [`Buffer`] if successful,
+    /// otherwise returns the new one wrapped in an error.
     pub fn replace_buffer(
         &mut self,
         buffer_key: BufferKey,
@@ -446,6 +478,8 @@ impl Resources {
     pub fn remove_buffer(&mut self, buffer_key: BufferKey) -> Option<Buffer> {
         self.buffers.remove(buffer_key)
     }
+    /// Returns the [`BufferKey`] corresponding to the given [`BufferId`] if
+    /// there is one registered.
     pub fn buffer_key_from_id(&self, buf_id: BufferId) -> Option<BufferKey> {
         for (key, &id) in self.buffer_ids.iter() {
             if id == buf_id {
@@ -454,6 +488,8 @@ impl Resources {
         }
         None
     }
+    /// Returns the [`WavetableKey`] corresponding to the given [`WavetableId`] if
+    /// there is one registered.
     pub fn wavetable_key_from_id(&self, wavetable_id: WavetableId) -> Option<WavetableKey> {
         for (key, &id) in self.wavetable_ids.iter() {
             if id == wavetable_id {
@@ -464,10 +500,14 @@ impl Resources {
     }
 }
 
+/// Convert db to amplitude
+#[inline]
 #[must_use]
 pub fn db_to_amplitude(db: f32) -> f32 {
     10.0_f32.powf(db / 20.)
 }
+/// Convert amplitude to db
+#[inline]
 #[must_use]
 pub fn amplitude_to_db(amplitude: f32) -> f32 {
     20.0 * amplitude.log10()

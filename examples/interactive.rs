@@ -462,7 +462,7 @@ async fn spawn_note(k: &mut KnystCommands, freq: f32, length_seconds: f32) {
     let mut note_graph = Graph::new(settings);
     let mut wavetable = Wavetable::new();
     let num_harmonics = (15000. / freq) as usize;
-    wavetable.add_saw(num_harmonics, 1.0);
+    wavetable.add_aliasing_saw(num_harmonics, 1.0);
     let sig = note_graph.push(WavetableOscillatorOwned::new(wavetable.clone()));
     note_graph
         .connect(constant(freq).to(&sig).to_label("freq"))

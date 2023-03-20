@@ -46,13 +46,21 @@ use crate::{
 // [ ] StopAction for when it is finished playing
 //
 //
-// TODO: Initialisation struct with only the user settable values that can be made into an EnvelopeGen
+/// Convenience struct to provide a more ergonomic interface to creating an [`EnvelopeGen`]
 pub struct Envelope {
+    /// The start value of the envelope. Default: 0.0
     pub start_value: Sample,
+
+    // TODO: remove sample rate here, it should be set in init or iter_mut
+    #[allow(missing_docs)]
     pub sample_rate: Sample,
+    /// Points after the start value in the format (next_value, time_to_reach_it_in_seconds)
     pub points: Vec<Point>,
+    /// Curves per point
     pub curves: Vec<Curve>,
+    /// Sustain mode of the envelope
     pub sustain: SustainMode,
+    /// If the envelope is not looping, what StopAction to emit when finished
     pub stop_action: StopAction,
 }
 impl Envelope {
@@ -78,6 +86,7 @@ impl Default for Envelope {
         }
     }
 }
+#[allow(missing_docs)]
 #[derive(Debug, Clone, Copy)]
 pub enum SustainMode {
     NoSustain,
@@ -85,6 +94,8 @@ pub enum SustainMode {
     Loop { start: usize, end: usize },
 }
 
+/// The curve type/slope of an envelope segment
+#[allow(missing_docs)]
 #[derive(Debug, Clone, Copy)]
 pub enum Curve {
     Linear,
@@ -92,6 +103,7 @@ pub enum Curve {
 }
 
 impl Curve {
+    /// Convert from linear 0<=a<1.0 to this curve
     #[inline]
     pub fn transform(&self, a: f32) -> f32 {
         match self {
@@ -107,6 +119,7 @@ impl Curve {
 /// it offline, it can be turned into an iterator by calling [`EnvelopeGen::iter_mut`].
 #[derive(Debug, Clone)]
 pub struct EnvelopeGen {
+    #[allow(missing_docs)]
     pub start_value: f32,
 
     // Points with their time value as seconds. This enables setting the sample rate when the Gen is initiated.
@@ -124,6 +137,7 @@ pub struct EnvelopeGen {
     /// Goes from 0 to 1 over a segment
     duration_passed: f64,
     next_index: usize,
+    #[allow(missing_docs)]
     pub playing: bool,
     sample_rate: f32,
     sustain: SustainMode,
@@ -171,19 +185,34 @@ impl EnvelopeGen {
             waiting_for_release: false,
         }
     }
-    pub fn adsr(attack: f32, decay: f32, sustain: f32, release: f32, sample_rate: f32) -> Self {
-        let points = vec![(1.0, attack), (sustain, decay), (0.0, release)];
+
+    /// Convenience method for an ADSR envelope
+    pub fn adsr(
+        attack_time: f32,
+        decay_time: f32,
+        sustain_level: f32,
+        release_time: f32,
+        sample_rate: f32,
+    ) -> Self {
+        let points = vec![
+            (1.0, attack_time),
+            (sustain_level, decay_time),
+            (0.0, release_time),
+        ];
         Self::new(0.0, points, sample_rate).sustain(SustainMode::SustainAtPoint(1))
     }
+    /// Set the [`SustainMode`]
     pub fn sustain(mut self, sustain: SustainMode) -> Self {
         self.sustain = sustain;
         self
     }
+    /// Set the [`StopAction`]
     pub fn stop_action(mut self, stop_action: StopAction) -> Self {
         self.stop_action = stop_action;
         self
     }
 
+    /// Set the points of the envelope. Points are in the format (next_leve, time_to_reach_that_level_in_seconds)
     pub fn set_points(&mut self, points: Vec<Point>) {
         self.points_secs = points.clone();
         // Convert to points where the time is in samples
@@ -213,12 +242,15 @@ impl EnvelopeGen {
         }
         self
     }
+    /// Set a specific segment curve
     pub fn set_curve(&mut self, curve: Curve, index: usize) {
         self.curves[index] = curve;
     }
+    #[allow(missing_docs)]
     pub fn get_point(&mut self, index: usize) -> Point {
         self.points[index]
     }
+    /// Returns if the envelope is playing
     pub fn playing(&self) -> bool {
         self.playing
     }
@@ -387,6 +419,7 @@ impl EnvelopeGen {
         // linear interpolation
         self.source_value + (t * self.source_target_diff)
     }
+    /// Get the next sample of the envelope
     #[inline(always)]
     pub fn next_sample(&mut self) -> Sample {
         if self.playing && !self.waiting_for_release {
@@ -401,6 +434,8 @@ impl EnvelopeGen {
             self.source_value // if we're not playing the envelope, the final value is saved here. If pausing is implemented, a current_value field may be needed
         }
     }
+    /// Evaluate [`Self`] as an iterator. Evaluating the envelope means changing
+    /// the state which is why it is mut.
     pub fn iter_mut(&mut self) -> EnvelopeIterator {
         EnvelopeIterator { envelope: self }
     }
@@ -484,6 +519,7 @@ impl Gen for EnvelopeGen {
     }
 }
 
+/// Evaluate an [`EnvelopeGen`] as an iterator.
 pub struct EnvelopeIterator<'a> {
     envelope: &'a mut EnvelopeGen,
 }

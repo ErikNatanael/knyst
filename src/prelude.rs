@@ -1,3 +1,5 @@
+//! Exports the most often used parts of Knyst
+
 pub use crate::audio_backend::AudioBackend;
 pub use crate::buffer::{Buffer, BufferKey, BufferReader};
 pub use crate::graph::{

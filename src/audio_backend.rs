@@ -28,6 +28,7 @@ pub use cpal_backend::{CpalBackend, CpalBackendOptions};
 #[cfg(feature = "jack")]
 pub use jack_backend::JackBackend;
 
+/// Unified API for different backends.
 pub trait AudioBackend {
     /// Starts processing and returns a [`Controller`]. This is the easiest
     /// option and will run the [`Controller`] in a loop on a new thread.
@@ -56,11 +57,15 @@ pub trait AudioBackend {
         run_graph_settings: RunGraphSettings,
         error_handler: impl FnMut(KnystError) + Send + 'static,
     ) -> Result<Controller, AudioBackendError>;
+    /// Stop the backend
     fn stop(&mut self) -> Result<(), AudioBackendError>;
+    /// Get the native sample rate of the backend
     fn sample_rate(&self) -> usize;
+    /// Get the native block size of the backend if there is one
     fn block_size(&self) -> Option<usize>;
 }
 
+#[allow(missing_docs)]
 #[derive(thiserror::Error, Debug)]
 pub enum AudioBackendError {
     #[error("You tried to start a backend that was already running. A backend can only be started once.")]
@@ -104,6 +109,7 @@ mod jack_backend {
         Active(jack::AsyncClient<JackNotifications, JackProcess>),
     }
 
+    /// A backend using JACK
     pub struct JackBackend {
         client: Option<JackClient>,
         sample_rate: usize,
@@ -111,6 +117,7 @@ mod jack_backend {
     }
 
     impl JackBackend {
+        /// Create a new JACK client using the given name
         pub fn new<S: AsRef<str>>(name: S) -> Result<Self, jack::Error> {
             // Create client
             let (client, _status) =
@@ -305,6 +312,7 @@ mod jack_backend {
     }
 }
 
+/// [`AudioBackend`] implementation for CPAL
 #[cfg(feature = "cpal")]
 pub mod cpal_backend {
     use crate::audio_backend::{AudioBackend, AudioBackendError};
@@ -315,9 +323,10 @@ pub mod cpal_backend {
     use assert_no_alloc::*;
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
+    #[allow(missing_docs)]
     pub struct CpalBackendOptions {
-        device: String,
-        verbose: bool,
+        pub device: String,
+        pub verbose: bool,
     }
     impl Default for CpalBackendOptions {
         fn default() -> Self {
@@ -336,6 +345,7 @@ pub mod cpal_backend {
     }
 
     impl CpalBackend {
+        /// Create a new CpalBackend using the default host, getting a device, but not a stream.
         pub fn new(options: CpalBackendOptions) -> Result<Self, AudioBackendError> {
             let host = cpal::default_host();
 
@@ -361,6 +371,7 @@ pub mod cpal_backend {
                 device,
             })
         }
+        /// The number of outputs for the device's default output config
         pub fn num_outputs(&self) -> usize {
             self.config.channels() as usize
         }

@@ -1,8 +1,14 @@
+//! This module contains things related to scheduling that are more generic than
+//! graph internals.
+
 use crate::time::Superbeats;
 use std::sync::Arc;
 use std::sync::RwLock;
 
+/// A change in musical tempo for use in a [`MusicalTimeMap`]
 pub enum TempoChange {
+    /// New BPM value
+    #[allow(missing_docs)]
     NewTempo { bpm: f64 },
 }
 
@@ -26,6 +32,7 @@ pub struct MusicalTimeMap {
     tempo_changes: Vec<(TempoChange, Superbeats)>,
 }
 impl MusicalTimeMap {
+    /// Make a new [`MusicalTimeMap`] with a single BPM tempo value of 60 bpm at time 0
     pub fn new() -> Self {
         Default::default()
     }
@@ -162,6 +169,7 @@ impl MusicalTimeMap {
 
         accumulated_seconds
     }
+    /// Returns the number of tempo changes
     pub fn len(&self) -> usize {
         self.tempo_changes.len()
     }

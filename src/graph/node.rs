@@ -237,6 +237,11 @@ impl NodeBufferRef {
         };
         buffer_channel_slice
     }
+    /// Returns a single channel of data.
+    ///
+    /// # Safety
+    /// This is safe because the slices are guaranteed not to overlap
+    /// and multiple immutable references are allowed.
     #[inline]
     pub fn get_channel(&self, channel: usize) -> &[f32] {
         assert!(channel < self.num_channels);

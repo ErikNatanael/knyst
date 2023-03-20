@@ -141,6 +141,8 @@ impl KnystCommands {
     pub fn schedule_change(&mut self, change: ParameterChange) {
         self.sender.send(Command::ScheduleChange(change)).unwrap();
     }
+    /// Inserts a new buffer in the [`Resources`] and returns an id which can be
+    /// converted to a key on the audio thread with access to a [`Resources`].
     pub fn insert_buffer(&mut self, buffer: Buffer) -> BufferId {
         let id = BufferId::new();
         self.sender
@@ -151,6 +153,7 @@ impl KnystCommands {
             .unwrap();
         id
     }
+    /// Remove a buffer from the [`Resources`]
     pub fn remove_buffer(&mut self, buffer_id: BufferId) {
         self.sender
             .send(Command::ResourcesCommand(ResourcesCommand::RemoveBuffer {
@@ -158,6 +161,7 @@ impl KnystCommands {
             }))
             .unwrap();
     }
+    /// Replace a buffer in the [`Resources`]
     pub fn replace_buffer(&mut self, buffer_id: BufferId, buffer: Buffer) {
         self.sender
             .send(Command::ResourcesCommand(ResourcesCommand::ReplaceBuffer {
@@ -166,6 +170,8 @@ impl KnystCommands {
             }))
             .unwrap();
     }
+    /// Inserts a new wavetable in the [`Resources`] and returns an id which can be
+    /// converted to a key on the audio thread with access to a [`Resources`].
     pub fn insert_wavetable(&mut self, wavetable: Wavetable) -> WavetableId {
         let id = WavetableId::new();
         self.sender
@@ -175,6 +181,7 @@ impl KnystCommands {
             .unwrap();
         id
     }
+    /// Remove a wavetable from the [`Resources`]
     pub fn remove_wavetable(&mut self, wavetable_id: WavetableId) {
         self.sender
             .send(Command::ResourcesCommand(
@@ -182,6 +189,7 @@ impl KnystCommands {
             ))
             .unwrap();
     }
+    /// Replace a wavetable in the [`Resources`]
     pub fn replace_wavetable(&mut self, id: WavetableId, wavetable: Wavetable) {
         self.sender
             .send(Command::ResourcesCommand(
@@ -189,6 +197,7 @@ impl KnystCommands {
             ))
             .unwrap();
     }
+    /// Make a change to the shared [`MusicalTimeMap`]
     pub fn change_musical_time_map(
         &mut self,
         change_fn: impl FnOnce(&mut MusicalTimeMap) + Send + 'static,
@@ -414,6 +423,7 @@ impl Controller {
         all_commands_received
     }
 
+    /// Create a [`KnystCommands`] that can communicate with [`Self`]
     pub fn get_knyst_commands(&self) -> KnystCommands {
         KnystCommands {
             sender: self.command_sender.clone(),
@@ -442,6 +452,7 @@ impl Controller {
     }
 }
 
+/// Simple error handler that just prints the error using `eprintln!`
 pub fn print_error_handler(e: KnystError) {
     eprintln!("Error in Controller: {e}");
 }
