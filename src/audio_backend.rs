@@ -31,7 +31,6 @@ pub use jack_backend::JackBackend;
 pub trait AudioBackend {
     /// Starts processing and returns a [`Controller`]. This is the easiest
     /// option and will run the [`Controller`] in a loop on a new thread.
-    ///
     fn start_processing(
         &mut self,
         graph: Graph,

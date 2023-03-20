@@ -36,10 +36,12 @@ fn main() -> Result<()> {
 
     let sample_rate = backend.sample_rate() as f32;
     let block_size = backend.block_size().unwrap_or(64);
+    dbg!(block_size);
     let resources = Resources::new(ResourcesSettings::default());
     let top_level_graph = Graph::new(GraphSettings {
         block_size,
         sample_rate,
+        oversampling: knyst::graph::Oversampling::X2,
         num_outputs: backend.num_outputs(),
         ..Default::default()
     });
@@ -77,10 +79,13 @@ fn main() -> Result<()> {
     k.connect(amp.to_graph_out().channels(2));
 
     let sub_graph = Graph::new(GraphSettings {
+        // block_size: block_size / 2,
         block_size,
         sample_rate,
         num_outputs,
+        oversampling: knyst::graph::Oversampling::X2,
         name: String::from("subgraph"),
+        num_inputs: 0,
         ..Default::default()
     });
 
@@ -103,25 +108,45 @@ fn main() -> Result<()> {
             vec![53, 17, 31],
             vec![0, 22, 36],
             vec![9, 22, 45],
+            vec![9, 17, 45],
+            vec![0, 9, 22],
         ];
         let mut k = k.clone();
         std::thread::spawn(move || {
             let mut rng = thread_rng();
             let harmony_nodes: Vec<NodeAddress> = (0..chords[0].len())
-                .map(|_| {
+                .map(|i| {
                     let node = k.push_to_graph(
                         Oscillator::new(harmony_wavetable_id.into()),
                         sub_graph_id,
                         ("freq", 400.),
                     );
-                    let amp =
-                        k.push_to_graph(Mult, sub_graph_id, inputs!((0 ; node.out(0)), (1 : 0.02)));
-                    k.connect(amp.to_graph_out().channels(2));
+                    let sine_amp = k.push_to_graph(
+                        WavetableOscillatorOwned::new(Wavetable::sine()),
+                        sub_graph_id,
+                        inputs!(("freq" : rng.gen_range(0.1..0.4))),
+                    );
+                    let sine_amp_mul = k.push_to_graph(
+                        Mult,
+                        sub_graph_id,
+                        inputs!((0 ; sine_amp.out(0)), (1 : 0.4 * 0.03)),
+                    );
+                    let amp = k.push_to_graph(
+                        Mult,
+                        sub_graph_id,
+                        inputs!((0 ; node.out(0)), (1 : 0.03 ; sine_amp_mul.out(0))),
+                    );
+                    // Pan at positions -0.5, 0.0, 0.5
+                    let pan = k.push_to_graph(
+                        PanMonoToStereo,
+                        sub_graph_id,
+                        inputs!(("signal" ; amp.out(0)), ("pan" : (i as f32 - 1.0) * 0.5)),
+                    );
+                    k.connect(pan.to_graph_out().channels(2));
                     node
                 })
                 .collect();
             // Change to a new chord
-            let arpeggiation_time = 200;
             loop {
                 let new_chord = chords.choose(&mut rng).unwrap();
                 for (i, node) in harmony_nodes.iter().enumerate() {
@@ -132,10 +157,10 @@ fn main() -> Result<()> {
                         )
                         .label("freq"),
                     );
-                    std::thread::sleep(Duration::from_millis(arpeggiation_time));
+                    std::thread::sleep(Duration::from_millis(rng.gen::<u64>() % 1500 + 500));
                 }
 
-                std::thread::sleep(Duration::from_millis(1000));
+                std::thread::sleep(Duration::from_millis(rng.gen::<u64>() % 1000 + 1000));
             }
         });
     }
@@ -217,6 +242,7 @@ fn main() -> Result<()> {
         // Short sleep time to minimise latency
         std::thread::sleep(std::time::Duration::from_millis(1));
     }
+    // std::thread::sleep(Duration::from_millis(10000));
     Ok(())
 }
 
@@ -314,7 +340,7 @@ fn handle_special_keys(c: char, mut k: KnystCommands, state: &mut State) -> bool
             // in debug mode it should panic because of assert_no_alloc.
             k.push(
                 gen(|ctx, _resources| {
-                    let out = ctx.outputs.split_mut().next().unwrap();
+                    let out = ctx.outputs.iter_mut().next().unwrap();
                     let new_allocation: Vec<Sample> = ctx
                         .inputs
                         .get_channel(0)
@@ -372,7 +398,7 @@ fn fundsp_reverb_gen(sample_rate: f64, mix: f32) -> ClosureGen {
         let in0 = ctx.inputs.get_channel(0);
         let in1 = ctx.inputs.get_channel(1);
         let block_size = ctx.block_size();
-        let mut outputs = ctx.outputs.split_mut();
+        let mut outputs = ctx.outputs.iter_mut();
         let out0 = outputs.next().unwrap();
         let out1 = outputs.next().unwrap();
         // With an f32 fundsp AudioUnit we can pass input/output buffers
@@ -396,7 +422,7 @@ async fn tokio_knyst(k: KnystCommands, mut trigger: Arc<AtomicBool>) {
     loop {
         receive_trigger(&mut trigger).await;
         let k = k.clone();
-        let speed = rng.gen_range(0.2..0.4_f32);
+        let speed = rng.gen_range(0.1..0.6_f32);
         tokio::spawn(async move {
             play_a_little_tune(k, speed).await;
         });
@@ -412,15 +438,15 @@ async fn receive_trigger(trigger: &mut Arc<AtomicBool>) {
 
 async fn play_a_little_tune(mut k: KnystCommands, speed: f32) {
     let melody = vec![
+        (17, 1.),
         (22, 1.),
         (31, 1.),
         (36, 1.),
-        (45, 1.),
+        (45, 0.25),
         (53, 0.25),
         (58, 0.25),
-        (53, 0.25),
-        (48, 0.25),
-        (53, 3.),
+        (62, 0.25),
+        (53 + 17, 6.),
     ];
     for (degree_53, beats) in melody {
         let freq = degree_53_to_hz(degree_53 as f32 + 53., ROOT_FREQ);

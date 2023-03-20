@@ -316,7 +316,7 @@ impl Gen for BufferReader {
     ) -> crate::graph::GenState {
         let mut stop_sample = None;
 
-        let mut outputs = ctx.outputs.split_mut();
+        let mut outputs = ctx.outputs.iter_mut();
         let output0 = outputs.next().unwrap();
         if !self.finished {
             if let IdOrKey::Id(id) = self.buffer_key {
@@ -475,7 +475,7 @@ impl Gen for BufferReaderMulti {
             stop_sample = Some(0);
         }
         if let Some(stop_sample) = stop_sample {
-            let mut outputs = ctx.outputs.split_mut();
+            let mut outputs = ctx.outputs.iter_mut();
             let output = outputs.next().unwrap();
             for out in output[stop_sample..].iter_mut() {
                 *out = 0.;

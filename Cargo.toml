@@ -18,6 +18,7 @@ all-features = true
 [features]
 serde-derive = ["dep:serde"]
 debug-warn-on-alloc = ["assert_no_alloc/warn_debug"]
+default = ["cpal"]
 
 [dependencies]
 slotmap = "1.0"
@@ -63,7 +64,6 @@ tokio = {version = "1.26.0", features=["rt", "time", "macros", "rt-multi-thread"
 [[bench]]
 name = "large_sine_graph"
 harness = false
-
 
 [[example]]
 name = "jack_example"
