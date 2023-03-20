@@ -5,6 +5,7 @@
 - Convenient and unified way of running knyst in single or multi threaded contexts through the `Controller` and `KnystCommands` (name inspired from Bevy). This was incorporated in the AudioBackend API for convenience.
 - Schedule nodes to start with sample accuracy (see `Graph::push_at_time` and similar).
 - Oversampling of graphs. Currently limited to 2x oversampling for graphs with no inputs. Inner graphs cannot have a lower oversampling than their parent graph.
+- Introduce a definition of a trigger which is currently a value above 0.0 for one sample. Multiple samples in a row with values > 0.0 mean multiple triggers. Triggers can currently be used to trigger envelopes, but will be expanded in the future.
 - Inner graphs with smaller or larger block sizes are automatically converted to their parent graph's block size. Inner graphs with a larger block size cannot have inputs, since the inputs for the block would not exist yet when the larger block is run. This feature enables sample by sample processing for only a small part of a node tree, while the rest of the tree (in an outer graph) can benefit from block processing.
 - Introduces the ability to push a node while reusing a preexisting NodeAddress. This is useful mainly for the KnystCommands API to create the NodeAddress before the node is pushed.
 - Changed NodeAddress to be async compatible i.e. it can be created before the Gen/Graph has been pushed to a Graph. This required making it not Copy and methods taking a reference to it instead.
