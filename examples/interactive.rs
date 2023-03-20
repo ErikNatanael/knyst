@@ -1,3 +1,14 @@
+//! This example is supposed to exemplify the most important features of Knyst:
+//! - starting an audio backend
+//! - pushing nodes
+//! - making connections
+//! - inner graphs
+//! - async and multi threaded usage of KnystCommands
+//! - scheduling changes
+//! - interactivity
+//! - wrapping other dsp libraries (fundsp in this case)
+//! - writing a custom error handler
+
 use anyhow::Result;
 use knyst::{
     audio_backend::{CpalBackend, CpalBackendOptions},
@@ -11,7 +22,10 @@ use knyst::{
     WavetableId,
 };
 use rand::{seq::SliceRandom, thread_rng, Rng};
-use std::{io::Write, sync::atomic::AtomicBool};
+use std::{
+    io::Write,
+    sync::{atomic::AtomicBool, mpsc::Receiver},
+};
 use std::{sync::Arc, time::Duration};
 
 use termion;
@@ -28,6 +42,10 @@ struct State {
     sample_rate: f32,
     tokio_trigger: Arc<AtomicBool>,
     lead_env_address: NodeAddress,
+    error_strings: Vec<String>,
+    error_receiver: Receiver<String>,
+    // store a NodeAddress pointing to nothing to simulate getting an error
+    invalid_node: NodeAddress,
 }
 
 // TODO: Use the musical time map for scheduling and sometimes change the tempo
@@ -41,19 +59,26 @@ fn main() -> Result<()> {
     let top_level_graph = Graph::new(GraphSettings {
         block_size,
         sample_rate,
-        oversampling: knyst::graph::Oversampling::X2,
+        oversampling: knyst::graph::Oversampling::X1,
         num_outputs: backend.num_outputs(),
         ..Default::default()
     });
+    let (error_sender, error_receiver) = std::sync::mpsc::channel();
     let mut k = backend.start_processing(
         top_level_graph,
         resources,
         RunGraphSettings {
             scheduling_latency: Duration::from_millis(100),
         },
-        controller::print_error_handler,
+        move |error| {
+            error_sender.send(format!("{error}")).unwrap();
+        },
     )?;
     let num_outputs = backend.num_outputs();
+
+    // This NodeAddress will very soon point to nothing because it will run and
+    // then immediately free itself
+    let invalid_node = k.push(OnceTrig::new(), inputs![]);
 
     // Nodes are pushed to the top level graph if no graph id is specified
     let modulator = k.push(
@@ -181,6 +206,9 @@ fn main() -> Result<()> {
         harmony_wavetable_id,
         tokio_trigger,
         lead_env_address: env.clone(),
+        error_strings: vec![],
+        error_receiver,
+        invalid_node,
     };
 
     // Set terminal to raw mode to allow reading stdin one key at a time
@@ -197,6 +225,7 @@ fn main() -> Result<()> {
         "b: replace wavetable for harmony notes",
         "v: trigger a little melody using async",
         "c: tries to allocate, in debug mode this will panic (will mess with the terminal)",
+        "x: make an invalid connection which will create an error",
     ];
     write!(stdout, "{}", termion::clear::All,).unwrap();
     for (y, line) in lines.into_iter().enumerate() {
@@ -204,6 +233,25 @@ fn main() -> Result<()> {
     }
     stdout.lock().flush().unwrap();
     loop {
+        // Check if we have received any new errors and print all of them
+        while let Ok(error) = state.error_receiver.try_recv() {
+            state.error_strings.push(error);
+        }
+        write!(
+            stdout,
+            "{}Errors received ({}):",
+            termion::cursor::Goto(1, lines.len() as u16 + 4),
+            state.error_strings.len(),
+        )
+        .unwrap();
+        for (y, e) in state.error_strings.iter().enumerate() {
+            write!(
+                stdout,
+                "{}{e}",
+                termion::cursor::Goto(3, lines.len() as u16 + y as u16 + 5)
+            )
+            .unwrap();
+        }
         // Read input (if any)
         let input = stdin.next();
 
@@ -239,10 +287,11 @@ fn main() -> Result<()> {
                 _ => (),
             }
         }
+        // Put the cursor in the top left
+        write!(stdout, "{}", termion::cursor::Goto(1, 1)).unwrap();
         // Short sleep time to minimise latency
         std::thread::sleep(std::time::Duration::from_millis(1));
     }
-    // std::thread::sleep(Duration::from_millis(10000));
     Ok(())
 }
 
@@ -281,6 +330,7 @@ fn character_to_hz(c: char) -> f32 {
     )
 }
 
+/// Perform different actions depending on the key
 fn handle_special_keys(c: char, mut k: KnystCommands, state: &mut State) -> bool {
     match c {
         'm' => {
@@ -304,6 +354,7 @@ fn handle_special_keys(c: char, mut k: KnystCommands, state: &mut State) -> bool
             true
         }
         'n' => {
+            // Toggle the fundsp reverb on or off
             match state.reverb_node.take() {
                 Some(reverb_node) => k.free_node_mend_connections(reverb_node),
                 None => {
@@ -319,6 +370,7 @@ fn handle_special_keys(c: char, mut k: KnystCommands, state: &mut State) -> bool
             true
         }
         'b' => {
+            // Replace the wavetable used for the harmony nodes scheduled on a different thread
             let mut new_harmony_wavetable = Wavetable::sine();
             new_harmony_wavetable.add_odd_harmonics(
                 rand::random::<usize>() % 16 + 1,
@@ -330,6 +382,7 @@ fn handle_special_keys(c: char, mut k: KnystCommands, state: &mut State) -> bool
             true
         }
         'v' => {
+            // Send a trigger to the async tokio routine
             state
                 .tokio_trigger
                 .store(true, std::sync::atomic::Ordering::SeqCst);
@@ -356,6 +409,11 @@ fn handle_special_keys(c: char, mut k: KnystCommands, state: &mut State) -> bool
                 .input("in"),
                 inputs!(),
             );
+            true
+        }
+        'x' => {
+            // Produce an error by making an invalid connection
+            k.connect(state.invalid_node.to_graph_out());
             true
         }
         _ => false,
