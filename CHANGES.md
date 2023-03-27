@@ -2,6 +2,10 @@
 
 ## Current changes
 
+## v0.4.1
+
+- Disable the JACK AudioBackend notifications from printing to stdout since this interferes with tui applications.
+
 ## v0.4.0
 
 - Convenient and unified way of running knyst in single or multi threaded contexts through the `Controller` and `KnystCommands` (name inspired from Bevy). This was incorporated in the AudioBackend API for convenience.
