@@ -163,7 +163,7 @@ mod jack_backend {
                 };
                 // Activate the client, which starts the processing.
                 let active_client = client
-                    .activate_async(JackNotifications, jack_process)
+                    .activate_async(JackNotifications::default(), jack_process)
                     .unwrap();
                 self.client = Some(JackClient::Active(active_client));
                 let controller = Controller::new(
@@ -226,87 +226,80 @@ mod jack_backend {
     }
 
     struct JackNotifications;
+    impl Default for JackNotifications {
+        fn default() -> Self {
+            Self
+        }
+    }
 
     impl jack::NotificationHandler for JackNotifications {
-        fn thread_init(&self, _: &jack::Client) {
-            println!("JACK: thread init");
-        }
+        fn thread_init(&self, _: &jack::Client) {}
 
-        fn shutdown(&mut self, status: jack::ClientStatus, reason: &str) {
-            println!(
-                "JACK: shutdown with status {:?} because \"{}\"",
-                status, reason
-            );
-        }
+        fn shutdown(&mut self, _status: jack::ClientStatus, _reason: &str) {}
 
-        fn freewheel(&mut self, _: &jack::Client, is_enabled: bool) {
-            println!(
-                "JACK: freewheel mode is {}",
-                if is_enabled { "on" } else { "off" }
-            );
-        }
+        fn freewheel(&mut self, _: &jack::Client, _is_enabled: bool) {}
 
-        fn sample_rate(&mut self, _: &jack::Client, srate: jack::Frames) -> jack::Control {
-            println!("JACK: sample rate changed to {}", srate);
+        fn sample_rate(&mut self, _: &jack::Client, _srate: jack::Frames) -> jack::Control {
+            // println!("JACK: sample rate changed to {}", srate);
             jack::Control::Continue
         }
 
-        fn client_registration(&mut self, _: &jack::Client, name: &str, is_reg: bool) {
-            println!(
-                "JACK: {} client with name \"{}\"",
-                if is_reg { "registered" } else { "unregistered" },
-                name
-            );
+        fn client_registration(&mut self, _: &jack::Client, _name: &str, _is_reg: bool) {
+            // println!(
+            //     "JACK: {} client with name \"{}\"",
+            //     if is_reg { "registered" } else { "unregistered" },
+            //     name
+            // );
         }
 
-        fn port_registration(&mut self, _: &jack::Client, port_id: jack::PortId, is_reg: bool) {
-            println!(
-                "JACK: {} port with id {}",
-                if is_reg { "registered" } else { "unregistered" },
-                port_id
-            );
+        fn port_registration(&mut self, _: &jack::Client, _port_id: jack::PortId, _is_reg: bool) {
+            // println!(
+            //     "JACK: {} port with id {}",
+            //     if is_reg { "registered" } else { "unregistered" },
+            //     port_id
+            // );
         }
 
         fn port_rename(
             &mut self,
             _: &jack::Client,
-            port_id: jack::PortId,
-            old_name: &str,
-            new_name: &str,
+            _port_id: jack::PortId,
+            _old_name: &str,
+            _new_name: &str,
         ) -> jack::Control {
-            println!(
-                "JACK: port with id {} renamed from {} to {}",
-                port_id, old_name, new_name
-            );
+            // println!(
+            //     "JACK: port with id {} renamed from {} to {}",
+            //     port_id, old_name, new_name
+            // );
             jack::Control::Continue
         }
 
         fn ports_connected(
             &mut self,
             _: &jack::Client,
-            port_id_a: jack::PortId,
-            port_id_b: jack::PortId,
-            are_connected: bool,
+            _port_id_a: jack::PortId,
+            _port_id_b: jack::PortId,
+            _are_connected: bool,
         ) {
-            println!(
-                "JACK: ports with id {} and {} are {}",
-                port_id_a,
-                port_id_b,
-                if are_connected {
-                    "connected"
-                } else {
-                    "disconnected"
-                }
-            );
+            // println!(
+            //     "JACK: ports with id {} and {} are {}",
+            //     port_id_a,
+            //     port_id_b,
+            //     if are_connected {
+            //         "connected"
+            //     } else {
+            //         "disconnected"
+            //     }
+            // );
         }
 
         fn graph_reorder(&mut self, _: &jack::Client) -> jack::Control {
-            println!("JACK: graph reordered");
+            // println!("JACK: graph reordered");
             jack::Control::Continue
         }
 
         fn xrun(&mut self, _: &jack::Client) -> jack::Control {
-            println!("JACK: xrun occurred");
+            // println!("JACK: xrun occurred");
             jack::Control::Continue
         }
     }
