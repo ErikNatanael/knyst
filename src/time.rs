@@ -137,7 +137,7 @@ impl ops::Add<Superseconds> for Superseconds {
     fn add(self, rhs: Superseconds) -> Self::Output {
         let mut seconds = self.seconds + rhs.seconds;
         let mut subsample_tesimals = self.subsample_tesimals + rhs.subsample_tesimals;
-        while subsample_tesimals > SUBSAMPLE_TESIMALS_PER_SECOND {
+        while subsample_tesimals >= SUBSAMPLE_TESIMALS_PER_SECOND {
             seconds += 1;
             subsample_tesimals -= SUBSAMPLE_TESIMALS_PER_SECOND;
         }
@@ -273,7 +273,7 @@ impl ops::Add<Superbeats> for Superbeats {
     fn add(self, rhs: Superbeats) -> Self::Output {
         let mut beats = self.beats + rhs.beats;
         let mut beat_tesimals = self.beat_tesimals + rhs.beat_tesimals;
-        while beat_tesimals > SUBBEAT_TESIMALS_PER_BEAT {
+        while beat_tesimals >= SUBBEAT_TESIMALS_PER_BEAT {
             beats += 1;
             beat_tesimals -= SUBBEAT_TESIMALS_PER_BEAT;
         }
@@ -346,6 +346,13 @@ mod tests {
         assert_eq!(
             Superseconds::from_samples(96000 * 3 + 8, 96000).to_samples(88200),
             3 * 88200 + 7
+        );
+    }
+    #[test]
+    fn arithmetic() {
+        assert_eq!(
+            Superseconds::new(0, SUBSAMPLE_TESIMALS_PER_SECOND - 1) + Superseconds::new(1, 1),
+            Superseconds::new(2, 0)
         );
     }
 }

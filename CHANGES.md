@@ -2,6 +2,8 @@
 
 ## Current changes
 
+- Fix arithmetics bug for `Superbeats` and `Superseconds`.
+
 ## v0.4.1
 
 - Disable the JACK AudioBackend notifications from printing to stdout since this interferes with tui applications.
