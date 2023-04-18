@@ -2,7 +2,10 @@
 
 ## Current changes
 
+## v0.4.2
+
 - Fix arithmetics bug for `Superbeats` and `Superseconds`.
+- Update fundsp to the latest version which allows us to allocate fundsp internal buffers in advance instead of on the audio thread.
 
 ## v0.4.1
 
