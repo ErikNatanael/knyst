@@ -114,6 +114,8 @@ pub enum Connection {
         graph_outputs: bool,
         /// If true, clear connections from the graph inputs to the node
         graph_inputs: bool,
+        /// Specifies a specific channel to clear. If None (default), clear all.
+        channel: Option<NodeChannel>,
     },
 }
 
@@ -156,6 +158,7 @@ impl Connection {
             output_nodes: false,
             graph_outputs: false,
             graph_inputs: false,
+            channel: None,
         }
     }
     /// Clear connections from other nodes to this `node`'s input(s)
@@ -167,6 +170,7 @@ impl Connection {
             output_nodes: false,
             graph_outputs: false,
             graph_inputs: false,
+            channel: None,
         }
     }
     /// Clear connections from the `node` specified to other nodes
@@ -178,6 +182,7 @@ impl Connection {
             output_nodes: true,
             graph_outputs: false,
             graph_inputs: false,
+            channel: None,
         }
     }
     /// Clear connections from the `node` to the graph outputs
@@ -189,6 +194,7 @@ impl Connection {
             output_nodes: false,
             graph_outputs: true,
             graph_inputs: false,
+            channel: None,
         }
     }
     /// Clear connections from the graph inputs to the `node`
@@ -200,6 +206,7 @@ impl Connection {
             output_nodes: false,
             graph_outputs: false,
             graph_inputs: true,
+            channel: None,
         }
     }
     /// Sets the source of a Connection. Only valid for Connection::Node and
@@ -262,7 +269,7 @@ impl Connection {
                 *input_label = Some(label);
                 *to_index = None;
             }
-            Connection::Clear { .. } => {}
+            Connection::Clear { channel, .. } => *channel = Some(NodeChannel::Label(label)),
         }
         self
     }
@@ -290,7 +297,7 @@ impl Connection {
             Connection::GraphOutput { to_index, .. } => {
                 *to_index = index;
             }
-            Connection::Clear { .. } => {}
+            Connection::Clear { channel, .. } => *channel = Some(NodeChannel::Index(index)),
             Connection::GraphInput {
                 to_index, to_label, ..
             } => {
@@ -367,7 +374,7 @@ impl Connection {
             Connection::GraphInput { from_index, .. } => {
                 *from_index = index;
             }
-            Connection::Clear { .. } => {}
+            Connection::Clear { channel, .. } => *channel = Some(NodeChannel::Index(index)),
         }
         self
     }
@@ -392,7 +399,7 @@ impl Connection {
                 *from_index = None;
             }
             Connection::GraphInput { .. } => {}
-            Connection::Clear { .. } => {}
+            Connection::Clear { channel, .. } => *channel = Some(NodeChannel::Label(label)),
         }
         self
     }

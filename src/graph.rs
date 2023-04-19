@@ -2342,6 +2342,7 @@ impl Graph {
                 output_nodes,
                 graph_outputs,
                 graph_inputs,
+                channel,
             } => {
                 // Convert from NodeAddress to RawNodeAddress, returning an error if it isn't possible
                 let node = if let Some(raw_sink) = node.to_raw() {
@@ -2359,33 +2360,91 @@ impl Graph {
                 if self.node_keys_pending_removal.contains(&node.key) {
                     return Err(ConnectionError::NodeNotFound);
                 }
-                if input_nodes {
-                    let mut nodes_to_free = HashSet::new();
-                    for input_edge in &self.node_input_edges[node.key] {
-                        if self.feedback_node_indices.contains(&input_edge.source) {
-                            // The edge is from a feedback node. Remove the corresponding feedback edge.
-                            let feedback_edges = &mut self.node_feedback_edges[input_edge.source];
-                            let mut i = 0;
-                            while i < feedback_edges.len() {
-                                if feedback_edges[i].feedback_destination == node.key
-                                    && feedback_edges[i].from_output_index
-                                        == input_edge.from_output_index
-                                {
-                                    feedback_edges.remove(i);
+                let channel_index = match channel {
+                    Some(c) => {
+                        let index = match c {
+                            connection::NodeChannel::Label(label) => {
+                                if let Some(index) = self.input_index_from_label(node.key, label) {
+                                    index
                                 } else {
-                                    i += 1;
+                                    return Err(ConnectionError::InvalidInputLabel(label));
                                 }
                             }
-                            if feedback_edges.is_empty() {
-                                let graph_id = self.id;
-                                nodes_to_free.insert(RawNodeAddress {
-                                    graph_id,
-                                    key: input_edge.source,
-                                });
+                            connection::NodeChannel::Index(i) => i,
+                        };
+                        Some(index)
+                    }
+                    None => None,
+                };
+                if input_nodes {
+                    let mut nodes_to_free = HashSet::new();
+
+                    if let Some(index) = channel_index {
+                        for input_edge in &self.node_input_edges[node.key] {
+                            // Check that it is an input edge to the selected input index
+                            if input_edge.to_input_index == index {
+                                if self.feedback_node_indices.contains(&input_edge.source) {
+                                    // The edge is from a feedback node. Remove the corresponding feedback edge.
+                                    let feedback_edges =
+                                        &mut self.node_feedback_edges[input_edge.source];
+                                    let mut i = 0;
+                                    while i < feedback_edges.len() {
+                                        if feedback_edges[i].feedback_destination == node.key
+                                            && feedback_edges[i].from_output_index
+                                                == input_edge.from_output_index
+                                        {
+                                            feedback_edges.remove(i);
+                                        } else {
+                                            i += 1;
+                                        }
+                                    }
+                                    if feedback_edges.is_empty() {
+                                        let graph_id = self.id;
+                                        nodes_to_free.insert(RawNodeAddress {
+                                            graph_id,
+                                            key: input_edge.source,
+                                        });
+                                    }
+                                }
                             }
                         }
+                        let edges = &mut self.node_input_edges[node.key];
+                        let mut i = 0;
+                        while i > edges.len() {
+                            if edges[i].to_input_index == index {
+                                edges.remove(i);
+                            } else {
+                                i += 1;
+                            }
+                        }
+                    } else {
+                        for input_edge in &self.node_input_edges[node.key] {
+                            if self.feedback_node_indices.contains(&input_edge.source) {
+                                // The edge is from a feedback node. Remove the corresponding feedback edge.
+                                let feedback_edges =
+                                    &mut self.node_feedback_edges[input_edge.source];
+                                let mut i = 0;
+                                while i < feedback_edges.len() {
+                                    if feedback_edges[i].feedback_destination == node.key
+                                        && feedback_edges[i].from_output_index
+                                            == input_edge.from_output_index
+                                    {
+                                        feedback_edges.remove(i);
+                                    } else {
+                                        i += 1;
+                                    }
+                                }
+                                if feedback_edges.is_empty() {
+                                    let graph_id = self.id;
+                                    nodes_to_free.insert(RawNodeAddress {
+                                        graph_id,
+                                        key: input_edge.source,
+                                    });
+                                }
+                            }
+                        }
+                        self.node_input_edges[node.key].clear();
                     }
-                    self.node_input_edges[node.key].clear();
                     for na in nodes_to_free {
                         self.free_node(na)?;
                     }
@@ -2398,16 +2457,26 @@ impl Graph {
                     let num_node_inputs = self.get_nodes_mut()[node.key].num_inputs();
                     if let Some(ggc) = &mut self.graph_gen_communicator {
                         // The GraphGen has been created so we have to be more careful
-                        for index in 0..num_node_inputs {
+                        if let Some(index) = channel_index {
                             let change_kind = ScheduledChangeKind::Constant { index, value: 0.0 };
                             ggc.scheduler.schedule_now(node.key, change_kind);
+                        } else {
+                            for index in 0..num_node_inputs {
+                                let change_kind =
+                                    ScheduledChangeKind::Constant { index, value: 0.0 };
+                                ggc.scheduler.schedule_now(node.key, change_kind);
+                            }
                         }
                     } else {
                         // We are fine to set the constants on the node
                         // directly. In fact we have to because the Scheduler
                         // doesn't exist.
-                        for index in 0..num_node_inputs {
+                        if let Some(index) = channel_index {
                             self.get_nodes_mut()[node.key].set_constant(0.0, index);
+                        } else {
+                            for index in 0..num_node_inputs {
+                                self.get_nodes_mut()[node.key].set_constant(0.0, index);
+                            }
                         }
                     }
                 }
@@ -2416,7 +2485,15 @@ impl Graph {
                         let mut i = 0;
                         while i < edges.len() {
                             if edges[i].source == node.key {
-                                edges.remove(i);
+                                if let Some(index) = channel_index {
+                                    if edges[i].from_output_index == index {
+                                        edges.remove(i);
+                                    } else {
+                                        i += 1;
+                                    }
+                                } else {
+                                    edges.remove(i);
+                                }
                             } else {
                                 i += 1;
                             }
@@ -2427,7 +2504,15 @@ impl Graph {
                     let mut i = 0;
                     while i < self.output_edges.len() {
                         if self.output_edges[i].source == node.key {
-                            self.output_edges.remove(i);
+                            if let Some(index) = channel_index {
+                                if self.output_edges[i].from_output_index == index {
+                                    self.output_edges.remove(i);
+                                } else {
+                                    i += 1;
+                                }
+                            } else {
+                                self.output_edges.remove(i);
+                            }
                         } else {
                             i += 1;
                         }

@@ -2,6 +2,8 @@
 
 ## Current changes
 
+- Allow clearing all connections for a specific channel by calling `to_channel`, `from_channel` and similar on a `Connection::Clear`.
+
 ## v0.4.2
 
 - Fix arithmetics bug for `Superbeats` and `Superseconds`.
