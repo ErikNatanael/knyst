@@ -503,7 +503,8 @@ pub struct NodeOutput {
     pub(super) from_channel: NodeChannel,
 }
 impl NodeOutput {
-    pub(super) fn to_node(&self, node: &NodeAddress) -> Connection {
+    /// Create a connection from self to the specified node.
+    pub fn to_node(&self, node: &NodeAddress) -> Connection {
         let connection = Connection::Node {
             source: self.from_node.clone(),
             from_index: None,
