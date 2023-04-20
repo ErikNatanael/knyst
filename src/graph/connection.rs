@@ -527,6 +527,20 @@ impl NodeOutput {
             NodeChannel::Index(index) => connection.from_index(index),
         }
     }
+    /// Create a connection from self to the graph output of the graph the node is in.
+    pub fn to_graph_out(&self) -> Connection {
+        let connection = Connection::GraphOutput {
+            source: self.from_node.clone(),
+            from_index: Some(0),
+            from_label: None,
+            to_index: 0,
+            channels: 1,
+        };
+        match self.from_channel {
+            NodeChannel::Label(label) => connection.from_label(label),
+            NodeChannel::Index(index) => connection.from_index(index),
+        }
+    }
 }
 impl IntoIterator for NodeOutput {
     type Item = NodeOutput;
