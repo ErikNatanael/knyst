@@ -868,7 +868,7 @@ impl Default for GraphSettings {
             num_nodes: 1024,
             sample_rate: 48000.,
             oversampling: Oversampling::X1,
-            ring_buffer_size: 100,
+            ring_buffer_size: 1000,
         }
     }
 }
@@ -2806,7 +2806,7 @@ impl Graph {
             RingBuffer::<TaskData>::new(self.ring_buffer_size);
         let scheduler = Scheduler::new();
 
-        let scheduler_buffer_size = 300;
+        let scheduler_buffer_size = self.ring_buffer_size;
         let (scheduled_change_producer, rb_consumer) = RingBuffer::new(scheduler_buffer_size);
         let schedule_receiver = ScheduleReceiver::new(rb_consumer, scheduler_buffer_size);
 
