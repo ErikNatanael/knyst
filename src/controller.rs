@@ -13,7 +13,7 @@ use crate::{
     graph::{
         connection::{ConnectionBundle, ConnectionError, InputBundle},
         Connection, GenOrGraph, GenOrGraphEnum, Graph, GraphId, GraphSettings, NodeAddress,
-        ParameterChange,
+        ParameterChange, ParameterChanges,
     },
     scheduling::MusicalTimeMap,
     wavetable::Wavetable,
@@ -33,6 +33,7 @@ enum Command {
     FreeNode(NodeAddress),
     FreeNodeMendConnections(NodeAddress),
     ScheduleChange(ParameterChange),
+    ScheduleChanges(ParameterChanges),
     FreeDisconnectedNodes,
     ResourcesCommand(ResourcesCommand),
     ChangeMusicalTimeMap(Box<dyn FnOnce(&mut MusicalTimeMap) + Send>),
@@ -140,6 +141,15 @@ impl KnystCommands {
     /// care of automatically.
     pub fn schedule_change(&mut self, change: ParameterChange) {
         self.sender.send(Command::ScheduleChange(change)).unwrap();
+    }
+    /// Schedule multiple changes to be made.
+    ///
+    /// NB: Changes are buffered and the scheduler needs to be regularly updated
+    /// for them to be sent to the audio thread. If you are getting your
+    /// [`KnystCommands`] through `AudioBackend::start_processing` this is taken
+    /// care of automatically.
+    pub fn schedule_changes(&mut self, changes: ParameterChanges) {
+        self.sender.send(Command::ScheduleChanges(changes)).unwrap();
     }
     /// Inserts a new buffer in the [`Resources`] and returns an id which can be
     /// converted to a key on the audio thread with access to a [`Resources`].
@@ -344,6 +354,10 @@ impl Controller {
             Command::ChangeMusicalTimeMap(change_fn) => self
                 .top_level_graph
                 .change_musical_time_map(change_fn)
+                .map_err(|e| From::from(e)),
+            Command::ScheduleChanges(changes) => self
+                .top_level_graph
+                .schedule_changes(changes)
                 .map_err(|e| From::from(e)),
         };
 

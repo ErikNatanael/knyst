@@ -56,7 +56,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
-use self::connection::{ConnectionBundle, NodeOutput};
+use self::connection::{ConnectionBundle, NodeChannel, NodeOutput};
 
 use super::Resources;
 /// The graph consists of (simplified)
@@ -245,6 +245,49 @@ impl GraphInput {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct ParameterChanges {
+    /// When to apply the parameter change(s)
+    pub time: Time,
+    /// What changes to apply at the same time
+    pub changes: Vec<NodeChanges>,
+}
+impl ParameterChanges {
+    pub fn now() -> Self {
+        Self {
+            time: Time::Immediately,
+            changes: vec![],
+        }
+    }
+    pub fn duration_from_now(duration: Duration) -> Self {
+        Self {
+            time: Time::DurationFromNow(duration),
+            changes: vec![],
+        }
+    }
+    pub fn push(&mut self, node_changes: NodeChanges) -> &mut Self {
+        self.changes.push(node_changes);
+        self
+    }
+}
+#[derive(Clone, Debug)]
+pub struct NodeChanges {
+    node: NodeAddress,
+    parameters: Vec<(NodeChannel, Sample)>,
+}
+impl NodeChanges {
+    pub fn new(node: NodeAddress) -> Self {
+        Self {
+            node,
+            parameters: vec![],
+        }
+    }
+    pub fn set(mut self, channel: impl Into<NodeChannel>, value: Sample) -> Self {
+        self.parameters.push((channel.into(), value));
+        self
+    }
+}
+
 /// A parameter (input constant) change to be scheduled on a [`Graph`].
 #[derive(Clone)]
 pub struct ParameterChange {
@@ -325,7 +368,7 @@ impl ParameterChange {
 
 /// Used to specify a time when a parameter change should be applied.
 #[allow(missing_docs)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum Time {
     Beats(Superbeats),
     DurationFromNow(Duration),
@@ -1583,6 +1626,65 @@ impl Graph {
         }
     }
 
+    /// Schedule changes to input channel constants. The changes will only be
+    /// applied if the [`Graph`] is running and its scheduler is regularly
+    /// updated.
+    pub fn schedule_changes(&mut self, changes: ParameterChanges) -> Result<(), ScheduleError> {
+        let mut scheduler_changes = vec![];
+        for node_changes in &changes.changes {
+            let node = &node_changes.node;
+            let change_pairs = &node_changes.parameters;
+            if let Some(raw_node_address) = node.to_raw() {
+                if raw_node_address.graph_id == self.id {
+                    // Does the Node exist?
+                    if !self.get_nodes_mut().contains_key(raw_node_address.key) {
+                        return Err(ScheduleError::NodeNotFound);
+                    }
+                    for (channel, value) in change_pairs {
+                        let index = match channel {
+                            NodeChannel::Label(label) => {
+                                if let Some(label_index) =
+                                    self.node_input_name_to_index[raw_node_address.key].get(label)
+                                {
+                                    *label_index
+                                } else {
+                                    return Err(ScheduleError::InputLabelNotFound(label));
+                                }
+                            }
+                            NodeChannel::Index(index) => *index,
+                        };
+
+                        let change_kind = ScheduledChangeKind::Constant {
+                            index,
+                            value: *value,
+                        };
+                        scheduler_changes.push((raw_node_address.key, change_kind));
+                    }
+                } else {
+                    // Try to find the graph containing the node by asking all the graphs in this graph to free the node
+                    for (_key, graph) in &mut self.graphs_per_node {
+                        match graph.schedule_changes(changes.clone()) {
+                            Ok(_) => return Ok(()),
+                            Err(e) => match e {
+                                ScheduleError::GraphNotFound => (),
+                                _ => return Err(e),
+                            },
+                        }
+                    }
+                    return Err(ScheduleError::GraphNotFound);
+                }
+            } else {
+                // TODO: Add the change to a queue?
+                todo!();
+            }
+        }
+        if let Some(ggc) = &mut self.graph_gen_communicator {
+            ggc.scheduler.schedule(scheduler_changes, changes.time);
+        } else {
+            return Err(ScheduleError::SchedulerNotCreated);
+        }
+        Ok(())
+    }
     /// Schedule a change to an input channel constant. The change will only be
     /// applied if the [`Graph`] is running and its scheduler is regularly
     /// updated.
@@ -1613,7 +1715,7 @@ impl Graph {
                         value: change.value,
                     };
                     ggc.scheduler
-                        .schedule(raw_node_address.key, change_kind, change.time);
+                        .schedule(vec![(raw_node_address.key, change_kind)], change.time);
                 } else {
                     return Err(ScheduleError::SchedulerNotCreated);
                 }
@@ -1846,11 +1948,13 @@ impl Graph {
                     };
                     if let Some(ggc) = &mut self.graph_gen_communicator {
                         ggc.scheduler.schedule(
-                            sink.key,
-                            ScheduledChangeKind::Constant {
-                                index: input,
-                                value: 0.0,
-                            },
+                            vec![(
+                                sink.key,
+                                ScheduledChangeKind::Constant {
+                                    index: input,
+                                    value: 0.0,
+                                },
+                            )],
                             Time::Immediately,
                         );
                     } else {
@@ -2206,11 +2310,13 @@ impl Graph {
                     };
                     if let Some(ggc) = &mut self.graph_gen_communicator {
                         ggc.scheduler.schedule(
-                            sink.key,
-                            ScheduledChangeKind::Constant {
-                                index: input,
-                                value,
-                            },
+                            vec![(
+                                sink.key,
+                                ScheduledChangeKind::Constant {
+                                    index: input,
+                                    value,
+                                },
+                            )],
                             Time::Immediately,
                         );
                     } else {
@@ -3030,7 +3136,7 @@ enum ScheduledChangeKind {
 /// Before a Graph is running and changes scheduled will be stored in a queue.
 enum Scheduler {
     Stopped {
-        scheduling_queue: Vec<(NodeKey, ScheduledChangeKind, Time)>,
+        scheduling_queue: Vec<(Vec<(NodeKey, ScheduledChangeKind)>, Time)>,
     },
     Running {
         /// The starting time of the audio thread graph, relative to which time also
@@ -3083,19 +3189,17 @@ impl Scheduler {
                     latency_in_samples: (latency.as_secs_f64() * sample_rate as f64),
                     musical_time_map,
                 };
-                for (node_key, change_kind, time) in scheduling_queue {
-                    new_scheduler.schedule(node_key, change_kind, time);
+                for (changes, time) in scheduling_queue {
+                    new_scheduler.schedule(changes, time);
                 }
                 *self = new_scheduler;
             }
             Scheduler::Running { .. } => (),
         }
     }
-    fn schedule(&mut self, key: NodeKey, change_kind: ScheduledChangeKind, time: Time) {
+    fn schedule(&mut self, changes: Vec<(NodeKey, ScheduledChangeKind)>, time: Time) {
         match self {
-            Scheduler::Stopped { scheduling_queue } => {
-                scheduling_queue.push((key, change_kind, time))
-            }
+            Scheduler::Stopped { scheduling_queue } => scheduling_queue.push((changes, time)),
             Scheduler::Running {
                 start_ts,
                 sample_rate,
@@ -3109,19 +3213,24 @@ impl Scheduler {
                         let timestamp = ((start_ts.elapsed() + duration_from_now).as_secs_f64()
                             * *sample_rate as f64
                             + *latency) as u64;
-                        scheduling_queue.push(ScheduledChange {
-                            timestamp,
-                            key,
-                            kind: change_kind,
-                        });
+                        dbg!(timestamp);
+                        for (key, change_kind) in changes {
+                            scheduling_queue.push(ScheduledChange {
+                                timestamp,
+                                key,
+                                kind: change_kind,
+                            });
+                        }
                     }
                     Time::Superseconds(superseconds) => {
                         let absolute_timestamp = superseconds.to_samples(*sample_rate);
-                        scheduling_queue.push(ScheduledChange {
-                            timestamp: absolute_timestamp,
-                            key,
-                            kind: change_kind,
-                        });
+                        for (key, change_kind) in changes {
+                            scheduling_queue.push(ScheduledChange {
+                                timestamp: absolute_timestamp,
+                                key,
+                                kind: change_kind,
+                            });
+                        }
                     }
                     Time::Beats(mt) => {
                         // TODO: Remove unwrap, return a Result
@@ -3130,18 +3239,22 @@ impl Scheduler {
                             Duration::from_secs_f64(mtm.musical_time_to_secs_f64(mt));
                         let timestamp = ((duration_from_start).as_secs_f64() * *sample_rate as f64
                             + *latency) as u64;
-                        scheduling_queue.push(ScheduledChange {
-                            timestamp,
-                            key,
-                            kind: change_kind,
-                        });
+                        for (key, change_kind) in changes {
+                            scheduling_queue.push(ScheduledChange {
+                                timestamp,
+                                key,
+                                kind: change_kind,
+                            });
+                        }
                     }
                     Time::Immediately => {
-                        scheduling_queue.push(ScheduledChange {
-                            timestamp: 0,
-                            key,
-                            kind: change_kind,
-                        });
+                        for (key, change_kind) in changes {
+                            scheduling_queue.push(ScheduledChange {
+                                timestamp: 0,
+                                key,
+                                kind: change_kind,
+                            });
+                        }
                     }
                 }
             }
@@ -3166,7 +3279,10 @@ impl Scheduler {
     }
     /// Schedules a change to be applied at the time of calling the function + the latency setting.
     fn schedule_now(&mut self, key: NodeKey, change: ScheduledChangeKind) {
-        self.schedule(key, change, Time::DurationFromNow(Duration::new(0, 0)))
+        self.schedule(
+            vec![(key, change)],
+            Time::DurationFromNow(Duration::new(0, 0)),
+        )
     }
     fn update(&mut self, timestamp: u64, rb_producer: &mut rtrb::Producer<ScheduledChange>) {
         match self {
