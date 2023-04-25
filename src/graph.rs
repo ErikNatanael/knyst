@@ -3213,7 +3213,6 @@ impl Scheduler {
                         let timestamp = ((start_ts.elapsed() + duration_from_now).as_secs_f64()
                             * *sample_rate as f64
                             + *latency) as u64;
-                        dbg!(timestamp);
                         for (key, change_kind) in changes {
                             scheduling_queue.push(ScheduledChange {
                                 timestamp,
