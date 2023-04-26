@@ -3686,6 +3686,33 @@ impl Gen for Mult {
         "Mult"
     }
 }
+/// Bus(channels)
+///
+/// Convenience Gen for collecting many signals to one node address. Inputs will
+/// be copied to the corresponding outputs.
+pub struct Bus(pub usize);
+impl Gen for Bus {
+    fn process(&mut self, ctx: GenContext, _resources: &mut Resources) -> GenState {
+        for i in 0..ctx.block_size() {
+            for channel in 0..self.0 {
+                ctx.outputs.write(ctx.inputs.read(channel, i), channel, i);
+            }
+        }
+        GenState::Continue
+    }
+
+    fn num_inputs(&self) -> usize {
+        self.0
+    }
+
+    fn num_outputs(&self) -> usize {
+        self.0
+    }
+
+    fn name(&self) -> &'static str {
+        "Bus"
+    }
+}
 /// Pan a mono signal to stereo using the cos/sine pan law. Pan value should be
 /// between -1 and 1, 0 being in the center.
 ///
