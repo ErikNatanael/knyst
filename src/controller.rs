@@ -13,7 +13,7 @@ use crate::{
     graph::{
         connection::{ConnectionBundle, ConnectionError, InputBundle},
         Connection, GenOrGraph, GenOrGraphEnum, Graph, GraphId, GraphSettings, NodeAddress,
-        ParameterChange, ParameterChanges,
+        ParameterChange, SimultaneousChanges,
     },
     scheduling::MusicalTimeMap,
     wavetable::Wavetable,
@@ -33,7 +33,7 @@ enum Command {
     FreeNode(NodeAddress),
     FreeNodeMendConnections(NodeAddress),
     ScheduleChange(ParameterChange),
-    ScheduleChanges(ParameterChanges),
+    ScheduleChanges(SimultaneousChanges),
     FreeDisconnectedNodes,
     ResourcesCommand(ResourcesCommand),
     ChangeMusicalTimeMap(Box<dyn FnOnce(&mut MusicalTimeMap) + Send>),
@@ -148,7 +148,7 @@ impl KnystCommands {
     /// for them to be sent to the audio thread. If you are getting your
     /// [`KnystCommands`] through `AudioBackend::start_processing` this is taken
     /// care of automatically.
-    pub fn schedule_changes(&mut self, changes: ParameterChanges) {
+    pub fn schedule_changes(&mut self, changes: SimultaneousChanges) {
         self.sender.send(Command::ScheduleChanges(changes)).unwrap();
     }
     /// Inserts a new buffer in the [`Resources`] and returns an id which can be

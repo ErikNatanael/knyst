@@ -228,6 +228,11 @@ impl NodeAddress {
             feedback: true,
         }
     }
+    /// Create a NodeChanges for setting parameters or triggers. Use in
+    /// conjunction with [`SimultaneousChanges`] and `schedule_changes`.
+    pub fn change(&self) -> NodeChanges {
+        NodeChanges::new(self.clone())
+    }
 }
 
 /// Convenience struct for the notation `GraphInput::to(node)`
@@ -246,46 +251,85 @@ impl GraphInput {
 }
 
 #[derive(Clone, Debug)]
-pub struct ParameterChanges {
+/// Bundle multiple changes to multiple nodes. This is usually required to be
+/// certain that they get applied in the same frame, except if using absolute
+/// time.
+pub struct SimultaneousChanges {
     /// When to apply the parameter change(s)
     pub time: Time,
     /// What changes to apply at the same time
     pub changes: Vec<NodeChanges>,
 }
-impl ParameterChanges {
+impl SimultaneousChanges {
+    /// Empty `Self` set to be scheduled as soon as possible
     pub fn now() -> Self {
         Self {
             time: Time::Immediately,
             changes: vec![],
         }
     }
+    /// Empty `Self` set to be scheduled a specified wall clock duration from now + latency.
     pub fn duration_from_now(duration: Duration) -> Self {
         Self {
             time: Time::DurationFromNow(duration),
             changes: vec![],
         }
     }
+    /// Push a new [`NodeChanges`] into the list of changes that will be scheduled.
     pub fn push(&mut self, node_changes: NodeChanges) -> &mut Self {
         self.changes.push(node_changes);
         self
     }
 }
 #[derive(Clone, Debug)]
+/// Multiple changes to the input values of a certain node. See [`Change`] for
+/// what kinds of changes can be scheduled. All methods return Self so it can be chained:
+///
+/// # Example
+/// ```rust
+/// use knyst::graph::{NodeChanges, NodeAddress, SimultaneousChanges};
+/// // In reality, use a NodeAddress that points to a node.
+/// let my_node_address = NodeAddress::new();
+/// let node_changes = NodeChanges::new(my_node_address).set("freq", 442.0).set("amp", 0.5).trigger("reset");
+/// // equivalent to:
+/// // let node_changes = my_node_address.change().set("freq", 442.0).set("amp", 0.5).trigger("reset");
+/// let mut simultaneous_changes = SimultaneousChanges::now();
+/// simultaneous_changes.push(node_changes);
+/// ```
 pub struct NodeChanges {
     node: NodeAddress,
-    parameters: Vec<(NodeChannel, Sample)>,
+    parameters: Vec<(NodeChannel, Change)>,
 }
 impl NodeChanges {
+    /// New set of changes for a certain node
     pub fn new(node: NodeAddress) -> Self {
         Self {
             node,
             parameters: vec![],
         }
     }
+    /// Adds a new value to set for a specific channel. Can be chained.
     pub fn set(mut self, channel: impl Into<NodeChannel>, value: Sample) -> Self {
-        self.parameters.push((channel.into(), value));
+        self.parameters
+            .push((channel.into(), Change::Constant(value)));
         self
     }
+    /// Adds a trigger for a specific channel. Can be chained.
+    pub fn trigger(mut self, channel: impl Into<NodeChannel>) -> Self {
+        self.parameters.push((channel.into(), Change::Trigger));
+        self
+    }
+}
+#[derive(Clone, Copy, Debug)]
+/// Types of changes that can be scheduled for a node in a Graph.
+pub enum Change {
+    /// Change an input constant to a new value. This value will be added to any
+    /// values from node inputs, or to 0 if there are no inputs from other
+    /// nodes.
+    Constant(Sample),
+    /// Schedule a trigger for one sample. A trigger is defined by the
+    /// [`trig::is_trigger`] function.
+    Trigger,
 }
 
 /// A parameter (input constant) change to be scheduled on a [`Graph`].
@@ -416,6 +460,9 @@ impl Task {
                 for i in start_sample_in_block..self.input_buffers.block_size() {
                     self.input_buffers.write(value, index, i);
                 }
+            }
+            ScheduledChangeKind::Trigger { index } => {
+                self.input_buffers.write(1.0, index, start_sample_in_block);
             }
         }
     }
@@ -1629,7 +1676,7 @@ impl Graph {
     /// Schedule changes to input channel constants. The changes will only be
     /// applied if the [`Graph`] is running and its scheduler is regularly
     /// updated.
-    pub fn schedule_changes(&mut self, changes: ParameterChanges) -> Result<(), ScheduleError> {
+    pub fn schedule_changes(&mut self, changes: SimultaneousChanges) -> Result<(), ScheduleError> {
         let mut scheduler_changes = vec![];
         for node_changes in &changes.changes {
             let node = &node_changes.node;
@@ -1640,7 +1687,7 @@ impl Graph {
                     if !self.get_nodes_mut().contains_key(raw_node_address.key) {
                         return Err(ScheduleError::NodeNotFound);
                     }
-                    for (channel, value) in change_pairs {
+                    for (channel, change) in change_pairs {
                         let index = match channel {
                             NodeChannel::Label(label) => {
                                 if let Some(label_index) =
@@ -1654,9 +1701,12 @@ impl Graph {
                             NodeChannel::Index(index) => *index,
                         };
 
-                        let change_kind = ScheduledChangeKind::Constant {
-                            index,
-                            value: *value,
+                        let change_kind = match change {
+                            Change::Constant(value) => ScheduledChangeKind::Constant {
+                                index,
+                                value: *value,
+                            },
+                            Change::Trigger => ScheduledChangeKind::Trigger { index },
                         };
                         scheduler_changes.push((raw_node_address.key, change_kind));
                     }
@@ -3089,6 +3139,7 @@ struct ScheduledChange {
 #[derive(Clone, Copy, Debug)]
 enum ScheduledChangeKind {
     Constant { index: usize, value: Sample },
+    Trigger { index: usize },
 }
 // #[derive(Eq, Copy, Clone)]
 // enum AudioThreadTimestamp {
