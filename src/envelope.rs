@@ -310,10 +310,9 @@ impl EnvelopeGen {
                 if self.waiting_for_release {
                     self.next_segment();
                     self.waiting_for_release = false;
-                } else {
-                    // We're jumping from somewhere to the end segment
-                    self.jump_to_segment(sustain_point + 1);
                 }
+                // We're jumping from somewhere to the end segment
+                self.jump_to_segment(sustain_point + 1);
             }
             SustainMode::Loop { start: _, end } => {
                 self.jump_to_segment(end + 1);
