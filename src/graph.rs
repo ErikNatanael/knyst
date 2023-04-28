@@ -299,6 +299,7 @@ impl SimultaneousChanges {
 pub struct NodeChanges {
     node: NodeAddress,
     parameters: Vec<(NodeChannel, Change)>,
+    offset: Option<TimeOffset>,
 }
 impl NodeChanges {
     /// New set of changes for a certain node
@@ -306,6 +307,7 @@ impl NodeChanges {
         Self {
             node,
             parameters: vec![],
+            offset: None,
         }
     }
     /// Adds a new value to set for a specific channel. Can be chained.
@@ -317,6 +319,16 @@ impl NodeChanges {
     /// Adds a trigger for a specific channel. Can be chained.
     pub fn trigger(mut self, channel: impl Into<NodeChannel>) -> Self {
         self.parameters.push((channel.into(), Change::Trigger));
+        self
+    }
+    /// Add this time offset to all the [`Change`]s in the [`NodeChanges`]. If
+    /// you want different offsets for different settings to the same node you
+    /// can create multiple [`NodeChanges`].
+    ///
+    /// With the `Time::Immediately` timing variant for the
+    /// [`SimultaneousChanges`] only positive offsets are allowed.
+    pub fn time_offset(mut self, offset: TimeOffset) -> Self {
+        self.offset = Some(offset);
         self
     }
 }
@@ -418,6 +430,37 @@ pub enum Time {
     DurationFromNow(Duration),
     Superseconds(Superseconds),
     Immediately,
+}
+
+/// Newtype for using a [`Time`] as an offset.
+#[allow(missing_docs)]
+#[derive(Clone, Copy, Debug)]
+pub enum TimeOffset {
+    Frames(i64),
+    Superseconds(Relative<Superseconds>),
+}
+
+impl TimeOffset {
+    /// Convert self to a time offset in frames/samples
+    pub fn to_frames(&self, sample_rate: u64) -> i64 {
+        match self {
+            TimeOffset::Frames(frame_offset) => *frame_offset,
+            TimeOffset::Superseconds(relative_supserseconds) => match relative_supserseconds {
+                Relative::Before(s) => s.to_samples(sample_rate) as i64 * -1,
+                Relative::After(s) => s.to_samples(sample_rate) as i64,
+            },
+        }
+    }
+}
+
+/// Used to denote a relative value of an unsigned type, essentially adding a
+/// sign.
+#[derive(Clone, Copy, Debug)]
+pub enum Relative<T> {
+    /// A value before the value it is modifying i.e. a negative offset.
+    Before(T),
+    /// A value after the value it is modifying i.e. a positive offset.
+    After(T),
 }
 
 /// One task to complete, for the node graph Safety: Uses raw pointers to nodes
@@ -1681,6 +1724,7 @@ impl Graph {
         for node_changes in &changes.changes {
             let node = &node_changes.node;
             let change_pairs = &node_changes.parameters;
+            let time_offset = node_changes.offset;
             if let Some(raw_node_address) = node.to_raw() {
                 if raw_node_address.graph_id == self.id {
                     // Does the Node exist?
@@ -1708,7 +1752,7 @@ impl Graph {
                             },
                             Change::Trigger => ScheduledChangeKind::Trigger { index },
                         };
-                        scheduler_changes.push((raw_node_address.key, change_kind));
+                        scheduler_changes.push((raw_node_address.key, change_kind, time_offset));
                     }
                 } else {
                     // Try to find the graph containing the node by asking all the graphs in this graph to free the node
@@ -1765,7 +1809,7 @@ impl Graph {
                         value: change.value,
                     };
                     ggc.scheduler
-                        .schedule(vec![(raw_node_address.key, change_kind)], change.time);
+                        .schedule(vec![(raw_node_address.key, change_kind, None)], change.time);
                 } else {
                     return Err(ScheduleError::SchedulerNotCreated);
                 }
@@ -2004,6 +2048,7 @@ impl Graph {
                                     index: input,
                                     value: 0.0,
                                 },
+                                None,
                             )],
                             Time::Immediately,
                         );
@@ -2366,6 +2411,7 @@ impl Graph {
                                     index: input,
                                     value,
                                 },
+                                None,
                             )],
                             Time::Immediately,
                         );
@@ -3187,7 +3233,10 @@ enum ScheduledChangeKind {
 /// Before a Graph is running and changes scheduled will be stored in a queue.
 enum Scheduler {
     Stopped {
-        scheduling_queue: Vec<(Vec<(NodeKey, ScheduledChangeKind)>, Time)>,
+        scheduling_queue: Vec<(
+            Vec<(NodeKey, ScheduledChangeKind, Option<TimeOffset>)>,
+            Time,
+        )>,
     },
     Running {
         /// The starting time of the audio thread graph, relative to which time also
@@ -3248,7 +3297,11 @@ impl Scheduler {
             Scheduler::Running { .. } => (),
         }
     }
-    fn schedule(&mut self, changes: Vec<(NodeKey, ScheduledChangeKind)>, time: Time) {
+    fn schedule(
+        &mut self,
+        changes: Vec<(NodeKey, ScheduledChangeKind, Option<TimeOffset>)>,
+        time: Time,
+    ) {
         match self {
             Scheduler::Stopped { scheduling_queue } => scheduling_queue.push((changes, time)),
             Scheduler::Running {
@@ -3259,12 +3312,25 @@ impl Scheduler {
                 latency_in_samples: latency,
                 musical_time_map,
             } => {
+                let offset_to_frames = |time_offset: Option<TimeOffset>| {
+                    if let Some(to) = time_offset {
+                        to.to_frames(*sample_rate)
+                    } else {
+                        0
+                    }
+                };
                 match time {
                     Time::DurationFromNow(duration_from_now) => {
-                        let timestamp = ((start_ts.elapsed() + duration_from_now).as_secs_f64()
+                        let mut timestamp = ((start_ts.elapsed() + duration_from_now).as_secs_f64()
                             * *sample_rate as f64
                             + *latency) as u64;
-                        for (key, change_kind) in changes {
+                        for (key, change_kind, time_offset) in changes {
+                            let frame_offset = offset_to_frames(time_offset);
+                            if frame_offset >= 0 {
+                                timestamp = timestamp.checked_add(frame_offset as u64).unwrap_or_else(|| {eprintln!("Used a time offset that made the timestamp overflow: {frame_offset:?}"); timestamp});
+                            } else {
+                                timestamp = timestamp.checked_sub((frame_offset * -1) as u64).unwrap_or_else(|| {eprintln!("Used a time offset that made the timestamp overflow: {frame_offset:?}"); timestamp});
+                            }
                             scheduling_queue.push(ScheduledChange {
                                 timestamp,
                                 key,
@@ -3273,10 +3339,16 @@ impl Scheduler {
                         }
                     }
                     Time::Superseconds(superseconds) => {
-                        let absolute_timestamp = superseconds.to_samples(*sample_rate);
-                        for (key, change_kind) in changes {
+                        let mut timestamp = superseconds.to_samples(*sample_rate);
+                        for (key, change_kind, time_offset) in changes {
+                            let frame_offset = offset_to_frames(time_offset);
+                            if frame_offset >= 0 {
+                                timestamp = timestamp.checked_add(frame_offset as u64).unwrap_or_else(|| {eprintln!("Used a time offset that made the timestamp overflow: {frame_offset:?}"); timestamp});
+                            } else {
+                                timestamp = timestamp.checked_sub((frame_offset * -1) as u64).unwrap_or_else(|| {eprintln!("Used a time offset that made the timestamp overflow: {frame_offset:?}"); timestamp});
+                            }
                             scheduling_queue.push(ScheduledChange {
-                                timestamp: absolute_timestamp,
+                                timestamp,
                                 key,
                                 kind: change_kind,
                             });
@@ -3287,9 +3359,16 @@ impl Scheduler {
                         let mtm = musical_time_map.read().unwrap();
                         let duration_from_start =
                             Duration::from_secs_f64(mtm.musical_time_to_secs_f64(mt));
-                        let timestamp = ((duration_from_start).as_secs_f64() * *sample_rate as f64
+                        let mut timestamp = ((duration_from_start).as_secs_f64()
+                            * *sample_rate as f64
                             + *latency) as u64;
-                        for (key, change_kind) in changes {
+                        for (key, change_kind, time_offset) in changes {
+                            let frame_offset = offset_to_frames(time_offset);
+                            if frame_offset >= 0 {
+                                timestamp = timestamp.checked_add(frame_offset as u64).unwrap_or_else(|| {eprintln!("Used a time offset that made the timestamp overflow: {frame_offset:?}"); timestamp});
+                            } else {
+                                timestamp = timestamp.checked_sub((frame_offset * -1) as u64).unwrap_or_else(|| {eprintln!("Used a time offset that made the timestamp overflow: {frame_offset:?}"); timestamp});
+                            }
                             scheduling_queue.push(ScheduledChange {
                                 timestamp,
                                 key,
@@ -3298,9 +3377,16 @@ impl Scheduler {
                         }
                     }
                     Time::Immediately => {
-                        for (key, change_kind) in changes {
+                        for (key, change_kind, time_offset) in changes {
+                            let frame_offset = offset_to_frames(time_offset);
+                            let mut timestamp: u64 = 0;
+                            if frame_offset >= 0 {
+                                timestamp = timestamp.checked_add(frame_offset as u64).unwrap_or_else(|| {eprintln!("Used a time offset that made the timestamp overflow: {frame_offset:?}"); timestamp});
+                            } else {
+                                timestamp = timestamp.checked_sub((frame_offset * -1) as u64).unwrap_or_else(|| {eprintln!("Used a time offset that made the timestamp overflow: {frame_offset:?}"); timestamp});
+                            }
                             scheduling_queue.push(ScheduledChange {
-                                timestamp: 0,
+                                timestamp,
                                 key,
                                 kind: change_kind,
                             });
@@ -3330,7 +3416,7 @@ impl Scheduler {
     /// Schedules a change to be applied at the time of calling the function + the latency setting.
     fn schedule_now(&mut self, key: NodeKey, change: ScheduledChangeKind) {
         self.schedule(
-            vec![(key, change)],
+            vec![(key, change, None)],
             Time::DurationFromNow(Duration::new(0, 0)),
         )
     }
