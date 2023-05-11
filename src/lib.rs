@@ -63,6 +63,7 @@ static A: AllocDisabler = AllocDisabler;
 pub mod audio_backend;
 pub mod buffer;
 pub mod controller;
+pub mod delay;
 pub mod envelope;
 mod filter;
 pub mod graph;

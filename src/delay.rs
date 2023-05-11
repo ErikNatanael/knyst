@@ -1,7 +1,82 @@
+use crate::graph::Gen;
+use crate::time::Superseconds;
 use crate::wavetable::Wavetable;
 use crate::Resources;
 use crate::Sample;
 
+/// Delay by an integer number of samples, no interpolation. This is good for e.g. triggers.
+///
+/// *inputs*
+/// 0. "signal": input signal, the signal to be delayed
+/// 1. "delay_time": the delay time in seconds (will be truncated to the nearest sample)
+/// *outputs*
+/// 0. "signal": the delayed signal
+pub struct SampleDelay {
+    buffer: Vec<Sample>,
+    write_position: usize,
+    max_delay_length: Superseconds,
+}
+impl SampleDelay {
+    pub fn new(max_delay_length: Superseconds) -> Self {
+        Self {
+            buffer: vec![0.0; 0],
+            max_delay_length,
+            write_position: 0,
+        }
+    }
+}
+
+impl Gen for SampleDelay {
+    fn process(
+        &mut self,
+        ctx: crate::graph::GenContext,
+        _resources: &mut Resources,
+    ) -> crate::graph::GenState {
+        let sig_buf = ctx.inputs.get_channel(0);
+        let time_buf = ctx.inputs.get_channel(1);
+        let out_buf = ctx.outputs.iter_mut().next().unwrap();
+        for ((&input, &time), o) in sig_buf.iter().zip(time_buf).zip(out_buf.iter_mut()) {
+            self.buffer[self.write_position] = input;
+            let delay_samples = (time * ctx.sample_rate) as usize;
+            *o = self.buffer
+                [(self.write_position + self.buffer.len() - delay_samples) % self.buffer.len()];
+            self.write_position = (self.write_position + 1) % self.buffer.len();
+        }
+        crate::graph::GenState::Continue
+    }
+
+    fn num_inputs(&self) -> usize {
+        2
+    }
+
+    fn num_outputs(&self) -> usize {
+        1
+    }
+
+    fn init(&mut self, _block_size: usize, sample_rate: crate::graph::Sample) {
+        self.buffer =
+            vec![0.0; (self.max_delay_length.to_seconds_f64() * sample_rate as f64) as usize];
+        self.write_position = 0;
+    }
+
+    fn input_desc(&self, input: usize) -> &'static str {
+        match input {
+            0 => "signal",
+            1 => "delay_time",
+            _ => "",
+        }
+    }
+
+    fn output_desc(&self, _output: usize) -> &'static str {
+        "signal"
+    }
+
+    fn name(&self) -> &'static str {
+        "SampleDelay"
+    }
+}
+
+/*
 #[derive(Clone, Debug)]
 struct Grain {
     /// phase and read_ptr are two representations of the same thing, but phase is needed to index into the window buffer
@@ -157,3 +232,4 @@ impl FragmentedDelay {
         out
     }
 }
+*/
