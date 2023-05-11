@@ -101,11 +101,12 @@ impl Gen for IntervalTrig {
             // Adding first makes the time until the first trigger the same as
             // the time between subsequent triggers so it is more consistent.
             self.counter += one_sample;
-            *trig_out = if self.counter.to_seconds_f64() as f32 >= *interval {
+            let interval_as_superseconds = Superseconds::from_seconds_f64(*interval as f64);
+            *trig_out = if self.counter >= interval_as_superseconds {
                 self.counter = self
                     .counter
-                    .checked_sub(Superseconds::from_seconds_f64(*interval as f64))
-                    .unwrap();
+                    .checked_sub(interval_as_superseconds)
+                    .expect("Counter was checked to be bigger than or equal to the interval so the subtraction should always work.");
                 1.0
             } else {
                 0.0
