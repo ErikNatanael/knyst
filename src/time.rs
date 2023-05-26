@@ -183,6 +183,11 @@ pub struct Superbeats {
     beat_tesimals: u32,
 }
 impl Superbeats {
+    /// Zero beats
+    pub const ZERO: Self = Self {
+        beats: 0,
+        beat_tesimals: 0,
+    };
     #[allow(missing_docs)]
     pub fn new(beats: u32, beat_tesimals: u32) -> Self {
         Self {
@@ -247,6 +252,11 @@ impl Superbeats {
                 })
             }
         }
+    }
+}
+impl std::iter::Sum for Superbeats {
+    fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
+        iter.fold(Superbeats::ZERO, |acc, elem| acc + elem)
     }
 }
 impl PartialOrd for Superbeats {
