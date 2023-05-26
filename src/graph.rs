@@ -1715,6 +1715,19 @@ impl Graph {
             graph.start_scheduler(latency, start_ts, musical_time_map.clone());
         }
     }
+    /// Returns the current audio thread time in Superbeats based on the
+    /// MusicalTimeMap, or None if it is not available (e.g. if the Graph has
+    /// not been started yet).
+    pub fn get_current_time_musical(&self) -> Option<Superbeats> {
+        if let Some(ggc) = &self.graph_gen_communicator {
+            let ts_samples = ggc.timestamp.load(Ordering::Relaxed);
+            let seconds = ts_samples as f64 * self.sample_rate as f64;
+            ggc.scheduler
+                .seconds_to_musical_time_superbeats(Superseconds::from_seconds_f64(seconds))
+        } else {
+            None
+        }
+    }
 
     /// Schedule changes to input channel constants. The changes will only be
     /// applied if the [`Graph`] is running and its scheduler is regularly
@@ -3447,6 +3460,22 @@ impl Scheduler {
             }
         }
     }
+    fn seconds_to_musical_time_superbeats(&self, ts: Superseconds) -> Option<Superbeats> {
+        match self {
+            Scheduler::Stopped { scheduling_queue } => None,
+            Scheduler::Running {
+                start_ts,
+                sample_rate,
+                max_duration_to_send,
+                scheduling_queue,
+                latency_in_samples,
+                musical_time_map,
+            } => {
+                let mtm = musical_time_map.read().unwrap();
+                Some(mtm.superseconds_to_superbeats(ts))
+            }
+        }
+    }
 }
 
 struct ScheduleReceiver {
@@ -3506,6 +3535,13 @@ struct GraphGenCommunicator {
     /// The ring buffer for sending scheduled changes to the audio thread
     scheduled_change_producer: rtrb::Producer<ScheduledChange>,
     timestamp: Arc<AtomicU64>,
+    /// The next change flag to be attached to a task update. When the changes
+    /// in the update have been applied on the audio thread, this flag till be
+    /// set to true. Its purpose is to make sure nodes can be safely dropped
+    /// because they are guaranteed not to be accessed on the audio thread. This
+    /// is done by each node to be deleted having a clone of this flag which
+    /// corresponds to the update when that node was removed from the Tasks
+    /// list.
     next_change_flag: Arc<AtomicBool>,
     free_node_queue_consumer: rtrb::Consumer<(NodeKey, GenState)>,
     task_data_to_be_dropped_consumer: rtrb::Consumer<TaskData>,

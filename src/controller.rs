@@ -16,6 +16,7 @@ use crate::{
         ParameterChange, SimultaneousChanges,
     },
     scheduling::MusicalTimeMap,
+    time::Superbeats,
     wavetable::Wavetable,
     BufferId, KnystError, ResourcesCommand, ResourcesResponse, WavetableId,
 };
@@ -224,6 +225,39 @@ impl KnystCommands {
     }
 }
 
+/// Callback that is scheduled in [`Superbeats`]. The closure inside the
+/// callback should only schedule changes in Superbeats time guided by the value
+/// to start scheduling that is passed to the function.
+///
+/// The closure takes two parameters: the time to start the next scheduling in
+/// Superbeats time and a `&mut KnystCommands` for scheduling the changes. The
+/// timestamp in the first parameter is the start time of the callback plus all
+/// the returned beat intervals to wait until the next callback. The callback
+/// can return the time to wait until it gets called again or `None` to remove
+/// the callback.
+pub struct BeatCallback {
+    callback: Box<dyn FnMut(Superbeats, &mut KnystCommands) -> Option<Superbeats> + Send>,
+    next_timestamp: Superbeats,
+}
+impl BeatCallback {
+    /// Called by the Controller when it is time to run the callback to schedule
+    /// changes in the future.
+    fn run_callback(&mut self, k: &mut KnystCommands) -> CallbackResult {
+        match (self.callback)(self.next_timestamp, k) {
+            Some(time_to_next) => {
+                self.next_timestamp += time_to_next;
+                CallbackResult::Continue
+            }
+            None => CallbackResult::Delete,
+        }
+    }
+}
+
+enum CallbackResult {
+    Continue,
+    Delete,
+}
+
 /// Receives commands from one or several [`KnystCommands`] that may be on
 /// different threads, and applies those to a top level [`Graph`].
 pub struct Controller {
@@ -238,6 +272,7 @@ pub struct Controller {
     // pushed.
     command_queue: Vec<(Instant, Command)>,
     error_handler: Box<dyn FnMut(KnystError) + Send>,
+    beat_callbacks: Vec<BeatCallback>,
 }
 impl Controller {
     /// Creates a new [`Controller`] taking the top level [`Graph`] to which
@@ -258,6 +293,7 @@ impl Controller {
             error_handler: Box::new(error_handler),
             resources_receiver,
             resources_sender,
+            beat_callbacks: vec![],
         }
     }
 
@@ -420,6 +456,11 @@ impl Controller {
                 }
             }
         }
+    }
+
+    fn run_callbacks(&mut self) {
+        // Get current time in MusicalTime
+        let current_time_beats = self.top_level_graph.get_current_time_musical();
     }
 
     /// Receives messages, applies them and then runs maintenance. Maintenance

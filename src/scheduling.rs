@@ -2,6 +2,7 @@
 //! graph internals.
 
 use crate::time::Superbeats;
+use crate::time::Superseconds;
 use std::sync::Arc;
 use std::sync::RwLock;
 
@@ -17,6 +18,14 @@ impl TempoChange {
     pub fn to_secs_f64(&self, duration: Superbeats) -> f64 {
         match self {
             TempoChange::NewTempo { bpm } => (duration.as_beats_f64() * 60.) / bpm,
+        }
+    }
+    /// Converts a duration in seconds within this TempoChange to Superbeats
+    pub fn secs_f64_to_beats(&self, section_duration: f64) -> Superbeats {
+        match self {
+            TempoChange::NewTempo { bpm } => {
+                Superbeats::from_beats_f64(*bpm * (section_duration / 60.))
+            }
         }
     }
 }
@@ -169,6 +178,49 @@ impl MusicalTimeMap {
 
         accumulated_seconds
     }
+    /// Convert a timestamp in seconds to beats using self
+    pub fn superseconds_to_superbeats(&self, ts: Superseconds) -> Superbeats {
+        // If we have not upheld our promise about the state of the MusicalTimeMap there is a bug
+        assert!(self.tempo_changes.len() > 0);
+        assert_eq!(self.tempo_changes[0].1, Superbeats::ZERO);
+        let mut accumulated_beats = Superbeats::ZERO;
+        let mut duration_remaining = ts.to_seconds_f64();
+        // Accumulate the entire tempo changes ranges up to the one we are in
+        for (tempo_change_pair0, tempo_change_pair1) in self
+            .tempo_changes
+            .iter()
+            .zip(self.tempo_changes.iter().skip(1))
+        {
+            // The subtraction should always work since the tempo changes are
+            // supposed to always be sorted. If they aren't, that's a bug.
+            let section_duration = tempo_change_pair1
+                .1
+                .checked_sub(tempo_change_pair0.1)
+                .unwrap();
+            let section_duration_secs = tempo_change_pair0.0.to_secs_f64(section_duration);
+            if duration_remaining >= section_duration_secs {
+                accumulated_beats += section_duration;
+                duration_remaining -= section_duration_secs;
+            } else {
+                accumulated_beats += tempo_change_pair0.0.secs_f64_to_beats(duration_remaining);
+                duration_remaining = 0.0;
+                break;
+            }
+        }
+
+        if duration_remaining > 0.0 {
+            // The time stamp given is after the last tempo change, simply
+            // calculate the remaining duration using the last tempo change.
+            accumulated_beats += self
+                .tempo_changes
+                .last()
+                .unwrap()
+                .0
+                .secs_f64_to_beats(duration_remaining);
+        }
+
+        accumulated_beats
+    }
     /// Returns the number of tempo changes
     pub fn len(&self) -> usize {
         self.tempo_changes.len()
@@ -199,6 +251,8 @@ impl Default for MusicalTimeMap {
 pub struct MusicalTimeMapRef(Arc<RwLock<MusicalTimeMap>>);
 
 mod tests {
+    use crate::time::Superseconds;
+
     #[test]
     fn musical_time_test() {
         use crate::scheduling::{MusicalTimeMap, Superbeats, TempoChange};
@@ -209,6 +263,10 @@ mod tests {
         assert_eq!(
             map.musical_time_to_secs_f64(Superbeats::from_fractional_beats::<4>(5, 3)),
             5.75
+        );
+        assert_eq!(
+            map.superseconds_to_superbeats(Superseconds::from_seconds_f64(2.)),
+            Superbeats::from_beats(2)
         );
         map.replace(0, TempoChange::NewTempo { bpm: 120.0 });
         assert_eq!(map.musical_time_to_secs_f64(Superbeats::new(1, 0)), 0.5);
@@ -239,6 +297,10 @@ mod tests {
         assert_eq!(
             map.musical_time_to_secs_f64(Superbeats::from_beats(32 + 1000)),
             16.0 * 0.5 + 16.0 + 10.
+        );
+        assert_eq!(
+            map.superseconds_to_superbeats(Superseconds::from_seconds_f64(2.)),
+            Superbeats::from_beats(4)
         );
     }
 }
