@@ -254,6 +254,8 @@ impl GraphInput {
 /// Bundle multiple changes to multiple nodes. This is usually required to be
 /// certain that they get applied in the same frame, except if using absolute
 /// time.
+///
+/// For now, every Node has to be located in the same graph.
 pub struct SimultaneousChanges {
     /// When to apply the parameter change(s)
     pub time: Time,
