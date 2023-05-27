@@ -717,7 +717,7 @@ impl GenOrGraph for Graph {
         parent_graph_sample_rate: Sample,
         parent_graph_oversampling: Oversampling,
     ) -> (Option<Graph>, Box<dyn Gen + Send>) {
-        if self.block_size() <= parent_graph_block_size && self.num_inputs() > 0 {
+        if self.block_size() > parent_graph_block_size && self.num_inputs() > 0 {
             panic!("Warning: You are pushing a graph with a larger block size and with Graph inputs. An inner Graph with a larger block size cannot have inputs since the inputs for the entire inner block would not have been calculated yet.")
         }
         if self.sample_rate != parent_graph_sample_rate {
