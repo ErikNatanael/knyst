@@ -58,6 +58,8 @@ pub struct KnystCommands {
     top_level_graph_id: GraphId,
     /// Make the top level graph settings available so that creating a matching sub graph is easy.
     top_level_graph_settings: GraphSettings,
+    /// The default graph to push
+    default_graph_id: GraphId,
 }
 
 impl KnystCommands {
@@ -65,13 +67,13 @@ impl KnystCommands {
     pub fn push_without_inputs(&mut self, gen_or_graph: impl GenOrGraph) -> NodeAddress {
         self.push_to_graph_without_inputs(gen_or_graph, self.top_level_graph_id)
     }
-    /// Push a Gen or Graph to the top level Graph.
+    /// Push a Gen or Graph to the default Graph.
     pub fn push(
         &mut self,
         gen_or_graph: impl GenOrGraph,
         inputs: impl Into<InputBundle>,
     ) -> NodeAddress {
-        let addr = self.push_to_graph_without_inputs(gen_or_graph, self.top_level_graph_id);
+        let addr = self.push_to_graph_without_inputs(gen_or_graph, self.default_graph_id);
         let inputs: InputBundle = inputs.into();
         self.connect_bundle(inputs.to(&addr));
         addr
@@ -223,6 +225,18 @@ impl KnystCommands {
     /// for example.
     pub fn default_graph_settings(&self) -> GraphSettings {
         self.top_level_graph_settings.clone()
+    }
+    /// Create a new Self which pushes to the selected GraphId by default
+    pub fn to_graph(&self, graph_id: GraphId) -> Self {
+        let mut k = self.clone();
+        k.default_graph_id = graph_id;
+        k
+    }
+    /// Create a new Self which pushes to the top level GraphId by default
+    pub fn to_top_level_graph(&self) -> Self {
+        let mut k = self.clone();
+        k.default_graph_id = self.top_level_graph_id;
+        k
     }
 }
 
@@ -392,10 +406,19 @@ impl Controller {
                 .top_level_graph
                 .change_musical_time_map(change_fn)
                 .map_err(|e| From::from(e)),
-            Command::ScheduleChanges(changes) => self
-                .top_level_graph
-                .schedule_changes(changes)
-                .map_err(|e| From::from(e)),
+            Command::ScheduleChanges(changes) => {
+                match self.top_level_graph.schedule_changes(changes) {
+                    Ok(_) => Ok(()),
+                    Err(e) => match e {
+                        crate::graph::ScheduleError::GraphNotFound => {
+                            // println!("Didn't find graph for:");
+                            // println!("{changes_clone:?}");
+                            Err(e.into())
+                        }
+                        _ => Err(e.into()),
+                    },
+                }
+            }
         };
 
         if let Err(e) = result {
@@ -499,6 +522,7 @@ impl Controller {
             sender: self.command_sender.clone(),
             top_level_graph_id: self.top_level_graph.id(),
             top_level_graph_settings: self.top_level_graph.graph_settings(),
+            default_graph_id: self.top_level_graph.id(),
         }
     }
 
@@ -518,6 +542,7 @@ impl Controller {
             sender,
             top_level_graph_id,
             top_level_graph_settings,
+            default_graph_id: top_level_graph_id,
         }
     }
 }
