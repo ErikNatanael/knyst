@@ -38,6 +38,7 @@ enum Command {
     FreeDisconnectedNodes,
     ResourcesCommand(ResourcesCommand),
     ChangeMusicalTimeMap(Box<dyn FnOnce(&mut MusicalTimeMap) + Send>),
+    ScheduleBeatCallback(BeatCallback),
 }
 
 /// [`KnystCommands`] sends commands to the [`Controller`] which should hold the
@@ -461,6 +462,17 @@ impl Controller {
     fn run_callbacks(&mut self) {
         // Get current time in MusicalTime
         let current_time_beats = self.top_level_graph.get_current_time_musical();
+        let mut k = self.get_knyst_commands();
+        if let Some(current_time_beats) = current_time_beats {
+            for c in &mut self.beat_callbacks {
+                if c.next_timestamp < current_time_beats
+                    || c.next_timestamp.checked_sub(current_time_beats).unwrap()
+                        < Superbeats::from_beats(2)
+                {
+                    c.run_callback(&mut k);
+                }
+            }
+        }
     }
 
     /// Receives messages, applies them and then runs maintenance. Maintenance
@@ -473,6 +485,9 @@ impl Controller {
     ///
     /// Returns true if all commands in the queue were processed.
     pub fn run(&mut self, max_commands_before_update: usize) -> bool {
+        // Run the callbacks first because they may send commands that would
+        // then get picked up and applied just after.
+        self.run_callbacks();
         let all_commands_received = self.receive_and_apply_commands(max_commands_before_update);
         self.run_maintenance();
         all_commands_received
