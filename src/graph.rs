@@ -42,6 +42,7 @@ use node::Node;
 pub use node::NodeBufferRef;
 pub use run_graph::{RunGraph, RunGraphSettings};
 
+use crate::inspection::{EdgeInspection, EdgeSource, GraphInspection, NodeInspection};
 use crate::scheduling::MusicalTimeMap;
 use crate::time::{Superbeats, Superseconds};
 use rtrb::RingBuffer;
@@ -1077,6 +1078,10 @@ pub struct Graph {
     name: String,
     nodes: Arc<UnsafeCell<SlotMap<NodeKey, Node>>>,
     node_keys_to_free_when_safe: Vec<(NodeKey, Arc<AtomicBool>)>,
+    /// Set of keys pending removal to easily check if a node is pending
+    /// removal. TODO: Maybe it's actually faster and easier to just look
+    /// through node_keys_to_free_when_safe than to bother with a HashSet since
+    /// this list will almost always be tiny.
     node_keys_pending_removal: HashSet<NodeKey>,
     /// A list of input edges for every node, sharing the same index as the node
     node_input_edges: SecondaryMap<NodeKey, Vec<Edge>>,
@@ -1087,6 +1092,10 @@ pub struct Graph {
     /// List of feedback input edges for every node. The NodeKey in the tuple is the index of the FeedbackNode doing the buffering
     node_feedback_edges: SecondaryMap<NodeKey, Vec<FeedbackEdge>>,
     node_feedback_node_key: SecondaryMap<NodeKey, NodeKey>,
+    /// Every NodeAddress is generated with a unique ID in order to have a
+    /// stable hash/eq. Therefore, it needs to be stored here for retreival for
+    /// inspection etc.
+    node_addresses: SecondaryMap<NodeKey, NodeAddress>,
     node_order: Vec<NodeKey>,
     disconnected_nodes: Vec<NodeKey>,
     feedback_node_indices: Vec<NodeKey>,
@@ -1156,6 +1165,7 @@ impl Graph {
             node_output_name_to_index: SecondaryMap::with_capacity(num_nodes),
             node_feedback_node_key: SecondaryMap::with_capacity(num_nodes),
             node_feedback_edges,
+            node_addresses: SecondaryMap::with_capacity(num_nodes),
             node_order: Vec::with_capacity(num_nodes),
             disconnected_nodes: vec![],
             node_keys_to_free_when_safe: vec![],
@@ -1404,6 +1414,7 @@ impl Graph {
 
         node_address.set_graph_id(self.id);
         node_address.set_node_key(key);
+        self.node_addresses.insert(key, node_address.clone());
     }
     /// Remove all nodes in this graph and all its subgraphs that are not connected to anything.
     pub fn free_disconnected_nodes(&mut self) -> Result<(), FreeError> {
@@ -1728,6 +1739,104 @@ impl Graph {
                 .seconds_to_musical_time_superbeats(Superseconds::from_seconds_f64(seconds))
         } else {
             None
+        }
+    }
+    /// Generate inspection metadata for this graph and all sub graphs. Can be
+    /// used to generate static or dynamic inspection and manipulation tools.
+    pub fn generate_inspection(&self) -> GraphInspection {
+        let real_nodes = self.get_nodes();
+        // Maps a node key to the index in the Vec
+        let mut node_key_processed = Vec::with_capacity(real_nodes.len());
+        let mut nodes = Vec::with_capacity(real_nodes.len());
+        for (node_key, node) in real_nodes {
+            let graph_inspection = self
+                .graphs_per_node
+                .get(node_key)
+                .map(|graph| graph.generate_inspection());
+
+            nodes.push(NodeInspection {
+                name: node.name.to_string(),
+                address: self.node_addresses.get(node_key).expect("All nodes should have their addresses stored.").clone(),
+                input_channels: self.node_input_index_to_name.get(node_key).expect("All nodes should have a list of input channel names made when pushed to the graph.").iter().map(|&s|s.to_string()).collect(),
+                output_channels: self.node_output_index_to_name.get(node_key).expect("All nodes should have a list of output channel names made when pushed to the graph.").iter().map(|&s| s.to_string()).collect(),
+                // Leave empty for now, fill later
+                input_edges: vec![],
+                graph_inspection,
+            });
+            node_key_processed.push(node_key);
+        }
+        // Convert edges to the inspection native format of indices to the list of nodes
+        for (node_key, _node) in real_nodes {
+            let mut input_edges = Vec::new();
+            if let Some(edges) = self.node_input_edges.get(node_key) {
+                for edge in edges {
+                    let index = node_key_processed
+                        .iter()
+                        .position(|&k| k == edge.source)
+                        .unwrap();
+                    input_edges.push(EdgeInspection {
+                        source: EdgeSource::Node(index),
+                        from_index: edge.from_output_index,
+                        to_index: edge.to_input_index,
+                    });
+                }
+            }
+            if let Some(edges) = self.graph_input_edges.get(node_key) {
+                for edge in edges {
+                    input_edges.push(EdgeInspection {
+                        source: EdgeSource::Graph,
+                        from_index: edge.from_output_index,
+                        to_index: edge.to_input_index,
+                    });
+                }
+            }
+            let index = node_key_processed
+                .iter()
+                .position(|&k| k == node_key)
+                .unwrap();
+            nodes[index].input_edges = input_edges;
+        }
+        let mut graph_output_input_edges = Vec::new();
+        for edge in &self.output_edges {
+            let index = node_key_processed
+                .iter()
+                .position(|&k| k == edge.source)
+                .unwrap();
+            graph_output_input_edges.push(EdgeInspection {
+                source: EdgeSource::Node(index),
+                from_index: edge.from_output_index,
+                to_index: edge.to_input_index,
+            });
+        }
+        let unconnected_nodes = self
+            .disconnected_nodes
+            .iter()
+            .map(|&disconnected_key| {
+                node_key_processed
+                    .iter()
+                    .position(|&key| key == disconnected_key)
+                    .unwrap()
+            })
+            .collect();
+        let nodes_pending_removal = self
+            .node_keys_to_free_when_safe
+            .iter()
+            .map(|&(freed_key, _)| {
+                node_key_processed
+                    .iter()
+                    .position(|&key| key == freed_key)
+                    .unwrap()
+            })
+            .collect();
+
+        GraphInspection {
+            nodes,
+            unconnected_nodes,
+            nodes_pending_removal,
+            graph_output_input_edges,
+            num_inputs: self.num_inputs,
+            num_outputs: self.num_outputs,
+            graph_id: self.id,
         }
     }
 

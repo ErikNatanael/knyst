@@ -67,6 +67,7 @@ pub mod delay;
 pub mod envelope;
 mod filter;
 pub mod graph;
+pub mod inspection;
 pub mod prelude;
 pub mod scheduling;
 pub mod time;
