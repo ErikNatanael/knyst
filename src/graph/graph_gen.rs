@@ -629,6 +629,19 @@ impl Gen for GraphGen {
                     }
                 }
 
+                // Remove changes that have expired for tasks that don't exist
+                // (anymore, removed nodes). Otherwise they will accumulate
+                // until there is a crash.
+                let mut i = 0;
+                while i < changes.len() {
+                    let change = &changes[i];
+                    if change.timestamp < self.sample_counter {
+                        changes.remove(i);
+                    } else {
+                        i += 1;
+                    }
+                }
+
                 // Set the output of the graph
                 // Zero the output buffer.
                 ctx.outputs.fill(0.0);

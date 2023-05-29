@@ -3300,6 +3300,7 @@ unsafe impl Send for Graph {}
 
 /// The internal representation of a scheduled change to a running graph. This
 /// is what gets sent to the GraphGen.
+#[derive(Clone, Copy, Debug)]
 struct ScheduledChange {
     /// timestamp in samples in the current Graph's sample rate
     timestamp: u64,
@@ -3607,6 +3608,9 @@ impl ScheduleReceiver {
             // Only try to read so many changes there is room for in the queue
             let changes_to_read =
                 num_new_changes.min(self.schedule_queue.capacity() - self.schedule_queue.len());
+            if changes_to_read == 0 {
+                eprintln!("ScheduleReceiver: Unable to read any changes, queue is full.",);
+            }
             match self.rb_consumer.read_chunk(changes_to_read) {
                 Ok(chunk) => {
                     for change in chunk {
