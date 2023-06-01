@@ -117,7 +117,7 @@ impl KnystCommands {
             self.connect(c);
         }
     }
-
+    /// Add a new beat callback. See [`BeatCallback`] for documentation.
     pub fn schedule_beat_callback(
         &mut self,
         callback: impl FnMut(Superbeats, &mut KnystCommands) -> Option<Superbeats> + Send + 'static,

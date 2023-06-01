@@ -3574,14 +3574,9 @@ impl Scheduler {
     }
     fn seconds_to_musical_time_superbeats(&self, ts: Superseconds) -> Option<Superbeats> {
         match self {
-            Scheduler::Stopped { scheduling_queue } => None,
+            Scheduler::Stopped { .. } => None,
             Scheduler::Running {
-                start_ts,
-                sample_rate,
-                max_duration_to_send,
-                scheduling_queue,
-                latency_in_samples,
-                musical_time_map,
+                musical_time_map, ..
             } => {
                 let mtm = musical_time_map.read().unwrap();
                 Some(mtm.superseconds_to_superbeats(ts))

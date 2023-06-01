@@ -1,6 +1,8 @@
+//! # Delay
+//! This module contains some basic delay Gens
+
 use crate::graph::Gen;
 use crate::time::Superseconds;
-use crate::wavetable::Wavetable;
 use crate::Resources;
 use crate::Sample;
 
@@ -17,6 +19,7 @@ pub struct SampleDelay {
     max_delay_length: Superseconds,
 }
 impl SampleDelay {
+    /// Create a new SampleDelay with a maximum delay time.
     pub fn new(max_delay_length: Superseconds) -> Self {
         Self {
             buffer: vec![0.0; 0],

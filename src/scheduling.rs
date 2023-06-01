@@ -250,6 +250,7 @@ impl Default for MusicalTimeMap {
 /// Exposes the shared MusicalTimeMap in a read only Sync container.
 pub struct MusicalTimeMapRef(Arc<RwLock<MusicalTimeMap>>);
 
+#[cfg(test)]
 mod tests {
     use crate::time::Superseconds;
 
