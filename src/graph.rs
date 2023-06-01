@@ -1734,7 +1734,7 @@ impl Graph {
     pub fn get_current_time_musical(&self) -> Option<Superbeats> {
         if let Some(ggc) = &self.graph_gen_communicator {
             let ts_samples = ggc.timestamp.load(Ordering::Relaxed);
-            let seconds = ts_samples as f64 * self.sample_rate as f64;
+            let seconds = ts_samples as f64 / self.sample_rate as f64;
             ggc.scheduler
                 .seconds_to_musical_time_superbeats(Superseconds::from_seconds_f64(seconds))
         } else {

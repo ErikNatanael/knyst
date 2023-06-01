@@ -117,6 +117,15 @@ impl KnystCommands {
             self.connect(c);
         }
     }
+
+    pub fn schedule_beat_callback(
+        &mut self,
+        callback: impl FnMut(Superbeats, &mut KnystCommands) -> Option<Superbeats> + Send + 'static,
+        start_time: Superbeats,
+    ) {
+        let command = Command::ScheduleBeatCallback(BeatCallback::new(callback, start_time));
+        self.sender.send(command).unwrap();
+    }
     /// Disconnect (undo) a [`Connection`]
     pub fn disconnect(&mut self, connection: Connection) {
         self.sender.send(Command::Disconnect(connection)).unwrap();
@@ -255,6 +264,16 @@ pub struct BeatCallback {
     next_timestamp: Superbeats,
 }
 impl BeatCallback {
+    /// Create a new [`BeatCallback`] with a given start time
+    pub fn new(
+        callback: impl FnMut(Superbeats, &mut KnystCommands) -> Option<Superbeats> + Send + 'static,
+        start_time: Superbeats,
+    ) -> Self {
+        Self {
+            callback: Box::new(callback),
+            next_timestamp: start_time,
+        }
+    }
     /// Called by the Controller when it is time to run the callback to schedule
     /// changes in the future.
     fn run_callback(&mut self, k: &mut KnystCommands) -> CallbackResult {
@@ -418,6 +437,10 @@ impl Controller {
                         _ => Err(e.into()),
                     },
                 }
+            }
+            Command::ScheduleBeatCallback(callback) => {
+                self.beat_callbacks.push(callback);
+                Ok(())
             }
         };
 
