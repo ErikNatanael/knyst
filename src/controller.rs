@@ -6,7 +6,10 @@
 //! [`Controller`]. The API is similar to calling methods on [`Graph`] directly,
 //! but also includes modifying [`Resources`].
 
-use std::time::{Duration, Instant};
+use std::{
+    sync::{atomic::AtomicBool, Arc},
+    time::{Duration, Instant},
+};
 
 use crate::{
     buffer::Buffer,
@@ -122,9 +125,12 @@ impl KnystCommands {
         &mut self,
         callback: impl FnMut(Superbeats, &mut KnystCommands) -> Option<Superbeats> + Send + 'static,
         start_time: Superbeats,
-    ) {
-        let command = Command::ScheduleBeatCallback(BeatCallback::new(callback, start_time));
+    ) -> CallbackHandle {
+        let c = BeatCallback::new(callback, start_time);
+        let handle = c.handle();
+        let command = Command::ScheduleBeatCallback(c);
         self.sender.send(command).unwrap();
+        handle
     }
     /// Disconnect (undo) a [`Connection`]
     pub fn disconnect(&mut self, connection: Connection) {
@@ -249,6 +255,19 @@ impl KnystCommands {
     }
 }
 
+/// Handle to modify a running/scheduled callback
+pub struct CallbackHandle {
+    free_flag: Arc<AtomicBool>,
+}
+
+impl CallbackHandle {
+    /// Free/delete the callback this handle refers to.
+    pub fn free(self) {
+        self.free_flag
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
 /// Callback that is scheduled in [`Superbeats`]. The closure inside the
 /// callback should only schedule changes in Superbeats time guided by the value
 /// to start scheduling that is passed to the function.
@@ -262,27 +281,39 @@ impl KnystCommands {
 pub struct BeatCallback {
     callback: Box<dyn FnMut(Superbeats, &mut KnystCommands) -> Option<Superbeats> + Send>,
     next_timestamp: Superbeats,
+    free_flag: Arc<AtomicBool>,
 }
 impl BeatCallback {
     /// Create a new [`BeatCallback`] with a given start time
-    pub fn new(
+    fn new(
         callback: impl FnMut(Superbeats, &mut KnystCommands) -> Option<Superbeats> + Send + 'static,
         start_time: Superbeats,
     ) -> Self {
+        let free_flag = Arc::new(AtomicBool::new(false));
         Self {
             callback: Box::new(callback),
             next_timestamp: start_time,
+            free_flag,
+        }
+    }
+    fn handle(&self) -> CallbackHandle {
+        CallbackHandle {
+            free_flag: self.free_flag.clone(),
         }
     }
     /// Called by the Controller when it is time to run the callback to schedule
     /// changes in the future.
     fn run_callback(&mut self, k: &mut KnystCommands) -> CallbackResult {
-        match (self.callback)(self.next_timestamp, k) {
-            Some(time_to_next) => {
-                self.next_timestamp += time_to_next;
-                CallbackResult::Continue
+        if self.free_flag.load(std::sync::atomic::Ordering::SeqCst) {
+            CallbackResult::Delete
+        } else {
+            match (self.callback)(self.next_timestamp, k) {
+                Some(time_to_next) => {
+                    self.next_timestamp += time_to_next;
+                    CallbackResult::Continue
+                }
+                None => CallbackResult::Delete,
             }
-            None => CallbackResult::Delete,
         }
     }
 }
@@ -510,13 +541,18 @@ impl Controller {
         let current_time_beats = self.top_level_graph.get_current_time_musical();
         let mut k = self.get_knyst_commands();
         if let Some(current_time_beats) = current_time_beats {
-            for c in &mut self.beat_callbacks {
+            let mut i = self.beat_callbacks.len();
+            while i != 0 {
+                let c = &mut self.beat_callbacks[i - 1];
                 if c.next_timestamp < current_time_beats
                     || c.next_timestamp.checked_sub(current_time_beats).unwrap()
                         < Superbeats::from_beats(2)
                 {
-                    c.run_callback(&mut k);
+                    if let CallbackResult::Delete = c.run_callback(&mut k) {
+                        self.beat_callbacks.remove(i - 1);
+                    }
                 }
+                i -= 1;
             }
         }
     }

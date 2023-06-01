@@ -58,12 +58,21 @@ fn main() -> Result<()> {
     // at. The time between calls to the callback is determined by the return
     // value of the previous callback. If you return None the callback will not
     // be called again.
-    let callback = k.schedule_beat_callback(
+    let mut callback = Some(k.schedule_beat_callback(
         move |time, k| {
             println!("Callback called {i} for time {time:?}");
             let mut rng = thread_rng();
             let freq = rng.gen_range(200..600);
             k.schedule_change(ParameterChange::beats(node0.clone(), freq as f32, time).l("freq"));
+            let freq = rng.gen_range(200..600);
+            k.schedule_change(
+                ParameterChange::beats(
+                    node0.clone(),
+                    freq as f32,
+                    time + Superbeats::from_beats_f32(0.5),
+                )
+                .l("freq"),
+            );
             i += 1;
             if time > Superbeats::from_beats(32) {
                 None
@@ -71,12 +80,12 @@ fn main() -> Result<()> {
                 if i % 2 == 0 {
                     Some(Superbeats::from_beats(2))
                 } else {
-                    Some(Superbeats::from_beats(3))
+                    Some(Superbeats::from_beats_f32(1.25))
                 }
             }
         },
         Superbeats::from_beats(4), // Time for the first time the
-    );
+    ));
     let mut input = String::new();
     loop {
         match std::io::stdin().read_line(&mut input) {
@@ -86,6 +95,11 @@ fn main() -> Result<()> {
                 let input = input.trim();
                 if let Ok(_freq) = input.parse::<usize>() {
                     // k.schedule_change(ParameterChange::now(node0.clone(), freq as f32).l("freq"));
+                } else if input == "r" {
+                    if let Some(callback) = callback.take() {
+                        callback.free();
+                        println!("Freed the callback");
+                    }
                 } else if input == "q" {
                     break;
                 }
