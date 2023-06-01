@@ -71,6 +71,11 @@ path = "examples/jack_example.rs"
 required-features = ["jack"]
 
 [[example]]
+name = "beat_callbacks"
+path = "examples/beat_callbacks.rs"
+required-features = ["cpal"]
+
+[[example]]
 name = "cpal_example"
 path = "examples/cpal_example.rs"
 required-features = ["cpal"]
