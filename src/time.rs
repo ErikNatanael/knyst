@@ -301,8 +301,12 @@ impl ops::Mul<Superbeats> for Superbeats {
     type Output = Self;
 
     fn mul(self, rhs: Superbeats) -> Self::Output {
-        let mut beats = self.beats * rhs.beats;
-        let mut beat_tesimals = self.beat_tesimals as u64 * rhs.beat_tesimals as u64;
+        let mut beats = self.beats * rhs.beats
+            + ((self.beats as u64 * rhs.beat_tesimals as u64) / SUBBEAT_TESIMALS_PER_BEAT as u64)
+                as u32;
+        let mut beat_tesimals = (self.beat_tesimals as u64 * rhs.beat_tesimals as u64)
+            / SUBBEAT_TESIMALS_PER_BEAT as u64
+            + self.beat_tesimals as u64 * rhs.beats as u64;
         if beat_tesimals > SUBBEAT_TESIMALS_PER_BEAT as u64 {
             beats += (beat_tesimals / SUBBEAT_TESIMALS_PER_BEAT as u64) as u32;
             beat_tesimals %= SUBBEAT_TESIMALS_PER_BEAT as u64;
