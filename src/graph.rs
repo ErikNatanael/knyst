@@ -278,6 +278,13 @@ impl SimultaneousChanges {
             changes: vec![],
         }
     }
+    /// Empty `Self` set to be scheduled a specified beat time.
+    pub fn beats(beats: Superbeats) -> Self {
+        Self {
+            time: Time::Beats(beats),
+            changes: vec![],
+        }
+    }
     /// Push a new [`NodeChanges`] into the list of changes that will be scheduled.
     pub fn push(&mut self, node_changes: NodeChanges) -> &mut Self {
         self.changes.push(node_changes);
