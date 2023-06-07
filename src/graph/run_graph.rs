@@ -10,9 +10,9 @@ use std::{
 
 use rtrb::RingBuffer;
 
-use crate::{scheduling::MusicalTimeMap, Resources};
+use crate::{prelude::Superseconds, scheduling::MusicalTimeMap, Resources};
 
-use super::{node::Node, Graph, NodeBufferRef, Sample};
+use super::{node::Node, ClockUpdate, Graph, NodeBufferRef, Sample};
 
 /// Wrapper around a [`Graph`] `Node` with convenience methods to run the
 /// Graph, either from an audio thread or for non-real time purposes.
@@ -78,6 +78,7 @@ impl RunGraph {
                 graph.start_scheduler(
                     settings.scheduling_latency,
                     scheduler_start_time_stamp,
+                    None,
                     musical_time_map.clone(),
                 );
                 // Run a first update to make sure any queued changes get sent to the GraphGen

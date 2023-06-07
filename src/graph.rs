@@ -1348,9 +1348,22 @@ impl Graph {
                         ..
                     } = &mut ggc.scheduler
                     {
+                        let clock_update = ClockUpdate {
+                            timestamp: ggc.timestamp.clone(),
+                            clock_sample_rate: self.sample_rate,
+                        };
+                        let current_time = Superseconds::from_samples(
+                            ggc.timestamp.load(Ordering::SeqCst),
+                            self.sample_rate as u64,
+                        );
                         let latency =
                             Duration::from_secs_f64(*latency_in_samples / self.sample_rate as f64);
-                        graph.start_scheduler(latency, start_ts.clone(), musical_time_map.clone());
+                        graph.start_scheduler(
+                            latency,
+                            start_ts.clone(),
+                            Some(clock_update),
+                            musical_time_map.clone(),
+                        );
                     }
                 }
                 self.graphs_per_node
@@ -1720,9 +1733,13 @@ impl Graph {
         &mut self,
         latency: Duration,
         start_ts: Instant,
+        clock_update: Option<ClockUpdate>,
         musical_time_map: Arc<RwLock<MusicalTimeMap>>,
     ) {
         if let Some(ggc) = &mut self.graph_gen_communicator {
+            if let Some(clock_update) = &clock_update {
+                ggc.send_clock_update(clock_update.clone()); // Make sure all the clocks in the GraphGens are in sync.
+            }
             ggc.scheduler.start(
                 self.sample_rate * self.oversampling.as_usize() as f32,
                 self.block_size * self.oversampling.as_usize(),
@@ -1732,7 +1749,12 @@ impl Graph {
             );
         }
         for (_key, graph) in &mut self.graphs_per_node {
-            graph.start_scheduler(latency, start_ts, musical_time_map.clone());
+            graph.start_scheduler(
+                latency,
+                start_ts,
+                clock_update.clone(),
+                musical_time_map.clone(),
+            );
         }
     }
     /// Returns the current audio thread time in Superbeats based on the
@@ -3141,12 +3163,15 @@ impl Graph {
 
         let scheduler_buffer_size = self.ring_buffer_size;
         let (scheduled_change_producer, rb_consumer) = RingBuffer::new(scheduler_buffer_size);
-        let schedule_receiver = ScheduleReceiver::new(rb_consumer, scheduler_buffer_size);
+        let (clock_update_producer, clock_update_consumer) = RingBuffer::new(10);
+        let schedule_receiver =
+            ScheduleReceiver::new(rb_consumer, clock_update_consumer, scheduler_buffer_size);
 
         let graph_gen_communicator = GraphGenCommunicator {
             free_node_queue_consumer,
             scheduler,
             scheduled_change_producer,
+            clock_update_producer,
             task_data_to_be_dropped_consumer,
             new_task_data_producer,
             next_change_flag: task_data.applied.clone(),
@@ -3591,17 +3616,45 @@ impl Scheduler {
         }
     }
 }
+#[derive(Clone, Debug)]
+struct ClockUpdate {
+    /// A sample counter in a different graph. This Arc must never deallocate when dropped.
+    timestamp: Arc<AtomicU64>,
+    /// The sample rate of the graph that the timestamp above comes from. Used
+    /// to convert between timestamps in different sample rates.
+    clock_sample_rate: f32,
+}
 
 struct ScheduleReceiver {
     rb_consumer: rtrb::Consumer<ScheduledChange>,
     schedule_queue: Vec<ScheduledChange>,
+    clock_update_consumer: rtrb::Consumer<ClockUpdate>,
 }
 impl ScheduleReceiver {
-    fn new(rb_consumer: rtrb::Consumer<ScheduledChange>, capacity: usize) -> Self {
+    fn new(
+        rb_consumer: rtrb::Consumer<ScheduledChange>,
+        clock_update_consumer: rtrb::Consumer<ClockUpdate>,
+        capacity: usize,
+    ) -> Self {
         Self {
             rb_consumer,
             schedule_queue: Vec::with_capacity(capacity),
+            clock_update_consumer,
         }
+    }
+    fn clock_update(&mut self, sample_rate: f32) -> Option<u64> {
+        let mut new_timestamp = None;
+        while let Ok(clock) = self.clock_update_consumer.pop() {
+            let samples = clock.timestamp.load(Ordering::SeqCst);
+            if sample_rate == clock.clock_sample_rate {
+                new_timestamp = Some(samples);
+            } else {
+                new_timestamp = Some(
+                    ((samples as f64 / clock.clock_sample_rate as f64) * sample_rate as f64) as u64,
+                );
+            }
+        }
+        new_timestamp
     }
     /// TODO: Return only a slice of changes that should be applied this block and then remove them all at once.
     fn changes(&mut self) -> &mut Vec<ScheduledChange> {
@@ -3649,6 +3702,8 @@ struct GraphGenCommunicator {
     // `updates_available` every time it finishes a block. It is a u16 so that
     // when it overflows generation - some_generation_number fits in an i32.
     scheduler: Scheduler,
+    /// For sending clock updates to the audio thread
+    clock_update_producer: rtrb::Producer<ClockUpdate>,
     /// The ring buffer for sending scheduled changes to the audio thread
     scheduled_change_producer: rtrb::Producer<ScheduledChange>,
     timestamp: Arc<AtomicU64>,
@@ -3680,6 +3735,10 @@ impl GraphGenCommunicator {
                 drop(td);
             }
         }
+    }
+
+    fn send_clock_update(&mut self, clock_update: ClockUpdate) {
+        self.clock_update_producer.push(clock_update).unwrap();
     }
 
     /// Sends the updated tasks to the GraphGen. NB: Always check if any

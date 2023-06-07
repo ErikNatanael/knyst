@@ -541,6 +541,12 @@ impl Gen for GraphGen {
                 // TODO: Support output with a different block size, i.e. local buffering and running this graph more or less often than the parent graph
                 //
                 //
+                // Check if there is a new clock to update to
+                if let Some(new_sample_counter) =
+                    self.schedule_receiver.clock_update(self.sample_rate)
+                {
+                    self.sample_counter = new_sample_counter;
+                }
                 let mut do_empty_buffer = None;
                 let mut do_mend_connections = None;
                 let num_new_task_data = self.new_task_data_consumer.slots();
