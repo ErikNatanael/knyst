@@ -41,7 +41,7 @@ enum Command {
     FreeDisconnectedNodes,
     ResourcesCommand(ResourcesCommand),
     ChangeMusicalTimeMap(Box<dyn FnOnce(&mut MusicalTimeMap) + Send>),
-    ScheduleBeatCallback(BeatCallback),
+    ScheduleBeatCallback(BeatCallback, StartBeat),
 }
 
 /// [`KnystCommands`] sends commands to the [`Controller`] which should hold the
@@ -124,11 +124,11 @@ impl KnystCommands {
     pub fn schedule_beat_callback(
         &mut self,
         callback: impl FnMut(Superbeats, &mut KnystCommands) -> Option<Superbeats> + Send + 'static,
-        start_time: Superbeats,
+        start_time: StartBeat,
     ) -> CallbackHandle {
-        let c = BeatCallback::new(callback, start_time);
+        let c = BeatCallback::new(callback, Superbeats::ZERO);
         let handle = c.handle();
-        let command = Command::ScheduleBeatCallback(c);
+        let command = Command::ScheduleBeatCallback(c, start_time);
         self.sender.send(command).unwrap();
         handle
     }
@@ -266,6 +266,11 @@ impl CallbackHandle {
         self.free_flag
             .store(true, std::sync::atomic::Ordering::SeqCst);
     }
+}
+
+pub enum StartBeat {
+    Absolute(Superbeats),
+    Multiple(Superbeats),
 }
 
 /// Callback that is scheduled in [`Superbeats`]. The closure inside the
@@ -469,7 +474,23 @@ impl Controller {
                     },
                 }
             }
-            Command::ScheduleBeatCallback(callback) => {
+            Command::ScheduleBeatCallback(mut callback, start_beat) => {
+                // Find the start beat
+                let current_beats = self.top_level_graph.get_current_time_musical().unwrap();
+                let start_timestamp = match start_beat {
+                    StartBeat::Absolute(beats) => beats,
+                    StartBeat::Multiple(beats) => {
+                        let mut i = 1;
+                        while beats * Superbeats::from_beats(i) < current_beats {
+                            i += 1;
+                        }
+                        beats * Superbeats::from_beats(i)
+                    }
+                };
+                println!(
+                    "New callback, current beat: {current_beats:?}, start: {start_timestamp:?}"
+                );
+                callback.next_timestamp = start_timestamp;
                 self.beat_callbacks.push(callback);
                 Ok(())
             }
@@ -546,7 +567,7 @@ impl Controller {
                 let c = &mut self.beat_callbacks[i - 1];
                 if c.next_timestamp < current_time_beats
                     || c.next_timestamp.checked_sub(current_time_beats).unwrap()
-                        < Superbeats::from_beats(2)
+                        < Superbeats::from_beats_f32(0.25)
                 {
                     if let CallbackResult::Delete = c.run_callback(&mut k) {
                         self.beat_callbacks.remove(i - 1);

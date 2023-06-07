@@ -1,7 +1,7 @@
 use anyhow::Result;
 use knyst::{
     audio_backend::{CpalBackend, CpalBackendOptions},
-    controller::print_error_handler,
+    controller::{print_error_handler, StartBeat},
     graph::Mult,
     prelude::*,
     time::Superbeats,
@@ -84,7 +84,7 @@ fn main() -> Result<()> {
                 }
             }
         },
-        Superbeats::from_beats(4), // Time for the first time the
+        StartBeat::Multiple(Superbeats::from_beats(4)), // Start after a multiple of 4 beats
     ));
     let mut input = String::new();
     loop {
