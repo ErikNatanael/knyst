@@ -3841,6 +3841,74 @@ struct FeedbackEdge {
     feedback_destination: NodeKey,
 }
 
+/// Move to the target value exponentially by -60db attenuation over the specified time.
+/// *Inputs*
+/// 0. "value"
+/// 1. "time" in seconds
+/// *Outputs*
+/// 0. "smoothed_value"
+#[derive(Default)]
+pub struct Lag {
+    // Compare with the current value. If there is change, recalculate the mix.
+    last_time: Sample,
+    current_value: Sample,
+    mix: Sample,
+    sample_rate: Sample,
+}
+
+impl Lag {
+    #[allow(missing_docs)]
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+impl Gen for Lag {
+    fn process(&mut self, ctx: GenContext, _resources: &mut Resources) -> GenState {
+        for i in 0..ctx.block_size() {
+            let value = ctx.inputs.read(0, i);
+            let time = ctx.inputs.read(1, i);
+            if time != self.last_time {
+                self.last_time = time;
+                let num_samples = (time * self.sample_rate).floor();
+                self.mix = 1.0 - 0.001_f32.powf(1.0 / num_samples);
+            }
+            self.current_value += (value - self.current_value) * self.mix;
+            ctx.outputs.write(self.current_value, 0, i);
+        }
+        GenState::Continue
+    }
+
+    fn num_inputs(&self) -> usize {
+        2
+    }
+
+    fn num_outputs(&self) -> usize {
+        1
+    }
+
+    fn init(&mut self, _block_size: usize, sample_rate: Sample) {
+        self.sample_rate = sample_rate;
+    }
+
+    fn input_desc(&self, input: usize) -> &'static str {
+        match input {
+            0 => "value",
+            1 => "time",
+            _ => "",
+        }
+    }
+
+    fn output_desc(&self, output: usize) -> &'static str {
+        match output {
+            0 => "smoothed_value",
+            _ => "",
+        }
+    }
+
+    fn name(&self) -> &'static str {
+        "Lag"
+    }
+}
 /// When input 0 changes, move smoothly to the new value over the time in seconds given by input 1.
 #[derive(Default)]
 pub struct Ramp {

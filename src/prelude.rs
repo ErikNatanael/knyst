@@ -6,8 +6,8 @@ pub use crate::controller::{CallbackHandle, KnystCommands};
 pub use crate::graph::{
     connection::constant,
     connection::{ConnectionBundle, InputBundle},
-    gen, Connection, GenContext, GenState, Graph, GraphInput, GraphSettings, Mult, NodeAddress,
-    PanMonoToStereo, ParameterChange, Ramp, RunGraphSettings,
+    gen, Connection, GenContext, GenState, Graph, GraphInput, GraphSettings, Lag, Mult,
+    NodeAddress, PanMonoToStereo, ParameterChange, Ramp, RunGraphSettings,
 };
 pub use crate::inputs;
 pub use crate::time::{Superbeats, Superseconds};
