@@ -134,7 +134,9 @@ impl NodeAddress {
 
     fn set_node_key(&mut self, node_key: NodeKey) {
         match self.node_key.write() {
-            Ok(mut lock) => *lock = Some(node_key),
+            Ok(mut lock) => {
+                *lock = Some(node_key);
+            }
             Err(e) => {
                 panic!(
                     "NodeAddress internal node_key RwLock was poisoned. This is unacceptable. {e}"
@@ -144,7 +146,9 @@ impl NodeAddress {
     }
     fn set_graph_id(&mut self, graph_id: GraphId) {
         match self.graph_id.write() {
-            Ok(mut lock) => *lock = Some(graph_id),
+            Ok(mut lock) => {
+                *lock = Some(graph_id);
+            }
             Err(e) => {
                 panic!(
                     "NodeAddress internal graph_id RwLock was poisoned. This is unacceptable. {e}"
@@ -456,7 +460,7 @@ impl TimeOffset {
         match self {
             TimeOffset::Frames(frame_offset) => *frame_offset,
             TimeOffset::Superseconds(relative_supserseconds) => match relative_supserseconds {
-                Relative::Before(s) => s.to_samples(sample_rate) as i64 * -1,
+                Relative::Before(s) => (s.to_samples(sample_rate) as i64) * -1,
                 Relative::After(s) => s.to_samples(sample_rate) as i64,
             },
         }
@@ -560,8 +564,8 @@ impl Task {
             < self.block_size
         {
             // The node should start running this block, but only part of the block
-            let new_block_size =
-                self.block_size - (self.start_node_at_sample - sample_time_at_block_start) as usize;
+            let new_block_size = self.block_size
+                - ((self.start_node_at_sample - sample_time_at_block_start) as usize);
 
             // Process node
             let mut outputs = NodeBufferRef::new(
@@ -610,7 +614,9 @@ pub enum PushError {
 #[allow(missing_docs)]
 #[derive(thiserror::Error, Debug, PartialEq)]
 pub enum FreeError {
-    #[error("The graph containing the NodeAdress provided was not found. The node itself may or may not exist.")]
+    #[error(
+        "The graph containing the NodeAdress provided was not found. The node itself may or may not exist."
+    )]
     GraphNotFound,
     #[error("The NodeAddress does not exist. The Node may have been freed already.")]
     NodeNotFound,
@@ -620,13 +626,17 @@ pub enum FreeError {
 #[allow(missing_docs)]
 #[derive(thiserror::Error, Debug, PartialEq, Eq)]
 pub enum ScheduleError {
-    #[error("The graph containing the NodeAdress provided was not found. The node itself may or may not exist.")]
+    #[error(
+        "The graph containing the NodeAdress provided was not found. The node itself may or may not exist."
+    )]
     GraphNotFound,
     #[error("The NodeAddress does not exist. The Node may have been freed already.")]
     NodeNotFound,
     #[error("The input label specified was not registered for the node: `{0}`")]
     InputLabelNotFound(&'static str),
-    #[error("No scheduler was created for the Graph so the change cannot be scheduled. This is likely because this Graph was not yet added to another Graph or split into a Node.")]
+    #[error(
+        "No scheduler was created for the Graph so the change cannot be scheduled. This is likely because this Graph was not yet added to another Graph or split into a Node."
+    )]
     SchedulerNotCreated,
     #[error("A lock for writing to the MusicalTimeMap cannot be acquired.")]
     MusicalTimeMapCannotBeWrittenTo,
@@ -728,13 +738,19 @@ impl GenOrGraph for Graph {
         parent_graph_oversampling: Oversampling,
     ) -> (Option<Graph>, Box<dyn Gen + Send>) {
         if self.block_size() > parent_graph_block_size && self.num_inputs() > 0 {
-            panic!("Warning: You are pushing a graph with a larger block size and with Graph inputs. An inner Graph with a larger block size cannot have inputs since the inputs for the entire inner block would not have been calculated yet.")
+            panic!(
+                "Warning: You are pushing a graph with a larger block size and with Graph inputs. An inner Graph with a larger block size cannot have inputs since the inputs for the entire inner block would not have been calculated yet."
+            );
         }
         if self.sample_rate != parent_graph_sample_rate {
-            eprintln!("Warning: You are pushing a graph with a different sample rate. This is currently allowed, but no automatic resampling will be allowed.");
+            eprintln!(
+                "Warning: You are pushing a graph with a different sample rate. This is currently allowed, but no automatic resampling will be allowed."
+            );
         }
         if self.oversampling.as_usize() < parent_graph_oversampling.as_usize() {
-            panic!("You tried to push an inner graph with lower oversampling than its parent. This is not currently allowed.");
+            panic!(
+                "You tried to push an inner graph with lower oversampling than its parent. This is not currently allowed."
+            );
         }
         // Create the GraphGen from the new Graph
         let gen = self
@@ -799,7 +815,7 @@ impl<'a, 'b> GenContext<'a, 'b> {
     }
 }
 
-type ProcessFn = Box<dyn FnMut(GenContext, &mut Resources) -> GenState + Send>;
+type ProcessFn = Box<dyn (FnMut(GenContext, &mut Resources) -> GenState) + Send>;
 
 /// Convenience struct to create a [`Gen`] from a closure.
 ///
@@ -841,7 +857,7 @@ pub struct ClosureGen {
 }
 /// Alias for [`ClosureGen::new`]. See [`ClosureGen`] for more information.
 pub fn gen(
-    process: impl FnMut(GenContext, &mut Resources) -> GenState + 'static + Send,
+    process: impl (FnMut(GenContext, &mut Resources) -> GenState) + 'static + Send,
 ) -> ClosureGen {
     ClosureGen {
         process_fn: Box::new(process),
@@ -852,7 +868,7 @@ impl ClosureGen {
     /// Create a [`ClosureGen`] with the given closure, 0 outputs and 0 inputs.
     /// Add inputs/outputs with the respective functions.
     pub fn new(
-        process: impl FnMut(GenContext, &mut Resources) -> GenState + 'static + Send,
+        process: impl (FnMut(GenContext, &mut Resources) -> GenState) + 'static + Send,
     ) -> Self {
         gen(process)
     }
@@ -1009,7 +1025,7 @@ impl Default for GraphSettings {
             max_node_inputs: 8,
             block_size: 64,
             num_nodes: 1024,
-            sample_rate: 48000.,
+            sample_rate: 48000.0,
             oversampling: Oversampling::X1,
             ring_buffer_size: 1000,
         }
@@ -1356,8 +1372,9 @@ impl Graph {
                             ggc.timestamp.load(Ordering::SeqCst),
                             self.sample_rate as u64,
                         );
-                        let latency =
-                            Duration::from_secs_f64(*latency_in_samples / self.sample_rate as f64);
+                        let latency = Duration::from_secs_f64(
+                            *latency_in_samples / (self.sample_rate as f64),
+                        );
                         graph.start_scheduler(
                             latency,
                             start_ts.clone(),
@@ -1375,10 +1392,14 @@ impl Graph {
             let mut to_node = to_node.into();
             for (_key, graph) in &mut self.graphs_per_node {
                 match graph.push_with_existing_address_to_graph(to_node, node_address, graph_id) {
-                    Ok(_) => return Ok(()),
+                    Ok(_) => {
+                        return Ok(());
+                    }
                     // Return the error unless it's a GraphNotFound in which case we continue trying
                     Err(e) => match e {
-                        PushError::GraphNotFound(returned_to_node) => to_node = returned_to_node,
+                        PushError::GraphNotFound(returned_to_node) => {
+                            to_node = returned_to_node;
+                        }
                     },
                 }
             }
@@ -1396,11 +1417,15 @@ impl Graph {
     /// Node<Graph> can still be created for the top level one if preferred.
     fn push_node(&mut self, mut node: Node, node_address: &mut NodeAddress) {
         if node.num_inputs() > self.max_node_inputs {
-            eprintln!("Warning: You are trying to add a node with more inputs than the maximum for this Graph. Try increasing the maximum number of node inputs in the GraphSettings.");
+            eprintln!(
+                "Warning: You are trying to add a node with more inputs than the maximum for this Graph. Try increasing the maximum number of node inputs in the GraphSettings."
+            );
         }
         let nodes = self.get_nodes();
         if nodes.capacity() == nodes.len() {
-            eprintln!("Error: Trying to push a node into a Graph that is at capacity. Try increasing the number of node slots and make sure you free the nodes you don't need.");
+            eprintln!(
+                "Error: Trying to push a node into a Graph that is at capacity. Try increasing the number of node slots and make sure you free the nodes you don't need."
+            );
         }
         self.recalculation_required = true;
         let input_index_to_name = node.input_indices_to_names();
@@ -1417,7 +1442,7 @@ impl Graph {
             .collect();
         node.init(
             self.block_size * self.oversampling.as_usize(),
-            self.sample_rate * self.oversampling.as_usize() as f32,
+            self.sample_rate * (self.oversampling.as_usize() as f32),
         );
         let key = self.get_nodes_mut().insert(node);
         self.node_input_edges.insert(key, vec![]);
@@ -1453,7 +1478,9 @@ impl Graph {
                 graph_id: self.id,
             }) {
                 Ok(_) => (),
-                Err(e) => return Err(e),
+                Err(e) => {
+                    return Err(e);
+                }
             }
         }
         Ok(())
@@ -1479,8 +1506,18 @@ impl Graph {
             }
             self.recalculation_required = true;
 
-            let num_inputs = self.node_input_index_to_name.get(node.key).expect("Since the key exists in the Graph it should have a corresponding node_input_index_to_name Vec").len();
-            let num_outputs= self.node_output_index_to_name.get(node.key).expect("Since the key exists in the Graph it should have a corresponding node_output_index_to_name Vec").len();
+            let num_inputs = self.node_input_index_to_name
+                .get(node.key)
+                .expect(
+                    "Since the key exists in the Graph it should have a corresponding node_input_index_to_name Vec"
+                )
+                .len();
+            let num_outputs = self.node_output_index_to_name
+                .get(node.key)
+                .expect(
+                    "Since the key exists in the Graph it should have a corresponding node_output_index_to_name Vec"
+                )
+                .len();
             let inputs_to_bridge = num_inputs.min(num_outputs);
             // First collect all the connections that should be bridged so that they are in one place
             let mut outputs = vec![vec![]; inputs_to_bridge];
@@ -1488,17 +1525,17 @@ impl Graph {
                 for edge in edge_vec {
                     if edge.source == node.key && edge.from_output_index < inputs_to_bridge {
                         outputs[edge.from_output_index].push(Connection::Node {
-                            source: RawNodeAddress {
+                            source: (RawNodeAddress {
                                 graph_id: self.id,
                                 key: node.key,
-                            }
+                            })
                             .into(),
                             from_index: Some(edge.from_output_index),
                             from_label: None,
-                            sink: RawNodeAddress {
+                            sink: (RawNodeAddress {
                                 graph_id: self.id,
                                 key: destination_node_key,
-                            }
+                            })
                             .into(),
                             to_index: Some(edge.to_input_index),
                             to_label: None,
@@ -1513,10 +1550,10 @@ impl Graph {
                     && graph_output.from_output_index < inputs_to_bridge
                 {
                     outputs[graph_output.from_output_index].push(Connection::GraphOutput {
-                        source: RawNodeAddress {
+                        source: (RawNodeAddress {
                             graph_id: self.id,
                             key: node.key,
-                        }
+                        })
                         .into(),
                         from_index: Some(graph_output.from_output_index),
                         from_label: None,
@@ -1546,10 +1583,10 @@ impl Graph {
             {
                 if graph_input.to_input_index < inputs_to_bridge {
                     graph_inputs[graph_input.to_input_index].push(Connection::GraphInput {
-                        sink: RawNodeAddress {
+                        sink: (RawNodeAddress {
                             graph_id: self.id,
                             key: node.key,
-                        }
+                        })
                         .into(),
                         from_index: graph_input.from_output_index,
                         to_index: Some(graph_input.to_input_index),
@@ -1569,14 +1606,14 @@ impl Graph {
                         let mut connection = output.clone();
                         if let Some(connection_from_index) = connection.get_from_index() {
                             connection =
-                                connection.from_index(connection_from_index % num_node_outputs)
+                                connection.from_index(connection_from_index % num_node_outputs);
                         }
                         self.connect(
                             connection.from(
-                                &RawNodeAddress {
+                                &(RawNodeAddress {
                                     key: input.source,
                                     graph_id: self.id,
-                                }
+                                })
                                 .into(),
                             ),
                         )
@@ -1594,7 +1631,9 @@ impl Graph {
                                 .to_index(output.get_to_index().unwrap()),
                         ) {
                             Ok(_) => (),
-                            Err(e) => return Err(FreeError::ConnectionError(Box::new(e))),
+                            Err(e) => {
+                                return Err(FreeError::ConnectionError(Box::new(e)));
+                            }
                         }
                     }
                 }
@@ -1605,10 +1644,14 @@ impl Graph {
             // Try to find the graph containing the node by asking all the graphs in this graph to free the node
             for (_key, graph) in &mut self.graphs_per_node {
                 match graph.free_node_mend_connections(node) {
-                    Ok(_) => return Ok(()),
+                    Ok(_) => {
+                        return Ok(());
+                    }
                     Err(e) => match e {
                         FreeError::GraphNotFound => (),
-                        _ => return Err(e),
+                        _ => {
+                            return Err(e);
+                        }
                     },
                 }
             }
@@ -1715,7 +1758,9 @@ impl Graph {
             // Try to find the graph containing the node by asking all the graphs in this graph to free the node
             for (_key, graph) in &mut self.graphs_per_node {
                 match graph.free_node(node) {
-                    Ok(_) => return Ok(()),
+                    Ok(_) => {
+                        return Ok(());
+                    }
                     Err(e) => match e {
                         FreeError::GraphNotFound => (),
                         _ => {
@@ -1741,7 +1786,7 @@ impl Graph {
                 ggc.send_clock_update(clock_update.clone()); // Make sure all the clocks in the GraphGens are in sync.
             }
             ggc.scheduler.start(
-                self.sample_rate * self.oversampling.as_usize() as f32,
+                self.sample_rate * (self.oversampling.as_usize() as f32),
                 self.block_size * self.oversampling.as_usize(),
                 latency,
                 start_ts,
@@ -1763,7 +1808,7 @@ impl Graph {
     pub fn get_current_time_musical(&self) -> Option<Superbeats> {
         if let Some(ggc) = &self.graph_gen_communicator {
             let ts_samples = ggc.timestamp.load(Ordering::Relaxed);
-            let seconds = ts_samples as f64 / self.sample_rate as f64;
+            let seconds = (ts_samples as f64) / (self.sample_rate as f64);
             ggc.scheduler
                 .seconds_to_musical_time_superbeats(Superseconds::from_seconds_f64(seconds))
         } else {
@@ -1785,9 +1830,26 @@ impl Graph {
 
             nodes.push(NodeInspection {
                 name: node.name.to_string(),
-                address: self.node_addresses.get(node_key).expect("All nodes should have their addresses stored.").clone(),
-                input_channels: self.node_input_index_to_name.get(node_key).expect("All nodes should have a list of input channel names made when pushed to the graph.").iter().map(|&s|s.to_string()).collect(),
-                output_channels: self.node_output_index_to_name.get(node_key).expect("All nodes should have a list of output channel names made when pushed to the graph.").iter().map(|&s| s.to_string()).collect(),
+                address: self.node_addresses
+                    .get(node_key)
+                    .expect("All nodes should have their addresses stored.")
+                    .clone(),
+                input_channels: self.node_input_index_to_name
+                    .get(node_key)
+                    .expect(
+                        "All nodes should have a list of input channel names made when pushed to the graph."
+                    )
+                    .iter()
+                    .map(|&s| s.to_string())
+                    .collect(),
+                output_channels: self.node_output_index_to_name
+                    .get(node_key)
+                    .expect(
+                        "All nodes should have a list of output channel names made when pushed to the graph."
+                    )
+                    .iter()
+                    .map(|&s| s.to_string())
+                    .collect(),
                 // Leave empty for now, fill later
                 input_edges: vec![],
                 graph_inspection,
@@ -1911,10 +1973,14 @@ impl Graph {
                     // Try to find the graph containing the node by asking all the graphs in this graph to free the node
                     for (_key, graph) in &mut self.graphs_per_node {
                         match graph.schedule_changes(changes.clone()) {
-                            Ok(_) => return Ok(()),
+                            Ok(_) => {
+                                return Ok(());
+                            }
                             Err(e) => match e {
                                 ScheduleError::GraphNotFound => (),
-                                _ => return Err(e),
+                                _ => {
+                                    return Err(e);
+                                }
                             },
                         }
                     }
@@ -1970,10 +2036,14 @@ impl Graph {
                 // Try to find the graph containing the node by asking all the graphs in this graph to free the node
                 for (_key, graph) in &mut self.graphs_per_node {
                     match graph.schedule_change(change.clone()) {
-                        Ok(_) => return Ok(()),
+                        Ok(_) => {
+                            return Ok(());
+                        }
                         Err(e) => match e {
                             ScheduleError::GraphNotFound => (),
-                            _ => return Err(e),
+                            _ => {
+                                return Err(e);
+                            }
                         },
                     }
                 }
@@ -1992,7 +2062,9 @@ impl Graph {
         let mut try_disconnect_in_child_graphs = |connection: Connection| {
             for (_key, graph) in &mut self.graphs_per_node {
                 match graph.disconnect(connection.clone()) {
-                    Ok(_) => return Ok(()),
+                    Ok(_) => {
+                        return Ok(());
+                    }
                     Err(e) => match &e {
                         ConnectionError::NodeNotFound => {
                             // The correct graph was found, but the node wasn't in it.
@@ -2000,7 +2072,9 @@ impl Graph {
                         }
                         // We continue trying other graphs
                         ConnectionError::GraphNotFound => (),
-                        _ => return Err(e),
+                        _ => {
+                            return Err(e);
+                        }
                     },
                 }
             }
@@ -2349,7 +2423,9 @@ impl Graph {
         for con in bundle.as_connections() {
             match self.connect(con) {
                 Ok(_) => (),
-                Err(e) => return Err(e),
+                Err(e) => {
+                    return Err(e);
+                }
             }
         }
         Ok(())
@@ -2361,7 +2437,9 @@ impl Graph {
         let mut try_connect_to_graphs = |connection: Connection| {
             for (_key, graph) in &mut self.graphs_per_node {
                 match graph.connect(connection.clone()) {
-                    Ok(_) => return Ok(()),
+                    Ok(_) => {
+                        return Ok(());
+                    }
                     Err(e) => match &e {
                         ConnectionError::NodeNotFound => {
                             // The correct graph was found, but the node wasn't in it.
@@ -2369,7 +2447,9 @@ impl Graph {
                         }
                         // We continue trying other graphs
                         ConnectionError::GraphNotFound => (),
-                        _ => return Err(e),
+                        _ => {
+                            return Err(e);
+                        }
                     },
                 }
             }
@@ -2633,7 +2713,7 @@ impl Graph {
                         source: source.key,
                         from_output_index: (from_index + i) % num_source_outputs,
                         to_input_index: (to_index + i) % self.num_outputs,
-                    })
+                    });
                 }
             }
             Connection::GraphInput {
@@ -2687,7 +2767,7 @@ impl Graph {
                         source: sink.key,
                         from_output_index: from_index + i,
                         to_input_index: to_index + i,
-                    })
+                    });
                 }
             }
             Connection::Clear {
@@ -3084,7 +3164,7 @@ impl Graph {
             for input_edge in input_edges {
                 let source = &nodes[input_edge.source];
                 let mut output_values = source.output_buffers();
-                for sample_index in 0..(self.block_size * self.oversampling.as_usize()) {
+                for sample_index in 0..self.block_size * self.oversampling.as_usize() {
                     let from_channel = input_edge.from_output_index;
                     let to_channel = input_edge.to_input_index;
                     inputs_to_copy.push((
@@ -3100,7 +3180,7 @@ impl Graph {
             for feedback_edge in feedback_input_edges {
                 let source = &nodes[feedback_edge.source];
                 let mut output_values = source.output_buffers();
-                for i in 0..(self.block_size * self.oversampling.as_usize()) {
+                for i in 0..self.block_size * self.oversampling.as_usize() {
                     inputs_to_copy.push((
                         unsafe { output_values.ptr_to_sample(feedback_edge.from_output_index, i) },
                         unsafe { input_buffers.ptr_to_sample(feedback_edge.from_output_index, i) },
@@ -3209,7 +3289,7 @@ impl Graph {
         for (_key, n) in self.get_nodes_mut() {
             n.init(
                 block_size * oversampling.as_usize(),
-                sample_rate * oversampling.as_usize() as f32,
+                sample_rate * (oversampling.as_usize() as f32),
             );
         }
         // self.tasks = self.generate_tasks();
@@ -3276,7 +3356,7 @@ impl Graph {
                 GenState::FreeGraph(_) => unreachable!(),
                 GenState::FreeGraphMendConnections(_) => unreachable!(),
                 GenState::Continue => unreachable!(),
-            };
+            }
         }
         // Remove old nodes
         let nodes = unsafe { &mut *self.nodes.get() };
@@ -3311,7 +3391,7 @@ impl Graph {
             if let Some(graph) = self.graphs_per_node.get(key) {
                 dump.push(NodeDump::Graph(graph.dump_nodes()));
             } else {
-                dump.push(NodeDump::Node(nodes.get(key).unwrap().name.to_string()))
+                dump.push(NodeDump::Node(nodes.get(key).unwrap().name.to_string()));
             }
         }
         dump
@@ -3437,13 +3517,14 @@ impl Scheduler {
                 // this is compared to is loaded atomically from the GraphGen
                 // and there might be a race condition if less than 2 blocks of
                 // events are sent.
-                let max_duration_to_send = ((sample_rate * 0.5) as u64).max(block_size as u64 * 2);
+                let max_duration_to_send =
+                    ((sample_rate * 0.5) as u64).max((block_size as u64) * 2);
                 let mut new_scheduler = Scheduler::Running {
                     start_ts: audio_thread_start_ts,
                     sample_rate: sample_rate as u64,
                     max_duration_to_send,
                     scheduling_queue: vec![],
-                    latency_in_samples: (latency.as_secs_f64() * sample_rate as f64),
+                    latency_in_samples: latency.as_secs_f64() * (sample_rate as f64),
                     musical_time_map,
                 };
                 for (changes, time) in scheduling_queue {
@@ -3479,14 +3560,28 @@ impl Scheduler {
                 match time {
                     Time::DurationFromNow(duration_from_now) => {
                         let mut timestamp = ((start_ts.elapsed() + duration_from_now).as_secs_f64()
-                            * *sample_rate as f64
+                            * (*sample_rate as f64)
                             + *latency) as u64;
                         for (key, change_kind, time_offset) in changes {
                             let frame_offset = offset_to_frames(time_offset);
                             if frame_offset >= 0 {
-                                timestamp = timestamp.checked_add(frame_offset as u64).unwrap_or_else(|| {eprintln!("Used a time offset that made the timestamp overflow: {frame_offset:?}"); timestamp});
+                                timestamp = timestamp
+                                    .checked_add(frame_offset as u64)
+                                    .unwrap_or_else(|| {
+                                        eprintln!(
+                                            "Used a time offset that made the timestamp overflow: {frame_offset:?}"
+                                        );
+                                        timestamp
+                                    });
                             } else {
-                                timestamp = timestamp.checked_sub((frame_offset * -1) as u64).unwrap_or_else(|| {eprintln!("Used a time offset that made the timestamp overflow: {frame_offset:?}"); timestamp});
+                                timestamp = timestamp
+                                    .checked_sub((frame_offset * -1) as u64)
+                                    .unwrap_or_else(|| {
+                                        eprintln!(
+                                            "Used a time offset that made the timestamp overflow: {frame_offset:?}"
+                                        );
+                                        timestamp
+                                    });
                             }
                             scheduling_queue.push(ScheduledChange {
                                 timestamp,
@@ -3500,9 +3595,23 @@ impl Scheduler {
                         for (key, change_kind, time_offset) in changes {
                             let frame_offset = offset_to_frames(time_offset);
                             if frame_offset >= 0 {
-                                timestamp = timestamp.checked_add(frame_offset as u64).unwrap_or_else(|| {eprintln!("Used a time offset that made the timestamp overflow: {frame_offset:?}"); timestamp});
+                                timestamp = timestamp
+                                    .checked_add(frame_offset as u64)
+                                    .unwrap_or_else(|| {
+                                        eprintln!(
+                                            "Used a time offset that made the timestamp overflow: {frame_offset:?}"
+                                        );
+                                        timestamp
+                                    });
                             } else {
-                                timestamp = timestamp.checked_sub((frame_offset * -1) as u64).unwrap_or_else(|| {eprintln!("Used a time offset that made the timestamp overflow: {frame_offset:?}"); timestamp});
+                                timestamp = timestamp
+                                    .checked_sub((frame_offset * -1) as u64)
+                                    .unwrap_or_else(|| {
+                                        eprintln!(
+                                            "Used a time offset that made the timestamp overflow: {frame_offset:?}"
+                                        );
+                                        timestamp
+                                    });
                             }
                             scheduling_queue.push(ScheduledChange {
                                 timestamp,
@@ -3516,15 +3625,29 @@ impl Scheduler {
                         let mtm = musical_time_map.read().unwrap();
                         let duration_from_start =
                             Duration::from_secs_f64(mtm.musical_time_to_secs_f64(mt));
-                        let mut timestamp = ((duration_from_start).as_secs_f64()
-                            * *sample_rate as f64
+                        let mut timestamp = (duration_from_start.as_secs_f64()
+                            * (*sample_rate as f64)
                             + *latency) as u64;
                         for (key, change_kind, time_offset) in changes {
                             let frame_offset = offset_to_frames(time_offset);
                             if frame_offset >= 0 {
-                                timestamp = timestamp.checked_add(frame_offset as u64).unwrap_or_else(|| {eprintln!("Used a time offset that made the timestamp overflow: {frame_offset:?}"); timestamp});
+                                timestamp = timestamp
+                                    .checked_add(frame_offset as u64)
+                                    .unwrap_or_else(|| {
+                                        eprintln!(
+                                            "Used a time offset that made the timestamp overflow: {frame_offset:?}"
+                                        );
+                                        timestamp
+                                    });
                             } else {
-                                timestamp = timestamp.checked_sub((frame_offset * -1) as u64).unwrap_or_else(|| {eprintln!("Used a time offset that made the timestamp overflow: {frame_offset:?}"); timestamp});
+                                timestamp = timestamp
+                                    .checked_sub((frame_offset * -1) as u64)
+                                    .unwrap_or_else(|| {
+                                        eprintln!(
+                                            "Used a time offset that made the timestamp overflow: {frame_offset:?}"
+                                        );
+                                        timestamp
+                                    });
                             }
                             scheduling_queue.push(ScheduledChange {
                                 timestamp,
@@ -3538,9 +3661,23 @@ impl Scheduler {
                             let frame_offset = offset_to_frames(time_offset);
                             let mut timestamp: u64 = 0;
                             if frame_offset >= 0 {
-                                timestamp = timestamp.checked_add(frame_offset as u64).unwrap_or_else(|| {eprintln!("Used a time offset that made the timestamp overflow: {frame_offset:?}"); timestamp});
+                                timestamp = timestamp
+                                    .checked_add(frame_offset as u64)
+                                    .unwrap_or_else(|| {
+                                        eprintln!(
+                                            "Used a time offset that made the timestamp overflow: {frame_offset:?}"
+                                        );
+                                        timestamp
+                                    });
                             } else {
-                                timestamp = timestamp.checked_sub((frame_offset * -1) as u64).unwrap_or_else(|| {eprintln!("Used a time offset that made the timestamp overflow: {frame_offset:?}"); timestamp});
+                                timestamp = timestamp
+                                    .checked_sub((frame_offset * -1) as u64)
+                                    .unwrap_or_else(|| {
+                                        eprintln!(
+                                            "Used a time offset that made the timestamp overflow: {frame_offset:?}"
+                                        );
+                                        timestamp
+                                    });
                             }
                             scheduling_queue.push(ScheduledChange {
                                 timestamp,
@@ -3563,7 +3700,7 @@ impl Scheduler {
                 musical_time_map, ..
             } => match musical_time_map.write() {
                 Ok(mut mtm) => {
-                    (change_fn)(&mut (*mtm));
+                    change_fn(&mut *mtm);
                     Ok(())
                 }
                 Err(_) => Err(ScheduleError::MusicalTimeMapCannotBeWrittenTo),
@@ -3595,7 +3732,7 @@ impl Scheduler {
                     {
                         let change = scheduling_queue.remove(i);
                         if let Err(e) = rb_producer.push(change) {
-                            eprintln!("Unable to push scheduled change into RingBuffer: {e}")
+                            eprintln!("Unable to push scheduled change into RingBuffer: {e}");
                         }
                     } else {
                         i += 1;
@@ -3650,7 +3787,8 @@ impl ScheduleReceiver {
                 new_timestamp = Some(samples);
             } else {
                 new_timestamp = Some(
-                    ((samples as f64 / clock.clock_sample_rate as f64) * sample_rate as f64) as u64,
+                    (((samples as f64) / (clock.clock_sample_rate as f64)) * (sample_rate as f64))
+                        as u64,
                 );
             }
         }
@@ -3664,7 +3802,7 @@ impl ScheduleReceiver {
             let changes_to_read =
                 num_new_changes.min(self.schedule_queue.capacity() - self.schedule_queue.len());
             if changes_to_read == 0 {
-                eprintln!("ScheduleReceiver: Unable to read any changes, queue is full.",);
+                eprintln!("ScheduleReceiver: Unable to read any changes, queue is full.");
             }
             match self.rb_consumer.read_chunk(changes_to_read) {
                 Ok(chunk) => {
@@ -3870,7 +4008,7 @@ impl Gen for Lag {
             if time != self.last_time {
                 self.last_time = time;
                 let num_samples = (time * self.sample_rate).floor();
-                self.mix = 1.0 - 0.001_f32.powf(1.0 / num_samples);
+                self.mix = 1.0 - (0.001_f32).powf(1.0 / num_samples);
             }
             self.current_value += (value - self.current_value) * self.mix;
             ctx.outputs.write(self.current_value, 0, i);
@@ -3947,7 +4085,7 @@ impl Gen for Ramp {
             }
             if (self.current_value - value).abs() < 0.0001 {
                 self.current_value = value;
-                self.step = 0.;
+                self.step = 0.0;
             }
             self.current_value += self.step;
             ctx.outputs.write(self.current_value, 0, i);
@@ -4018,9 +4156,33 @@ impl Gen for Ramp {
 pub struct Mult;
 impl Gen for Mult {
     fn process(&mut self, ctx: GenContext, _resources: &mut Resources) -> GenState {
-        for i in 0..ctx.block_size() {
-            let value = ctx.inputs.read(0, i) * ctx.inputs.read(1, i);
-            ctx.outputs.write(value, 0, i);
+        let block_size = ctx.block_size();
+        #[allow(unused_mut)]
+        let mut in0 = &ctx.inputs.get_channel(0)[..block_size];
+        #[allow(unused_mut)]
+        let mut in1 = &ctx.inputs.get_channel(1)[..block_size];
+        #[allow(unused_mut)]
+        let mut out_buf = &mut ctx.outputs.iter_mut().next().unwrap()[..block_size];
+        // fallback
+        #[cfg(not(feature = "unstable"))]
+        {
+            for i in 0..block_size {
+                out_buf[i] = in0[i] * in1[i];
+            }
+        }
+        #[cfg(feature = "unstable")]
+        {
+            use std::simd::f32x2;
+            let simd_width = 2;
+            for _ in 0..block_size / simd_width {
+                let s_in0 = f32x2::from_slice(&in0[..simd_width]);
+                let s_in1 = f32x2::from_slice(&in1[..simd_width]);
+                let product = s_in0 * s_in1;
+                product.copy_to_slice(out_buf);
+                in0 = &in0[simd_width..];
+                in1 = &in1[simd_width..];
+                out_buf = &mut out_buf[simd_width..];
+            }
         }
         GenState::Continue
     }
@@ -4059,10 +4221,12 @@ impl Gen for Mult {
 pub struct Bus(pub usize);
 impl Gen for Bus {
     fn process(&mut self, ctx: GenContext, _resources: &mut Resources) -> GenState {
-        for i in 0..ctx.block_size() {
-            for channel in 0..self.0 {
-                ctx.outputs.write(ctx.inputs.read(channel, i), channel, i);
-            }
+        let block_size = ctx.block_size();
+        let mut out_bufs = ctx.outputs.iter_mut();
+        for channel in 0..self.0 {
+            let in_buf = ctx.inputs.get_channel(channel);
+            let out_buf = out_bufs.next().unwrap();
+            out_buf.copy_from_slice(in_buf);
         }
         GenState::Continue
     }

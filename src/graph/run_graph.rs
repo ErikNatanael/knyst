@@ -10,9 +10,9 @@ use std::{
 
 use rtrb::RingBuffer;
 
-use crate::{prelude::Superseconds, scheduling::MusicalTimeMap, Resources};
+use crate::{scheduling::MusicalTimeMap, Resources};
 
-use super::{node::Node, ClockUpdate, Graph, NodeBufferRef, Sample};
+use super::{node::Node, Graph, NodeBufferRef, Sample};
 
 /// Wrapper around a [`Graph`] `Node` with convenience methods to run the
 /// Graph, either from an audio thread or for non-real time purposes.
@@ -122,7 +122,9 @@ impl RunGraph {
                 .resources_response_sender
                 .push(self.resources.apply_command(command))
             {
-                eprintln!("Warning: A ResourcesResponse could not be sent back from the RunGraph. This may lead to dropping on the audio thread. {e}");
+                eprintln!(
+                    "Warning: A ResourcesResponse could not be sent back from the RunGraph. This may lead to dropping on the audio thread. {e}"
+                );
             }
             i += 1;
             if i >= max_commands_to_process {
