@@ -268,8 +268,11 @@ impl CallbackHandle {
     }
 }
 
+/// The beat on which a callback should start, either an absolute beat value or the next multiple of some number of beats.
 pub enum StartBeat {
+    /// An absolute time in beat
     Absolute(Superbeats),
+    /// The next multiple of this number of beats
     Multiple(Superbeats),
 }
 

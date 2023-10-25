@@ -497,7 +497,7 @@ impl Resources {
     /// Returns the [`BufferKey`] corresponding to the given [`BufferId`] if
     /// there is one registered.
     pub fn buffer_key_from_id(&self, buf_id: BufferId) -> Option<BufferKey> {
-        for (key, &id) in self.buffer_ids.iter() {
+        for (key, &id) in &self.buffer_ids {
             if id == buf_id {
                 return Some(key);
             }
@@ -507,7 +507,7 @@ impl Resources {
     /// Returns the [`WavetableKey`] corresponding to the given [`WavetableId`] if
     /// there is one registered.
     pub fn wavetable_key_from_id(&self, wavetable_id: WavetableId) -> Option<WavetableKey> {
-        for (key, &id) in self.wavetable_ids.iter() {
+        for (key, &id) in &self.wavetable_ids {
             if id == wavetable_id {
                 return Some(key);
             }

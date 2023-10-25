@@ -991,7 +991,7 @@ impl Oversampling {
     }
 }
 
-/// Pass to Graph::new to set the options the Graph is created with in an ergonomic and clear way.
+/// Pass to `Graph::new` to set the options the Graph is created with in an ergonomic and clear way.
 #[derive(Clone, Debug)]
 pub struct GraphSettings {
     /// The name of the Graph
@@ -1019,7 +1019,7 @@ pub struct GraphSettings {
 impl Default for GraphSettings {
     fn default() -> Self {
         GraphSettings {
-            name: String::from(""),
+            name: String::new(),
             num_inputs: 0,
             num_outputs: 2,
             max_node_inputs: 8,
@@ -1368,18 +1368,14 @@ impl Graph {
                             timestamp: ggc.timestamp.clone(),
                             clock_sample_rate: self.sample_rate,
                         };
-                        let current_time = Superseconds::from_samples(
-                            ggc.timestamp.load(Ordering::SeqCst),
-                            self.sample_rate as u64,
-                        );
                         let latency = Duration::from_secs_f64(
                             *latency_in_samples / (self.sample_rate as f64),
                         );
                         graph.start_scheduler(
                             latency,
-                            start_ts.clone(),
-                            Some(clock_update),
-                            musical_time_map.clone(),
+                            *start_ts,
+                            &Some(clock_update),
+                            musical_time_map,
                         );
                     }
                 }
@@ -1778,8 +1774,8 @@ impl Graph {
         &mut self,
         latency: Duration,
         start_ts: Instant,
-        clock_update: Option<ClockUpdate>,
-        musical_time_map: Arc<RwLock<MusicalTimeMap>>,
+        clock_update: &Option<ClockUpdate>,
+        musical_time_map: &Arc<RwLock<MusicalTimeMap>>,
     ) {
         if let Some(ggc) = &mut self.graph_gen_communicator {
             if let Some(clock_update) = &clock_update {
@@ -1794,12 +1790,7 @@ impl Graph {
             );
         }
         for (_key, graph) in &mut self.graphs_per_node {
-            graph.start_scheduler(
-                latency,
-                start_ts,
-                clock_update.clone(),
-                musical_time_map.clone(),
-            );
+            graph.start_scheduler(latency, start_ts, clock_update, musical_time_map);
         }
     }
     /// Returns the current audio thread time in Superbeats based on the
@@ -2601,9 +2592,7 @@ impl Graph {
             } => {
                 if let Some(sink) = sink {
                     // Convert from NodeAddress to RawNodeAddress, returning an error if it isn't possible
-                    let sink = if let Some(raw_sink) = sink.to_raw() {
-                        raw_sink
-                    } else {
+                    let Some(sink) = sink.to_raw() else {
                         return Err(ConnectionError::SinkNodeNotPushed);
                     };
                     // If the sink node does not belong in this graph, try a sub graph of this graph
@@ -2984,6 +2973,9 @@ impl Graph {
     }
     /// Apply a change to the internal [`MusicalTimeMap`] shared between all
     /// [`Graphs`] in a tree. Call this only on the top level Graph.
+    ///
+    /// # Errors
+    /// If the scheduler was not yet created, meaning the Graph is not running.
     pub fn change_musical_time_map(
         &mut self,
         change_fn: impl FnOnce(&mut MusicalTimeMap),
@@ -3000,8 +2992,7 @@ impl Graph {
         nodes_to_process: &mut Vec<NodeKey>,
     ) -> Vec<NodeKey> {
         let mut stack = Vec::with_capacity(self.get_nodes().capacity());
-        while !nodes_to_process.is_empty() {
-            let node_index = nodes_to_process.pop().unwrap();
+        while let Some(node_index) = nodes_to_process.pop() {
             stack.push(node_index);
             // cloning the input edges here to avoid unsafe
             let input_edges = &self.node_input_edges[node_index];
@@ -3019,7 +3010,7 @@ impl Graph {
         let mut last_connected_output_node_index = start_node;
         loop {
             let mut found_later_node = false;
-            for (key, input_edges) in self.node_input_edges.iter() {
+            for (key, input_edges) in &self.node_input_edges {
                 for input_edge in input_edges {
                     if input_edge.source == last_connected_node_index
                         && !visited.contains(&input_edge.source)
@@ -3210,7 +3201,7 @@ impl Graph {
         }
         output_tasks
     }
-    /// Only one GraphGen can be created from a Graph, since otherwise nodes in
+    /// Only one `GraphGen` can be created from a Graph, since otherwise nodes in
     /// the graph could be run multiple times.
     fn create_graph_gen(
         &mut self,
@@ -3353,8 +3344,7 @@ impl Graph {
                 GenState::FreeSelfMendConnections => {
                     self.free_node_mend_connections(address).ok();
                 }
-                GenState::FreeGraph(_) => unreachable!(),
-                GenState::FreeGraphMendConnections(_) => unreachable!(),
+                GenState::FreeGraph(_) | GenState::FreeGraphMendConnections(_) => unreachable!(),
                 GenState::Continue => unreachable!(),
             }
         }
@@ -3391,7 +3381,14 @@ impl Graph {
             if let Some(graph) = self.graphs_per_node.get(key) {
                 dump.push(NodeDump::Graph(graph.dump_nodes()));
             } else {
-                dump.push(NodeDump::Node(nodes.get(key).unwrap().name.to_string()));
+                // unwrap
+                dump.push(NodeDump::Node(
+                    nodes
+                        .get(key)
+                        .expect("key from `nodes` should still be valid, but isn't")
+                        .name
+                        .to_string(),
+                ));
             }
         }
         dump
@@ -3405,13 +3402,13 @@ pub enum NodeDump {
     Graph(Vec<NodeDump>),
 }
 
-/// Safety: The GraphGen is given access to an Arc<UnsafeCell<SlotMap<NodeKey,
+/// Safety: The `GraphGen` is given access to an Arc<UnsafeCell<SlotMap<NodeKey,
 /// Node>>, but won't use it unless the Graph is dropped and it needs to keep
-/// the SlotMap alive, and the drop it when the GraphGen is dropped.
+/// the `SlotMap` alive, and the drop it when the `GraphGen` is dropped.
 unsafe impl Send for Graph {}
 
 /// The internal representation of a scheduled change to a running graph. This
-/// is what gets sent to the GraphGen.
+/// is what gets sent to the `GraphGen`.
 #[derive(Clone, Copy, Debug)]
 struct ScheduledChange {
     /// timestamp in samples in the current Graph's sample rate
@@ -3461,6 +3458,11 @@ enum ScheduledChangeKind {
 //     }
 // }
 
+type SchedulingQueueItem = (
+    Vec<(NodeKey, ScheduledChangeKind, Option<TimeOffset>)>,
+    Time,
+);
+
 /// The Scheduler handles scheduled changes and communicates parameter changes
 /// directly to the audio thread through a ring buffer.
 ///
@@ -3470,10 +3472,7 @@ enum ScheduledChangeKind {
 /// Before a Graph is running and changes scheduled will be stored in a queue.
 enum Scheduler {
     Stopped {
-        scheduling_queue: Vec<(
-            Vec<(NodeKey, ScheduledChangeKind, Option<TimeOffset>)>,
-            Time,
-        )>,
+        scheduling_queue: Vec<SchedulingQueueItem>,
     },
     Running {
         /// The starting time of the audio thread graph, relative to which time also
@@ -3511,7 +3510,7 @@ impl Scheduler {
                 ref mut scheduling_queue,
             } => {
                 // "Take" the scheduling queue out, replacing it with an empty vec which should be cheap
-                let scheduling_queue = mem::replace(scheduling_queue, vec![]);
+                let scheduling_queue = mem::take(scheduling_queue);
                 // How far into the future messages are sent to the GraphGen.
                 // This needs to be at least 2 * block_size since the timestamp
                 // this is compared to is loaded atomically from the GraphGen
@@ -3521,6 +3520,7 @@ impl Scheduler {
                     ((sample_rate * 0.5) as u64).max((block_size as u64) * 2);
                 let mut new_scheduler = Scheduler::Running {
                     start_ts: audio_thread_start_ts,
+                    #[allow(clippy::cast_possible_truncation)]
                     sample_rate: sample_rate as u64,
                     max_duration_to_send,
                     scheduling_queue: vec![],
@@ -4221,7 +4221,6 @@ impl Gen for Mult {
 pub struct Bus(pub usize);
 impl Gen for Bus {
     fn process(&mut self, ctx: GenContext, _resources: &mut Resources) -> GenState {
-        let block_size = ctx.block_size();
         let mut out_bufs = ctx.outputs.iter_mut();
         for channel in 0..self.0 {
             let in_buf = ctx.inputs.get_channel(channel);

@@ -29,9 +29,9 @@ jobs:
         # Optional
         arch: x86_64-unknown-linux-musl
     - name: Build
-      run: cargo build --verbose --all-features
+      run: cargo build --verbose --features=cpal,jack,serde-derive 
     - name: Run tests
-      run: cargo test --verbose --all-features
+      run: cargo test --verbose --features=cpal,jack,serde-derive
     - uses: actions-rs/toolchain@v1
       with:
         profile: minimal

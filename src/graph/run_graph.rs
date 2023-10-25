@@ -78,8 +78,8 @@ impl RunGraph {
                 graph.start_scheduler(
                     settings.scheduling_latency,
                     scheduler_start_time_stamp,
-                    None,
-                    musical_time_map.clone(),
+                    &None,
+                    &musical_time_map,
                 );
                 // Run a first update to make sure any queued changes get sent to the GraphGen
                 graph.update();

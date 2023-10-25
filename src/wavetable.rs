@@ -498,23 +498,22 @@ impl Gen for Oscillator {
         let output = ctx.outputs.iter_mut().next().unwrap();
         let freq_buf = ctx.inputs.get_channel(0);
         let wt_key = match self.wavetable {
-            IdOrKey::Id(id) => match resources.wavetable_key_from_id(id) {
-                Some(key) => {
+            IdOrKey::Id(id) => {
+                if let Some(key) = resources.wavetable_key_from_id(id) {
                     self.wavetable = IdOrKey::Key(key);
                     key
-                }
-                None => {
+                } else {
                     output.fill(0.0);
                     return GenState::Continue;
                 }
-            },
+            }
             IdOrKey::Key(key) => key,
         };
         if let Some(wt) = resources.wavetables.get(wt_key) {
             for (&freq, o) in freq_buf.iter().zip(output.iter_mut()) {
                 self.set_freq(freq);
                 self.phase.increase(self.step);
-                *o = wt.get(self.phase) * self.amp
+                *o = wt.get(self.phase) * self.amp;
             }
         } else {
             output.fill(0.0);
@@ -541,7 +540,7 @@ impl Gen for Oscillator {
     }
     fn init(&mut self, _block_size: usize, sample_rate: Sample) {
         self.freq_to_phase_inc =
-            TABLE_SIZE as f64 * FRACTIONAL_PART as f64 * (1.0 / sample_rate as f64);
+            TABLE_SIZE as f64 * f64::from(FRACTIONAL_PART) * (1.0 / f64::from(sample_rate));
     }
     fn name(&self) -> &'static str {
         "Oscillator"
