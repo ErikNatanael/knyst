@@ -448,7 +448,7 @@ fn fundsp_reverb_gen(sample_rate: f64, mix: f32) -> ClosureGen {
         use fundsp::hacker32::*;
         let mut c = multipass() & mix * reverb_stereo(10.0, 5.0);
         c.allocate(); // Allocate any buffers needed internally ahead of time.
-        c.reset(Some(sample_rate));
+        c.reset();
         c
     };
 

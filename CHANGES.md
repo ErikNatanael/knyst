@@ -2,6 +2,10 @@
 
 ## Current changes
 
+- Update all dependencies to the latest version
+
+## v0.4.3 
+
 - Allow clearing all connections for a specific channel by calling `to_channel`, `from_channel` and similar on a `Connection::Clear`.
 - Allow scheduling multiple changes at the same time using `SimultaneousChanges`.
 - Allow scheduling triggers the same way input constant changes are scheduled.

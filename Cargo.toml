@@ -26,7 +26,7 @@ slotmap = "1.0"
 thiserror = "1.0"
 # For real time safe communication between threads
 rtrb = "0.2"
-fastrand = "1.4.1"
+fastrand = "2.0.1"
 # Fast approximation of common float math. Probably under BSD-3.
 fastapprox = "0.3"
 # Downcast used to have any user data in the Resources struct
@@ -34,9 +34,9 @@ downcast-rs = "1.2.0"
 # Loading audio buffers
 symphonia = { version = "0.5.1", features = ["mp3"] }
 # JACK audio backend
-jack = { version = "0.10", optional = true }
+jack = { version = "0.11", optional = true }
 # CPAL audio backend
-cpal = { version = "0.14.0", optional = true }
+cpal = { version = "0.15", optional = true }
 # Only for non real time use
 crossbeam-channel = "0.5.6"
 serde = { version = "1.0", features = ["derive"], optional = true }
@@ -44,16 +44,16 @@ assert_no_alloc = { version = "1.1.2" }
 
 # For concurrency testing
 [target.'cfg(loom)'.dependencies]
-loom = { version = "0.5", features = ["checkpoint"] }
+loom = { version = "0.7", features = ["checkpoint"] }
 
 [dev-dependencies]
 rand = "0.8"
-criterion = "0.3"
+criterion = "0.5"
 anyhow = "1.0"
 dialog = "0.3"
-fundsp = { version = "0.13" }
+fundsp = { version = "0.15" }
 termion = "2.0.1"
-rfd = "0.11.1"
+rfd = "0.12"
 tokio = { version = "1.26.0", features = [
   "rt",
   "time",

@@ -394,6 +394,14 @@ pub mod cpal_backend {
                 cpal::SampleFormat::F32 => run::<f32>(&self.device, &config.into(), run_graph),
                 cpal::SampleFormat::I16 => run::<i16>(&self.device, &config.into(), run_graph),
                 cpal::SampleFormat::U16 => run::<u16>(&self.device, &config.into(), run_graph),
+                cpal::SampleFormat::I8 => run::<i8>(&self.device, &config.into(), run_graph),
+                cpal::SampleFormat::I32 => run::<i32>(&self.device, &config.into(), run_graph),
+                cpal::SampleFormat::I64 => run::<i64>(&self.device, &config.into(), run_graph),
+                cpal::SampleFormat::U8 => run::<u8>(&self.device, &config.into(), run_graph),
+                cpal::SampleFormat::U32 => run::<u32>(&self.device, &config.into(), run_graph),
+                cpal::SampleFormat::U64 => run::<u64>(&self.device, &config.into(), run_graph),
+                cpal::SampleFormat::F64 => run::<f64>(&self.device, &config.into(), run_graph),
+                _ => todo!(),
             }?;
             self.stream = Some(stream);
             let controller = Controller::new(
@@ -424,7 +432,7 @@ pub mod cpal_backend {
         mut run_graph: RunGraph,
     ) -> Result<cpal::Stream, AudioBackendError>
     where
-        T: cpal::Sample,
+        T: cpal::Sample + cpal::FromSample<f32> + cpal::SizedSample,
     {
         let channels = config.channels as usize;
 
@@ -447,8 +455,7 @@ pub mod cpal_backend {
                         }
                         let buffer = run_graph.graph_output_buffers();
                         for (channel_i, out) in frame.iter_mut().enumerate() {
-                            let value: T =
-                                cpal::Sample::from::<f32>(&buffer.read(channel_i, sample_counter));
+                            let value: T = T::from_sample(buffer.read(channel_i, sample_counter));
                             *out = value;
                         }
                         sample_counter += 1;
@@ -456,6 +463,7 @@ pub mod cpal_backend {
                 })
             },
             err_fn,
+            None,
         )?;
 
         stream.play()?;
