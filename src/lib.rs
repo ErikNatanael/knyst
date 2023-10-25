@@ -37,9 +37,19 @@
 //! you can run in a real time thread or non real time to generate samples.
 //! Using the [`audio_backend`]s this process is automated for you.
 //!
+//! ## Features
+//!
+//! - *unstable*: Enables unstable optimisations in some cases that currently requires nightly.
+//! - *debug-warn-on-alloc*: Print a warning instead of panicing when allocating on the audio thread (debug build only).
+//! - *serde-derive*: Enables some data structures to be serialized/deserialized using serde.
+//! - *cpal*: Enables the cpal AudioBackend
+//! - *jack*: Enables the JACK AudioBackend
+//!
 #![deny(rustdoc::broken_intra_doc_links)] // error if there are broken intra-doc links
 #![warn(missing_docs)]
 #![warn(clippy::pedantic)]
+#![cfg_attr(feature = "unstable", feature(portable_simd))]
+
 use buffer::{Buffer, BufferKey};
 use core::fmt::Debug;
 use downcast_rs::{impl_downcast, Downcast};
@@ -160,10 +170,14 @@ impl Default for ResourcesSettings {
 #[derive(thiserror::Error, Debug)]
 pub enum ResourcesError {
     /// No space for more wavetables. Increase the `max_wavetables` setting if you need to hold more.
-    #[error("There is not enough space to insert the given Wavetable. You can create a Resources with more space or remove old Wavetables")]
+    #[error(
+        "There is not enough space to insert the given Wavetable. You can create a Resources with more space or remove old Wavetables"
+    )]
     WavetablesFull(Wavetable),
     /// No space for more buffers. Increase the `max_buffers` setting if you need to hold more.
-    #[error("There is not enough space to insert the given Buffer. You can create a Resources with more space or remove old Buffers")]
+    #[error(
+        "There is not enough space to insert the given Buffer. You can create a Resources with more space or remove old Buffers"
+    )]
     BuffersFull(Buffer),
     /// Tried to replace a buffer, but that buffer doesn't exist.
     #[error("The key for replacement did not exist.")]
@@ -506,7 +520,7 @@ impl Resources {
 #[inline]
 #[must_use]
 pub fn db_to_amplitude(db: f32) -> f32 {
-    10.0_f32.powf(db / 20.)
+    (10.0_f32).powf(db / 20.0)
 }
 /// Convert amplitude to db
 #[inline]

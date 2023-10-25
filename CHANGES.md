@@ -4,8 +4,9 @@
 
 - Allow clearing all connections for a specific channel by calling `to_channel`, `from_channel` and similar on a `Connection::Clear`.
 - Allow scheduling multiple changes at the same time using `SimultaneousChanges`.
-- Allow scheduling triggers the same way as input constant changes are scheduled.
+- Allow scheduling triggers the same way input constant changes are scheduled.
 - Fix a bug in sustaining envelopes.
+- Add the *unstable* feature, providing some SIMD support in nightly.
 
 ## v0.4.2
 
