@@ -1,12 +1,12 @@
-use proc_macro2::Ident;
+use proc_macro2::{Ident, Span};
 use quote::{format_ident, quote};
 use syn::{
-    parse::Parse, parse_macro_input, spanned::Spanned, FnArg, ImplItem, ItemImpl, Meta, Pat,
-    PatIdent, Path, Result, ReturnType, Type, TypePath,
+    parse::Parse, parse_macro_input, spanned::Spanned, FnArg, ImplItem, ImplItemFn, ItemImpl, Meta,
+    Pat, PatIdent, PatType, Path, Result, ReturnType, Type, TypePath,
 };
 
 #[proc_macro_attribute]
-pub fn gen(
+pub fn impl_gen(
     args: proc_macro::TokenStream,
     input: proc_macro::TokenStream,
 ) -> proc_macro::TokenStream {
@@ -19,15 +19,58 @@ pub fn gen(
     // gen_parse(args.into(), input.into()).unwrap_or_else(syn::Error::into_compile_error).into()
 }
 
-struct GenImplData {
-    /// The last segment of the type_path, which should be used for the function shorthand
-    type_ident: Ident,
-    process_fn_name: Ident,
-    /// Used to refer to the same path for the type as in the original
-    type_path: Path,
+struct ProcessData {
+    /// Name of the user writtin function to be called for process
+    fn_name: Ident,
     inputs: Vec<Ident>,
     outputs: Vec<Ident>,
     parameters: Vec<Parameter>,
+}
+
+struct InitData {
+    fn_name: Ident,
+    parameters: Vec<Parameter>,
+}
+impl InitData {
+    fn into_tokens(self) -> proc_macro2::TokenStream {
+        let InitData {
+            fn_name,
+            parameters,
+        } = self;
+
+        let parameters_assignments = parameters.iter().map(|p| {
+            let p_ident = &p.ident;
+            match p._ty {
+                ParameterTy::Input => todo!(),
+                ParameterTy::Output => todo!(),
+                ParameterTy::SampleRate => {
+                    quote! { let #p_ident: knyst::prelude::SampleRate = sample_rate.into();}
+                }
+                ParameterTy::ResourcesShared => quote! { #p_ident = resources;},
+                ParameterTy::ResourcesMut => quote! { #p_ident = resources;},
+                ParameterTy::BlockSize => quote! {
+                    let #p_ident: knyst::prelude::BlockSize = block_size.into();
+                },
+            }
+        });
+        let parameters_in_sig = parameters.iter().map(|p| &p.ident);
+        quote! {
+            fn init(&mut self, block_size: usize, sample_rate: Sample) {
+                #(#parameters_assignments)*
+                self.#fn_name(#(#parameters_in_sig),*);
+            }
+
+        }
+    }
+}
+
+struct GenImplData {
+    /// The last segment of the type_path, which should be used for the function shorthand
+    type_ident: Ident,
+    /// Used to refer to the same full path for the type as in the original impl block
+    type_path: Path,
+    process_data: ProcessData,
+    init_data: Option<InitData>,
     org_item_impl: ItemImpl,
 }
 
@@ -35,14 +78,27 @@ impl GenImplData {
     fn into_token_stream(self) -> Result<proc_macro2::TokenStream> {
         let GenImplData {
             type_ident,
+            type_path,
+            process_data,
+            init_data,
+            org_item_impl,
+        } = self;
+        let ProcessData {
+            fn_name: process_fn_name,
             inputs,
             outputs,
             parameters,
-            type_path,
-            org_item_impl,
-            process_fn_name,
-        } = self;
-        let parameters_in_sig = parameters.into_iter().map(|p| p.ident);
+        } = process_data;
+        let init_function = if let Some(init_data) = init_data {
+            init_data.into_tokens()
+        } else {
+            quote! {
+                fn init(&mut self, _block_size: usize, _sample_rate: Sample) {}
+            }
+        };
+        let parameters_in_sig = parameters
+            .iter()
+            .map(|p| Ident::new(&format!("__impl_gen_{}", p.ident), Span::call_site()));
         let num_inputs = inputs.len();
         let num_outputs = outputs.len();
         let type_name_string = type_ident.to_string();
@@ -54,13 +110,32 @@ impl GenImplData {
             let name_string = name.to_string();
             quote! { #i => #name_string, }
         });
-        let extract_inputs = inputs
-            .iter()
-            .enumerate()
-            .map(|(i, ident)| quote! { let #ident = inputs.get_channel(#i); });
-        let extract_outputs = outputs
-            .iter()
-            .map(|i| quote! { let #i = outputs.next().unwrap(); });
+        let extract_inputs = inputs.iter().enumerate().map(|(i, ident)| {
+            let ident = Ident::new(&format!("__impl_gen_{ident}"), Span::call_site());
+            quote! { let #ident = inputs.get_channel(#i); }
+        });
+        let extract_outputs = outputs.iter().map(|i| {
+            let i = Ident::new(&format!("__impl_gen_{i}"), Span::call_site());
+            quote! { let #i = outputs.next().unwrap(); }
+        });
+        let extract_other_process_parameters = parameters.iter().map(|p| {
+            let p_ident = &Ident::new(&format!("__impl_gen_{}", p.ident), Span::call_site());
+            match p._ty {
+                ParameterTy::Input | ParameterTy::Output => quote! {},
+                ParameterTy::SampleRate => {
+                    quote! { let #p_ident: knyst::prelude::SampleRate = ctx.sample_rate.into(); }
+                }
+                ParameterTy::ResourcesShared => quote! {
+                     let #p_ident: &knyst::prelude::Resources = resources;
+                },
+                ParameterTy::ResourcesMut => quote! {
+                     let #p_ident: &mut knyst::prelude::Resources = resources;
+                },
+                ParameterTy::BlockSize => quote! {
+                    let #p_ident: knyst::prelude::BlockSize = ctx.block_size().into();
+                },
+            }
+        });
 
         let handle_name = format_ident!("{type_ident}Handle");
         let handle_functions = inputs.iter().map(|i| {
@@ -73,8 +148,9 @@ impl GenImplData {
         Ok(quote! {
                 #org_item_impl
 
-                impl knyst_core::gen::Gen for #type_path {
-                    fn process(&mut self, ctx: knyst_core::gen::GenContext, resources: &mut knyst_core::resources::Resources) -> knyst_core::gen::GenState {
+                impl knyst::prelude::Gen for #type_path {
+                    fn process(&mut self, ctx: knyst::prelude::GenContext, resources: &mut knyst::prelude::Resources) -> knyst::prelude::GenState {
+                        #(#extract_other_process_parameters)*
                         let mut inputs = ctx.inputs;
                         #(#extract_inputs)*
 
@@ -90,7 +166,6 @@ impl GenImplData {
         fn num_outputs(&self) -> usize {
             #num_outputs
         }
-        fn init(&mut self, _block_size: usize, _sample_rate: Sample) {}
         fn input_desc(&self, input: usize) -> &'static str {
             match input {
                 #(#match_input_names)*
@@ -103,6 +178,7 @@ impl GenImplData {
                 _ => ""
             }
         }
+        #init_function
         fn name(&self) -> &'static str {
             #type_name_string
         }
@@ -142,140 +218,54 @@ impl Parse for GenImplData {
                 .ident
         };
 
-        let mut inputs = vec![];
-        let mut outputs = vec![];
-        let mut parameters = vec![];
-        let mut process_fn_name = None;
+        let mut process_data = None;
+        let mut init_data = None;
 
         let full_item_span = item_impl.span();
 
         for item in &mut item_impl.items {
-            match item {
-                ImplItem::Fn(impl_item_fn) => {
-                    let mut remove_attributes = vec![];
-                    // Does this function have an attribute we recognise?
-                    for (attr_i, attr) in impl_item_fn.attrs.iter_mut().enumerate() {
-                        if let Meta::Path(p) = &attr.meta {
-                            if let Some(path_segment) = p.segments.first() {
-                                match path_segment.ident.to_string().as_ref() {
-                                    "process" => {
-                                        remove_attributes.push(attr_i);
-                                        let ReturnType::Type(_, return_type) =
-                                            &impl_item_fn.sig.output
-                                        else {
-                                            return Err(syn::Error::new(
-                                                impl_item_fn.sig.output.span(),
-                                                "#[process] method needs to return a GenState",
-                                            ));
-                                        };
-                                        let Type::Path(TypePath {
-                                            path: Path { segments, .. },
-                                            ..
-                                        }) = &**return_type
-                                        else {
-                                            return Err(syn::Error::new(
-                                                return_type.span(),
-                                                "#[process] method needs to return a GenState",
-                                            ));
-                                        };
-                                        if segments.last().unwrap().ident.to_string() != "GenState"
-                                        {
-                                            return Err(syn::Error::new(
-                                                return_type.span(),
-                                                "#[process] method needs to return a GenState",
-                                            ));
-                                        }
-                                        process_fn_name = Some(impl_item_fn.sig.ident.clone());
-                                        for arg in &impl_item_fn.sig.inputs {
-                                            if let FnArg::Typed(param) = arg {
-                                                let Pat::Ident(PatIdent { ident: name, .. }) =
-                                                    &*param.pat
-                                                else {
-                                                    return Err(syn::Error::new(
-                                                        param.span(),
-                                                        "Unsupported param",
-                                                    ));
-                                                };
-                                                match *param.ty {
-                                                    Type::Reference(ref ty) => {
-                                                        match *ty.elem {
-                                                            Type::Slice(ref slice_type) => {
-                                                                match *slice_type.elem {
-                                                                    Type::Path(ref p)
-                                                                        if p.path
-                                                                            .segments
-                                                                            .first()
-                                                                            .unwrap()
-                                                                            .ident
-                                                                            .to_string()
-                                                                            == "Sample" =>
-                                                                    {
-                                                                        ()
-                                                                    }
-                                                                    _ => {
-                                                                        return Err(
-                                                                            syn::Error::new(
-                                                                                p.span(),
-                                                                                "Unknown input",
-                                                                            ),
-                                                                        );
-                                                                    }
-                                                                }
-                                                                // The type is okay to be an input or output
-                                                                if ty.mutability.is_some() {
-                                                                    outputs.push(name.clone());
-                                                                    parameters.push(Parameter {
-                                                                        _ty: ParameterTy::Output,
-                                                                        ident: name.clone(),
-                                                                    });
-                                                                } else {
-                                                                    inputs.push(name.clone());
-                                                                    parameters.push(Parameter {
-                                                                        _ty: ParameterTy::Input,
-                                                                        ident: name.clone(),
-                                                                    });
-                                                                }
-                                                            }
-                                                            _ => (),
-                                                        }
-                                                    }
-                                                    // TODO: Other types
-                                                    _ => (),
-                                                }
-                                            }
-                                        }
-                                    }
-                                    _ => (),
+            if let ImplItem::Fn(ref mut impl_item_fn) = item {
+                let mut remove_attributes = vec![];
+                // Does this function have an attribute we recognise?
+                for (attr_i, attr) in impl_item_fn.attrs.iter().enumerate() {
+                    if let Meta::Path(p) = &attr.meta {
+                        if let Some(path_segment) = p.segments.first() {
+                            match path_segment.ident.to_string().as_ref() {
+                                "process" => {
+                                    remove_attributes.push(attr_i);
+                                    process_data = Some(parse_process_fn(impl_item_fn)?);
                                 }
+                                "init" => {
+                                    remove_attributes.push(attr_i);
+                                    init_data = Some(parse_init_fn(impl_item_fn)?);
+                                }
+                                _ => (),
                             }
                         }
                     }
-                    for i in remove_attributes.iter().rev() {
-                        impl_item_fn.attrs.remove(*i);
-                    }
                 }
-                _ => (),
+                for i in remove_attributes.iter().rev() {
+                    impl_item_fn.attrs.remove(*i);
+                }
             }
         }
 
-        if process_fn_name.is_none() {
+        let Some(process_data) = process_data else {
             return Err(syn::Error::new(
                 full_item_span,
                 "No #[process] method in the block",
             ));
-        }
+        };
 
         // let ItemImpl::Type(ItemImpl { ident: type_ident, ty, .. }) = impl_item else {
         //     return Err(syn::Error::new(impl_item.span(), "Invalid impl block"));
         // };
         Ok(GenImplData {
-            type_ident,
             type_path,
-            inputs,
-            outputs,
-            parameters,
             org_item_impl: item_impl,
-            process_fn_name: process_fn_name.unwrap(),
+            type_ident,
+            process_data,
+            init_data,
         })
     }
 }
@@ -290,13 +280,184 @@ impl Parse for GenImplData {
 enum ParameterTy {
     Input,
     Output,
-    // SampleRate,
-    // ResourcesShared,
-    // ResourcesMut,
-    // BlockSize,
+    SampleRate,
+    ResourcesShared,
+    ResourcesMut,
+    BlockSize,
 }
 
 struct Parameter {
     _ty: ParameterTy,
     ident: Ident,
+}
+
+fn parse_process_fn(impl_item_fn: &ImplItemFn) -> Result<ProcessData> {
+    let mut inputs = vec![];
+    let mut outputs = vec![];
+    let mut parameters = vec![];
+
+    let ReturnType::Type(_, return_type) = &impl_item_fn.sig.output else {
+        return Err(syn::Error::new(
+            impl_item_fn.sig.output.span(),
+            "#[process] method needs to return a GenState",
+        ));
+    };
+    let Type::Path(TypePath {
+        path: Path { segments, .. },
+        ..
+    }) = &**return_type
+    else {
+        return Err(syn::Error::new(
+            return_type.span(),
+            "#[process] method needs to return a GenState",
+        ));
+    };
+    if segments.last().unwrap().ident != "GenState" {
+        return Err(syn::Error::new(
+            return_type.span(),
+            "#[process] method needs to return a GenState",
+        ));
+    }
+    let process_fn_name = impl_item_fn.sig.ident.clone();
+    for arg in &impl_item_fn.sig.inputs {
+        if let FnArg::Typed(param) = arg {
+            let Pat::Ident(PatIdent { ident: name, .. }) = &*param.pat else {
+                return Err(syn::Error::new(param.span(), "Unsupported param"));
+            };
+            let parameter = parse_parameter(param, name)?;
+            match parameter._ty {
+                ParameterTy::Input => inputs.push(parameter.ident.clone()),
+                ParameterTy::Output => outputs.push(parameter.ident.clone()),
+                _ => (),
+            }
+            parameters.push(parameter);
+        }
+    }
+    Ok(ProcessData {
+        fn_name: process_fn_name,
+        inputs,
+        outputs,
+        parameters,
+    })
+}
+
+fn parse_init_fn(impl_item_fn: &ImplItemFn) -> Result<InitData> {
+    let mut inputs = vec![];
+    let mut outputs = vec![];
+    let mut parameters = vec![];
+
+    if let ReturnType::Default = impl_item_fn.sig.output {
+    } else {
+        return Err(syn::Error::new(
+            impl_item_fn.sig.output.span(),
+            "#[init] method should return nothing",
+        ));
+    }
+    let fn_name = impl_item_fn.sig.ident.clone();
+    for arg in &impl_item_fn.sig.inputs {
+        if let FnArg::Typed(param) = arg {
+            let Pat::Ident(PatIdent { ident: name, .. }) = &*param.pat else {
+                return Err(syn::Error::new(param.span(), "Unsupported param"));
+            };
+            let parameter = parse_parameter(param, name)?;
+            match parameter._ty {
+                ParameterTy::Input => inputs.push(parameter.ident.clone()),
+                ParameterTy::Output => outputs.push(parameter.ident.clone()),
+                _ => (),
+            }
+            parameters.push(parameter);
+        }
+    }
+    Ok(InitData {
+        parameters,
+        fn_name,
+    })
+}
+
+fn parse_parameter(param: &PatType, name: &Ident) -> Result<Parameter> {
+    match *param.ty {
+        Type::Reference(ref ty) => {
+            match &*(ty.elem) {
+                Type::Slice(ref slice_type) => {
+                    match *slice_type.elem {
+                        Type::Path(ref p) if p.path.segments.first().unwrap().ident == "Sample" => {
+                        }
+                        _ => {
+                            return Err(syn::Error::new(slice_type.elem.span(), "Unknown input"));
+                        }
+                    }
+                    // The type is okay to be an input or output
+                    if ty.mutability.is_some() {
+                        // outputs.push(name.clone());
+                        Ok(Parameter {
+                            _ty: ParameterTy::Output,
+                            ident: name.clone(),
+                        })
+                    } else {
+                        // inputs.push(name.clone());
+                        Ok(Parameter {
+                            _ty: ParameterTy::Input,
+                            ident: name.clone(),
+                        })
+                    }
+                }
+                Type::Path(ty_path) => {
+                    let ty_ident = ty_path
+                        .path
+                        .segments
+                        .last()
+                        .map(|seg| seg.ident.to_string());
+                    match ty_ident.as_deref() {
+                        Some("SampleRate") => Ok(Parameter {
+                            ident: name.clone(),
+                            _ty: ParameterTy::SampleRate,
+                        }),
+                        Some("Resources") => Ok(Parameter {
+                            ident: name.clone(),
+                            _ty: if ty.mutability.is_some() {
+                                ParameterTy::ResourcesMut
+                            } else {
+                                ParameterTy::ResourcesShared
+                            },
+                        }),
+                        _ => Err(syn::Error::new(
+                            ty.span(),
+                            "Unsupported type in knyst method.",
+                        )),
+                    }
+                }
+                _ => Err(syn::Error::new(
+                    ty.span(),
+                    "Unsupported type in knyst method.",
+                )),
+            }
+        }
+
+        Type::Path(ref ty) => {
+            match ty
+                .path
+                .segments
+                .last()
+                .map(|seg| seg.ident.to_string())
+                .as_deref()
+            {
+                Some("SampleRate") => Ok(Parameter {
+                    ident: name.clone(),
+                    _ty: ParameterTy::SampleRate,
+                }),
+                Some("BlockSize") => Ok(Parameter {
+                    ident: name.clone(),
+                    _ty: ParameterTy::BlockSize,
+                }),
+                _ => Err(syn::Error::new(
+                    param.ty.span(),
+                    "Unsupported type in knyst method.",
+                )),
+            }
+        } // TODO: Other types
+        _ => Err(syn::Error::new(
+            param.ty.span(),
+            "Unsupported type in knyst method.",
+        )),
+    }
 }

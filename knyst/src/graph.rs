@@ -28,7 +28,10 @@
 //! synthesis or implement your own backend.
 
 use knyst_core::gen::{Gen, GenContext, GenState};
-use knyst_core::Sample;
+use knyst_core::{BlockSize, Sample, SampleRate};
+use knyst_macro::impl_gen;
+// For using impl_gen inside the knyst crate
+use crate as knyst;
 // #[cfg(loom)]
 // use loom::cell::UnsafeCell;
 #[cfg(loom)]
@@ -3991,67 +3994,50 @@ pub struct Ramp {
 
 impl Ramp {
     #[allow(missing_docs)]
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 }
-impl Gen for Ramp {
-    fn process(&mut self, ctx: GenContext, _resources: &mut Resources) -> GenState {
-        for i in 0..ctx.block_size() {
-            let value = ctx.inputs.read(0, i);
-            let time = ctx.inputs.read(1, i);
+#[impl_gen]
+impl Ramp {
+    #[process]
+    fn process(
+        &mut self,
+        value: &[Sample],
+        time: &[Sample],
+        ramped_value: &mut [Sample],
+        block_size: BlockSize,
+    ) -> GenState {
+        for i in 0..*block_size {
             let mut recalculate = false;
-            if value != self.last_value {
-                self.last_value = value;
+            let v = value[i];
+            let t = time[i];
+            if v != self.last_value {
+                self.last_value = v;
                 recalculate = true;
             }
-            if time != self.last_time {
-                self.last_time = time;
+            if t != self.last_time {
+                self.last_time = t;
                 recalculate = true;
             }
             if recalculate {
-                let num_samples = (time * self.sample_rate).floor();
-                self.step = (value - self.current_value) / num_samples;
+                let num_samples = (t * self.sample_rate).floor();
+                self.step = (v - self.current_value) / num_samples;
             }
-            if (self.current_value - value).abs() < 0.0001 {
-                self.current_value = value;
+            if (self.current_value - v).abs() < 0.0001 {
+                self.current_value = v;
                 self.step = 0.0;
             }
             self.current_value += self.step;
-            ctx.outputs.write(self.current_value, 0, i);
+            ramped_value[i] = self.current_value;
         }
         GenState::Continue
     }
 
-    fn num_inputs(&self) -> usize {
-        2
-    }
-
-    fn num_outputs(&self) -> usize {
-        1
-    }
-
-    fn init(&mut self, _block_size: usize, sample_rate: Sample) {
-        self.sample_rate = sample_rate;
-    }
-
-    fn input_desc(&self, input: usize) -> &'static str {
-        match input {
-            0 => "value",
-            1 => "time",
-            _ => "",
-        }
-    }
-
-    fn output_desc(&self, output: usize) -> &'static str {
-        match output {
-            0 => "ramped_value",
-            _ => "",
-        }
-    }
-
-    fn name(&self) -> &'static str {
-        "Ramp"
+    #[init]
+    fn init(&mut self, sample_rate: SampleRate) {
+        self.sample_rate = *sample_rate;
     }
 }
 /// Multiply two inputs together and produce one output.
@@ -4084,20 +4070,21 @@ impl Gen for Ramp {
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub struct Mult;
-impl Gen for Mult {
-    fn process(&mut self, ctx: GenContext, _resources: &mut Resources) -> GenState {
-        let block_size = ctx.block_size();
-        #[allow(unused_mut)]
-        let mut in0 = &ctx.inputs.get_channel(0)[..block_size];
-        #[allow(unused_mut)]
-        let mut in1 = &ctx.inputs.get_channel(1)[..block_size];
-        #[allow(unused_mut)]
-        let mut out_buf = &mut ctx.outputs.iter_mut().next().unwrap()[..block_size];
+#[impl_gen]
+impl Mult {
+    #[process]
+    fn process(
+        &mut self,
+        block_size: BlockSize,
+        mut value0: &[Sample],
+        mut value1: &[Sample],
+        mut product: &mut [Sample],
+    ) -> GenState {
         // fallback
         #[cfg(not(feature = "unstable"))]
         {
-            for i in 0..block_size {
-                out_buf[i] = in0[i] * in1[i];
+            for i in 0..*block_size {
+                product[i] = value0[i] * value1[i];
             }
         }
         #[cfg(feature = "unstable")]
@@ -4105,43 +4092,16 @@ impl Gen for Mult {
             use std::simd::f32x2;
             let simd_width = 2;
             for _ in 0..block_size / simd_width {
-                let s_in0 = f32x2::from_slice(&in0[..simd_width]);
-                let s_in1 = f32x2::from_slice(&in1[..simd_width]);
+                let s_in0 = f32x2::from_slice(&value0[..simd_width]);
+                let s_in1 = f32x2::from_slice(&value1[..simd_width]);
                 let product = s_in0 * s_in1;
                 product.copy_to_slice(out_buf);
-                in0 = &in0[simd_width..];
-                in1 = &in1[simd_width..];
+                in0 = &value0[simd_width..];
+                in1 = &value1[simd_width..];
                 out_buf = &mut out_buf[simd_width..];
             }
         }
         GenState::Continue
-    }
-
-    fn num_inputs(&self) -> usize {
-        2
-    }
-
-    fn num_outputs(&self) -> usize {
-        1
-    }
-
-    fn input_desc(&self, input: usize) -> &'static str {
-        match input {
-            0 => "value0",
-            1 => "value1",
-            _ => "",
-        }
-    }
-
-    fn output_desc(&self, output: usize) -> &'static str {
-        match output {
-            0 => "product",
-            _ => "",
-        }
-    }
-
-    fn name(&self) -> &'static str {
-        "Mult"
     }
 }
 /// Bus(channels)

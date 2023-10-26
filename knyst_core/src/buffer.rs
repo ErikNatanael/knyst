@@ -17,6 +17,8 @@ use symphonia::core::{
     probe::Hint,
 };
 
+use crate::SampleRate;
+
 use super::Sample;
 
 #[allow(missing_docs)]
@@ -239,8 +241,8 @@ impl Buffer {
         ))
     }
     /// Returns the step size in samples for playing this buffer with the correct speed
-    pub fn buf_rate_scale(&self, server_sample_rate: f32) -> f64 {
-        self.sample_rate / server_sample_rate as f64
+    pub fn buf_rate_scale(&self, server_sample_rate: SampleRate) -> f64 {
+        self.sample_rate / f64::from(server_sample_rate)
     }
     /// Linearly interpolate between the value in between to samples
     #[inline]

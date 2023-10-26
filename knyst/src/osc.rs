@@ -5,8 +5,12 @@ use knyst_core::{
     gen::{Gen, GenContext, GenState, StopAction},
     resources::{BufferId, IdOrKey, WavetableId, WavetableKey},
     wavetable::{Wavetable, WavetablePhase, FRACTIONAL_PART, TABLE_SIZE},
-    Resources, Sample,
+    Resources, Sample, SampleRate,
 };
+use knyst_macro::impl_gen;
+
+// Necessary to use impl_gen from inside the knyst crate
+use crate as knyst;
 
 /// Oscillator using a shared [`Wavetable`] stored in a [`Resources`]
 /// *inputs*
@@ -23,6 +27,7 @@ pub struct Oscillator {
 }
 
 #[allow(missing_docs)]
+#[impl_gen]
 impl Oscillator {
     #[must_use]
     pub fn new(wavetable: IdOrKey<WavetableId, WavetableKey>) -> Self {
@@ -46,60 +51,75 @@ impl Oscillator {
     pub fn reset_phase(&mut self) {
         self.phase.0 = 0;
     }
-}
-impl Gen for Oscillator {
-    fn process(&mut self, ctx: GenContext, resources: &mut Resources) -> GenState {
-        let output = ctx.outputs.iter_mut().next().unwrap();
-        let freq_buf = ctx.inputs.get_channel(0);
+    #[process]
+    pub fn process(
+        &mut self,
+        freq: &[Sample],
+        sig: &mut [Sample],
+        resources: &mut Resources,
+    ) -> GenState {
+        drop(freq);
+        sig[0] = freq[0];
         let wt_key = match self.wavetable {
             IdOrKey::Id(id) => {
                 if let Some(key) = resources.wavetable_key_from_id(id) {
                     self.wavetable = IdOrKey::Key(key);
                     key
                 } else {
-                    output.fill(0.0);
+                    sig.fill(0.0);
                     return GenState::Continue;
                 }
             }
             IdOrKey::Key(key) => key,
         };
         if let Some(wt) = resources.wavetable(wt_key) {
-            for (&freq, o) in freq_buf.iter().zip(output.iter_mut()) {
-                self.set_freq(freq);
+            for (&f, o) in freq.iter().zip(sig.iter_mut()) {
+                self.set_freq(f);
                 self.phase.increase(self.step);
                 *o = wt.get(self.phase) * self.amp;
             }
         } else {
-            output.fill(0.0);
+            sig.fill(0.0);
         }
         GenState::Continue
     }
-    fn input_desc(&self, input: usize) -> &'static str {
-        match input {
-            0 => "freq",
-            _ => "",
-        }
-    }
-    fn output_desc(&self, output: usize) -> &'static str {
-        match output {
-            0 => "sig",
-            _ => "",
-        }
-    }
-    fn num_outputs(&self) -> usize {
-        1
-    }
-    fn num_inputs(&self) -> usize {
-        1
-    }
-    fn init(&mut self, _block_size: usize, sample_rate: Sample) {
+    #[init]
+    pub fn init(&mut self, sample_rate: SampleRate) {
         self.freq_to_phase_inc =
             TABLE_SIZE as f64 * f64::from(FRACTIONAL_PART) * (1.0 / f64::from(sample_rate));
     }
-    fn name(&self) -> &'static str {
-        "Oscillator"
-    }
 }
+// impl Gen for Oscillator {
+//     fn process(&mut self, ctx: GenContext, resources: &mut Resources) -> GenState {
+//         let output = ctx.outputs.iter_mut().next().unwrap();
+//         let freq_buf = ctx.inputs.get_channel(0);
+//     }
+//     fn input_desc(&self, input: usize) -> &'static str {
+//         match input {
+//             0 => "freq",
+//             _ => "",
+//         }
+//     }
+//     fn output_desc(&self, output: usize) -> &'static str {
+//         match output {
+//             0 => "sig",
+//             _ => "",
+//         }
+//     }
+//     fn num_outputs(&self) -> usize {
+//         1
+//     }
+//     fn num_inputs(&self) -> usize {
+//         1
+//     }
+//     fn init(&mut self, _block_size: usize, sample_rate: Sample) {
+//         self.freq_to_phase_inc =
+//             TABLE_SIZE as f64 * f64::from(FRACTIONAL_PART) * (1.0 / f64::from(sample_rate));
+//     }
+//     fn name(&self) -> &'static str {
+//         "Oscillator"
+//     }
+// }
 
 /// Reads a sample from a buffer and outputs it. In a multi channel [`Buffer`] only the first channel will be read.
 /// TODO: Support rate through an argument with a default constant of 1
@@ -117,6 +137,7 @@ pub struct BufferReader {
     stop_action: StopAction,
 }
 
+#[impl_gen]
 impl BufferReader {
     #[allow(missing_docs)]
     pub fn new(
@@ -143,14 +164,14 @@ impl BufferReader {
         self.read_pointer = new_pointer_pos;
         self.finished = false;
     }
-}
-
-impl Gen for BufferReader {
-    fn process(&mut self, ctx: GenContext, resources: &mut Resources) -> GenState {
+    #[process]
+    pub fn process(
+        &mut self,
+        out: &mut [Sample],
+        resources: &mut Resources,
+        sample_rate: SampleRate,
+    ) -> GenState {
         let mut stop_sample = None;
-
-        let mut outputs = ctx.outputs.iter_mut();
-        let output0 = outputs.next().unwrap();
         if !self.finished {
             if let IdOrKey::Id(id) = self.buffer_key {
                 match resources.buffer_key_from_id(id) {
@@ -162,12 +183,12 @@ impl Gen for BufferReader {
                 if let Some(buffer) = &mut resources.buffer(buffer_key) {
                     // Initialise the base rate if it hasn't been set
                     if self.base_rate == 0.0 {
-                        self.base_rate = buffer.buf_rate_scale(ctx.sample_rate);
+                        self.base_rate = buffer.buf_rate_scale(sample_rate);
                     }
 
-                    for (i, out) in output0.iter_mut().enumerate() {
+                    for (i, o) in out.iter_mut().enumerate() {
                         let samples = buffer.get_interleaved((self.read_pointer) as usize);
-                        *out = samples[0];
+                        *o = samples[0];
                         // println!("out: {}", sample);
                         self.read_pointer += self.base_rate * self.rate;
                         if self.read_pointer >= buffer.num_frames() {
@@ -192,33 +213,13 @@ impl Gen for BufferReader {
             stop_sample = Some(0);
         }
         if let Some(stop_sample) = stop_sample {
-            for out in output0[stop_sample..].iter_mut() {
-                *out = 0.;
+            for o in out[stop_sample..].iter_mut() {
+                *o = 0.;
             }
             self.stop_action.to_gen_state(stop_sample)
         } else {
             GenState::Continue
         }
-    }
-
-    fn num_inputs(&self) -> usize {
-        0
-    }
-
-    fn num_outputs(&self) -> usize {
-        1
-    }
-
-    fn input_desc(&self, _input: usize) -> &'static str {
-        ""
-    }
-
-    fn output_desc(&self, _output: usize) -> &'static str {
-        "out"
-    }
-
-    fn name(&self) -> &'static str {
-        "BufferReader"
     }
 }
 
@@ -239,6 +240,7 @@ pub struct BufferReaderMulti {
     stop_action: StopAction,
 }
 
+// TODO: Make this generic over the number of inputs? How would that interact with the impl_gen macro?
 impl BufferReaderMulti {
     #[allow(missing_docs)]
     pub fn new(buffer_key: BufferKey, rate: f64, stop_action: StopAction) -> Self {
@@ -281,7 +283,7 @@ impl Gen for BufferReaderMulti {
             if let Some(buffer) = &mut resources.buffer(self.buffer_key) {
                 // Initialise the base rate if it hasn't been set
                 if self.base_rate == 0.0 {
-                    self.base_rate = buffer.buf_rate_scale(ctx.sample_rate);
+                    self.base_rate = buffer.buf_rate_scale(ctx.sample_rate.into());
                 }
                 for i in 0..ctx.block_size() {
                     let samples = buffer.get_interleaved((self.read_pointer) as usize);

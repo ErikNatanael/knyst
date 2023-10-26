@@ -1,3 +1,5 @@
+mod generate_compiling_code;
+
 #[test]
 fn tests() {
     let t = trybuild::TestCases::new();

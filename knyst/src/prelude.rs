@@ -15,4 +15,5 @@ pub use knyst_core::gen::{Gen, GenContext, GenState, StopAction};
 pub use knyst_core::resources::{IdOrKey, WavetableId, WavetableKey};
 pub use knyst_core::resources::{Resources, ResourcesSettings};
 pub use knyst_core::wavetable::{Wavetable, TABLE_POWER, TABLE_SIZE};
-pub use knyst_core::Sample;
+pub use knyst_core::{BlockSize, Sample, SampleRate};
+pub use knyst_macro::impl_gen;
