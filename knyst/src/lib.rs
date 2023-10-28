@@ -73,10 +73,13 @@ pub mod delay;
 pub mod envelope;
 mod filter;
 pub mod graph;
+pub mod handles;
 pub mod inspection;
+pub mod modal_interface;
 pub mod osc;
 pub mod prelude;
 pub mod scheduling;
+pub mod sphere;
 pub mod time;
 pub mod trig;
 

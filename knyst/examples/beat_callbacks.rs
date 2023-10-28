@@ -31,7 +31,7 @@ fn main() -> Result<()> {
             RunGraphSettings {
                 scheduling_latency: Duration::from_millis(100),
             },
-            print_error_handler,
+            Box::new(print_error_handler),
         )
         .unwrap();
     let node0 = k.push(

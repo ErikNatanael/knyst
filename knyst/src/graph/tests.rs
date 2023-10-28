@@ -5,64 +5,39 @@ use std::time::Duration;
 use knyst_core::resources::{IdOrKey, ResourcesSettings};
 use knyst_core::Resources;
 
+use super::{Gen, RunGraph};
+use crate as knyst;
+use crate::controller::KnystCommands;
 use crate::graph::{FreeError, Oversampling, ScheduleError};
 use crate::osc::{BufferReader, WavetableOscillatorOwned};
 use crate::prelude::*;
 use crate::time::{Superbeats, Superseconds};
 use crate::{controller::Controller, graph::connection::constant};
 
-use super::{Gen, RunGraph};
-
 // Outputs its input value + 1
 struct OneGen {}
-impl Gen for OneGen {
-    fn process(&mut self, ctx: GenContext, _resources: &mut Resources) -> GenState {
-        for i in 0..ctx.block_size() {
-            ctx.outputs.write(ctx.inputs.read(0, i) + 1.0, 0, i);
+#[impl_gen]
+impl OneGen {
+    #[process]
+    fn process(&mut self, passthrough: &[Sample], out: &mut [Sample]) -> GenState {
+        for (i, o) in passthrough.iter().zip(out.iter_mut()) {
+            *o = *i + 1.0;
         }
         GenState::Continue
-    }
-    fn input_desc(&self, input: usize) -> &'static str {
-        match input {
-            0 => "passthrough",
-            _ => "",
-        }
-    }
-
-    fn num_inputs(&self) -> usize {
-        1
-    }
-
-    fn num_outputs(&self) -> usize {
-        1
     }
 }
 struct DummyGen {
     counter: f32,
 }
-impl Gen for DummyGen {
-    fn process(&mut self, ctx: GenContext, _resources: &mut Resources) -> GenState {
-        for i in 0..ctx.block_size() {
+#[impl_gen]
+impl DummyGen {
+    #[process]
+    fn process(&mut self, counter: &[Sample], output: &mut [Sample]) -> GenState {
+        for (count, out) in counter.iter().zip(output.iter_mut()) {
             self.counter += 1.;
-            ctx.outputs
-                .write(ctx.inputs.read(0, i) + self.counter, 0, i);
+            *out = count + self.counter;
         }
         GenState::Continue
-    }
-
-    fn input_desc(&self, input: usize) -> &'static str {
-        match input {
-            0 => "counter",
-            _ => "",
-        }
-    }
-
-    fn num_inputs(&self) -> usize {
-        1
-    }
-
-    fn num_outputs(&self) -> usize {
-        1
     }
 }
 fn test_resources_settings() -> ResourcesSettings {
@@ -78,7 +53,7 @@ fn test_run_graph(graph: &mut Graph, settings: RunGraphSettings) -> RunGraph {
 fn create_graph() {
     let mut graph: Graph = Graph::new(GraphSettings::default());
     let node_id = graph.push(DummyGen { counter: 0.0 });
-    graph.connect(Connection::graph_output(&node_id)).unwrap();
+    graph.connect(Connection::graph_output(node_id)).unwrap();
     graph.init();
     let mut run_graph = test_run_graph(&mut graph, RunGraphSettings::default());
     run_graph.process_block();
@@ -96,9 +71,9 @@ fn multiple_nodes() {
     let node_id1 = graph.push(node1);
     let node_id2 = graph.push(node2);
     let node_id3 = graph.push(node3);
-    graph.connect(node_id1.to(&node_id3)).unwrap();
-    graph.connect(node_id2.to(&node_id3)).unwrap();
-    graph.connect(Connection::graph_output(&node_id3)).unwrap();
+    graph.connect(node_id1.to(node_id3)).unwrap();
+    graph.connect(node_id2.to(node_id3)).unwrap();
+    graph.connect(Connection::graph_output(node_id3)).unwrap();
     let mut run_graph = test_run_graph(&mut graph, RunGraphSettings::default());
     run_graph.process_block();
     assert_eq!(run_graph.graph_output_buffers().read(0, 2), 9.0);
@@ -112,8 +87,8 @@ fn constant_inputs() {
     });
     let node = DummyGen { counter: 0.0 };
     let node_id = graph.push(node);
-    graph.connect(constant(0.5).to(&node_id)).unwrap();
-    graph.connect(Connection::graph_output(&node_id)).unwrap();
+    graph.connect(constant(0.5).to(node_id)).unwrap();
+    graph.connect(Connection::graph_output(node_id)).unwrap();
     let mut run_graph = test_run_graph(&mut graph, RunGraphSettings::default());
     run_graph.process_block();
     assert_eq!(run_graph.graph_output_buffers().read(0, BLOCK - 1), 16.5);
@@ -127,9 +102,9 @@ fn graph_in_a_graph() {
         ..Default::default()
     });
     let node = DummyGen { counter: 0.0 };
-    let node_address = inner_graph.push(node);
+    let node_id = inner_graph.push(node);
     inner_graph
-        .connect(Connection::graph_output(&node_address))
+        .connect(Connection::graph_output(node_id))
         .unwrap();
     let mut top_level_graph: Graph = Graph::new(GraphSettings {
         block_size: BLOCK,
@@ -137,12 +112,12 @@ fn graph_in_a_graph() {
     });
     let inner_graph_node_id = top_level_graph.push(inner_graph);
     top_level_graph
-        .connect(Connection::graph_output(&inner_graph_node_id).channels(2))
+        .connect(Connection::graph_output(inner_graph_node_id).channels(2))
         .unwrap();
     // Parent graphs should propagate a connection to its child graphs
     // without issue, but it will be scheduled instead of applied directly
     top_level_graph
-        .connect(constant(CONSTANT_INPUT_TO_NODE).to(&node_address))
+        .connect(constant(CONSTANT_INPUT_TO_NODE).to(node_id))
         .unwrap();
     let mut run_graph = test_run_graph(&mut top_level_graph, RunGraphSettings::default());
     run_graph.process_block();
@@ -168,16 +143,16 @@ fn feedback_in_graph() {
     let n2 = graph.push(DummyGen { counter: 4.0 });
     let n3 = graph.push(DummyGen { counter: 5.0 });
     let n4 = graph.push(DummyGen { counter: 1.0 });
-    graph.connect(Connection::graph_output(&n1)).unwrap();
+    graph.connect(Connection::graph_output(n1)).unwrap();
     graph
-        .connect(Connection::graph_output(&n0).to_index(1))
+        .connect(Connection::graph_output(n0).to_index(1))
         .unwrap();
-    graph.connect(n0.to(&n1)).unwrap();
-    graph.connect(n2.to(&n3)).unwrap();
-    graph.connect(n3.to(&n4)).unwrap();
-    graph.connect(n2.to(&n0).feedback(true)).unwrap();
-    graph.connect(n3.to(&n1).feedback(true)).unwrap();
-    graph.connect(n4.to(&n0).feedback(true)).unwrap();
+    graph.connect(n0.to(n1)).unwrap();
+    graph.connect(n2.to(n3)).unwrap();
+    graph.connect(n3.to(n4)).unwrap();
+    graph.connect(n2.to(n0).feedback(true)).unwrap();
+    graph.connect(n3.to(n1).feedback(true)).unwrap();
+    graph.connect(n4.to(n0).feedback(true)).unwrap();
     let mut run_graph = test_run_graph(&mut graph, RunGraphSettings::default());
     run_graph.process_block();
     let block1 = vec![2.0f32, 4., 6., 8.];
@@ -229,8 +204,8 @@ fn changing_the_graph() {
     for i in 0..10 {
         let node = DummyGen { counter: 0.0 };
         let node_id = graph.push(node);
-        graph.connect(constant(0.5).to(&node_id)).unwrap();
-        graph.connect(Connection::graph_output(&node_id)).unwrap();
+        graph.connect(constant(0.5).to(node_id)).unwrap();
+        graph.connect(Connection::graph_output(node_id)).unwrap();
         graph.update();
         run_graph.process_block();
         assert_eq!(
@@ -257,12 +232,12 @@ fn graph_inputs() {
     let node_id = graph.push(node);
     graph
         .connect(
-            Connection::graph_input(&node_id)
+            Connection::graph_input(node_id)
                 .from_index(2)
                 .to_label("counter"),
         )
         .unwrap();
-    graph.connect(Connection::graph_output(&node_id)).unwrap();
+    graph.connect(Connection::graph_output(node_id)).unwrap();
     graph.update();
     run_graph.graph_input_buffers().fill_channel(10.0, 2);
     run_graph.process_block();
@@ -282,9 +257,9 @@ fn remove_nodes() {
     for _ in 0..10 {
         let node = graph.push(OneGen {});
         if let Some(last) = last_node.take() {
-            graph.connect(node.to(&last)).unwrap();
+            graph.connect(node.to(last)).unwrap();
         } else {
-            graph.connect(Connection::graph_output(&node)).unwrap();
+            graph.connect(Connection::graph_output(node)).unwrap();
         }
         last_node = Some(node.clone());
         nodes.push(node);
@@ -293,28 +268,25 @@ fn remove_nodes() {
     run_graph.process_block();
     assert_eq!(run_graph.graph_output_buffers().read(0, 0), 10.0);
     // Convert NodeAddress to RawNodeAddress for removal, which we know will work because we pushed it straight to the graph
-    graph.free_node(nodes[9].to_raw().unwrap()).unwrap();
+    graph.free_node(nodes[9]).unwrap();
     graph.update();
     run_graph.process_block();
     assert_eq!(run_graph.graph_output_buffers().read(0, 0), 9.0);
-    graph.free_node(nodes[4].to_raw().unwrap()).unwrap();
+    graph.free_node(nodes[4]).unwrap();
     graph.update();
     run_graph.process_block();
     assert_eq!(run_graph.graph_output_buffers().read(0, 0), 4.0);
-    graph.connect(nodes[5].to(&nodes[3])).unwrap();
+    graph.connect(nodes[5].to(nodes[3])).unwrap();
     graph.update();
     run_graph.process_block();
     assert_eq!(run_graph.graph_output_buffers().read(0, 0), 8.0);
     for node in &nodes[1..4] {
-        graph.free_node(node.to_raw().unwrap()).unwrap();
+        graph.free_node(*node).unwrap();
     }
     graph.update();
     run_graph.process_block();
     assert_eq!(run_graph.graph_output_buffers().read(0, 0), 1.0);
-    assert_eq!(
-        graph.free_node(nodes[4].to_raw().unwrap()),
-        Err(FreeError::NodeNotFound)
-    );
+    assert_eq!(graph.free_node(nodes[4]), Err(FreeError::NodeNotFound));
 }
 
 #[test]
@@ -339,9 +311,9 @@ fn parallel_mutation() {
     for _ in 0..10 {
         let node = graph.push(OneGen {});
         if let Some(last) = last_node.take() {
-            graph.connect(node.to(&last)).unwrap();
+            graph.connect(node.to(last)).unwrap();
         } else {
-            graph.connect(Connection::graph_output(&node)).unwrap();
+            graph.connect(Connection::graph_output(node)).unwrap();
         }
         last_node = Some(node.clone());
         nodes.push(node);
@@ -349,7 +321,7 @@ fn parallel_mutation() {
         std::thread::sleep(std::time::Duration::from_millis(3));
     }
     for node in nodes.into_iter().rev() {
-        graph.free_node(node.to_raw().unwrap()).unwrap();
+        graph.free_node(node).unwrap();
         graph.commit_changes();
         std::thread::sleep(std::time::Duration::from_millis(2));
     }
@@ -358,9 +330,9 @@ fn parallel_mutation() {
     for _ in 0..10 {
         let node = graph.push(DummyGen { counter: 0. });
         if let Some(last) = last_node.take() {
-            graph.connect(node.to(&last)).unwrap();
+            graph.connect(node.to(last)).unwrap();
         } else {
-            graph.connect(Connection::graph_output(&node)).unwrap();
+            graph.connect(Connection::graph_output(node)).unwrap();
         }
         last_node = Some(node.clone());
         nodes.push(node);
@@ -371,7 +343,7 @@ fn parallel_mutation() {
     let mut rng = rand::thread_rng();
     nodes.shuffle(&mut rng);
     for node in nodes.into_iter() {
-        graph.free_node(node.to_raw().unwrap()).unwrap();
+        graph.free_node(node).unwrap();
         graph.update();
         std::thread::sleep(std::time::Duration::from_millis(1));
     }
@@ -446,10 +418,10 @@ fn self_freeing_nodes() {
         value: 3.,
         mend: false,
     });
-    graph.connect(Connection::graph_output(&n0)).unwrap();
-    graph.connect(n1.to(&n0)).unwrap();
-    graph.connect(n2.to(&n1)).unwrap();
-    graph.connect(n3.to(&n2)).unwrap();
+    graph.connect(Connection::graph_output(n0)).unwrap();
+    graph.connect(n1.to(n0)).unwrap();
+    graph.connect(n2.to(n1)).unwrap();
+    graph.connect(n3.to(n2)).unwrap();
 
     graph.update();
     assert_eq!(graph.num_nodes(), 4);
@@ -497,10 +469,10 @@ fn scheduling() {
     );
     let node0 = graph.push(OneGen {});
     let node1 = graph.push(OneGen {});
-    graph.connect(Connection::graph_output(&node0)).unwrap();
-    graph.connect(node1.to(&node0)).unwrap();
+    graph.connect(Connection::graph_output(node0)).unwrap();
+    graph.connect(node1.to(node0)).unwrap();
     // This gets applied only one sample late. Why?
-    graph.connect(constant(2.).to(&node1)).unwrap();
+    graph.connect(constant(2.).to(node1)).unwrap();
     graph.update();
     graph
         .schedule_change(
@@ -606,8 +578,8 @@ fn index_routing() {
     // Connecting the node to the graph output
     graph.connect(mult.to_graph_out()).unwrap();
     // Multiply 5 by 9
-    graph.connect(five.to(&mult).to_index(0)).unwrap();
-    graph.connect(nine.to(&mult).to_index(1)).unwrap();
+    graph.connect(five.to(mult).to_index(0)).unwrap();
+    graph.connect(nine.to(mult).to_index(1)).unwrap();
     // You need to commit changes and update if the graph is running.
     graph.commit_changes();
     graph.update();
@@ -699,35 +671,35 @@ fn index_routing_advanced() {
     // Connecting the node to the graph output
     graph.connect(multiplier.to_graph_out()).unwrap();
     // Multiply 5 by 9
-    graph.connect(nine.to(&multiplier).to_index(0)).unwrap();
-    graph.connect(five.to(&multiplier).to_index(1)).unwrap();
+    graph.connect(nine.to(multiplier).to_index(0)).unwrap();
+    graph.connect(five.to(multiplier).to_index(1)).unwrap();
     // You need to commit changes and update if the graph is running.
     graph.update();
     run_graph.process_block();
     assert_eq!(run_graph.graph_output_buffers().read(0, 0), 90.0);
 
-    graph.disconnect(five.to(&multiplier).to_index(1)).unwrap();
-    graph.connect(five.to(&multiplier).to_index(3)).unwrap();
+    graph.disconnect(five.to(multiplier).to_index(1)).unwrap();
+    graph.connect(five.to(multiplier).to_index(3)).unwrap();
     graph.update();
     run_graph.process_block();
     assert_eq!(run_graph.graph_output_buffers().read(0, 0), 180.0);
 
-    graph.connect(five.to(&multiplier).to_index(4)).unwrap();
-    graph.connect(five.to(&multiplier).to_label("i5")).unwrap();
+    graph.connect(five.to(multiplier).to_index(4)).unwrap();
+    graph.connect(five.to(multiplier).to_label("i5")).unwrap();
     graph.update();
     run_graph.process_block();
     assert_eq!(run_graph.graph_output_buffers().read(0, 0), 135000.0);
 
-    graph.connect(Connection::clear_to_nodes(&five)).unwrap();
+    graph.connect(Connection::clear_to_nodes(five)).unwrap();
     graph.update();
     run_graph.process_block();
     assert_eq!(run_graph.graph_output_buffers().read(0, 0), 9.0);
 
     graph
-        .connect(numberer.to(&multiplier).from_index(2).to_index(4))
+        .connect(numberer.to(multiplier).from_index(2).to_index(4))
         .unwrap();
     graph
-        .connect(numberer.to(&multiplier).from_index(7).to_index(2))
+        .connect(numberer.to(multiplier).from_index(7).to_index(2))
         .unwrap();
     graph.update();
     run_graph.process_block();
@@ -956,7 +928,7 @@ fn inner_graph_different_block_size() {
     let mut graph = Graph::new(graph_settings);
     let node = graph.push(WavetableOscillatorOwned::new(Wavetable::sine()));
     graph
-        .connect(constant(freq).to(&node).to_label("freq"))
+        .connect(constant(freq).to(node).to_label("freq"))
         .unwrap();
     graph.connect(node.to_graph_out().to_index(0)).unwrap();
     for i in 1..10 {
@@ -972,7 +944,7 @@ fn inner_graph_different_block_size() {
             .connect(node.to_graph_out().to_index(0))
             .unwrap();
         inner_graph
-            .connect(constant(freq).to(&node).to_label("freq"))
+            .connect(constant(freq).to(node).to_label("freq"))
             .unwrap();
         let inner_graph = graph.push(inner_graph);
         graph
@@ -1030,7 +1002,7 @@ fn inner_graph_different_oversampling() {
     let mut graph = Graph::new(graph_settings);
     let node = graph.push(WavetableOscillatorOwned::new(Wavetable::sine()));
     graph
-        .connect(constant(freq).to(&node).to_label("freq"))
+        .connect(constant(freq).to(node).to_label("freq"))
         .unwrap();
     graph.connect(node.to_graph_out().to_index(0)).unwrap();
     for i in 1..=1 {
@@ -1045,13 +1017,13 @@ fn inner_graph_different_oversampling() {
         let node = inner_graph.push(WavetableOscillatorOwned::new(Wavetable::sine()));
         let amp = inner_graph.push(Mult);
 
-        inner_graph.connect(node.to(&amp).to_index(0)).unwrap();
+        inner_graph.connect(node.to(amp).to_index(0)).unwrap();
         inner_graph
-            .connect(constant(1.0).to(&amp).to_index(1))
+            .connect(constant(1.0).to(amp).to_index(1))
             .unwrap();
         inner_graph.connect(amp.to_graph_out().to_index(0)).unwrap();
         inner_graph
-            .connect(constant(freq).to(&node).to_label("freq"))
+            .connect(constant(freq).to(node).to_label("freq"))
             .unwrap();
         let inner_graph = graph.push(inner_graph);
         graph

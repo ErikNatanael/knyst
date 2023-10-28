@@ -15,6 +15,8 @@
 use crate::{
     controller::{Controller, KnystCommands},
     graph::RunGraphSettings,
+    modal_interface::UnifiedKnystCommands,
+    prelude::MultiThreadedKnystCommands,
     KnystError,
 };
 #[allow(unused)]
@@ -37,8 +39,8 @@ pub trait AudioBackend {
         graph: Graph,
         resources: Resources,
         run_graph_settings: RunGraphSettings,
-        error_handler: impl FnMut(KnystError) + Send + 'static,
-    ) -> Result<KnystCommands, AudioBackendError> {
+        error_handler: Box<dyn FnMut(KnystError) + Send + 'static>,
+    ) -> Result<MultiThreadedKnystCommands, AudioBackendError> {
         let controller = self.start_processing_return_controller(
             graph,
             resources,
@@ -55,7 +57,7 @@ pub trait AudioBackend {
         graph: Graph,
         resources: Resources,
         run_graph_settings: RunGraphSettings,
-        error_handler: impl FnMut(KnystError) + Send + 'static,
+        error_handler: Box<dyn FnMut(KnystError) + Send + 'static>,
     ) -> Result<Controller, AudioBackendError>;
     /// Stop the backend
     fn stop(&mut self) -> Result<(), AudioBackendError>;
@@ -63,6 +65,10 @@ pub trait AudioBackend {
     fn sample_rate(&self) -> usize;
     /// Get the native block size of the backend if there is one
     fn block_size(&self) -> Option<usize>;
+    /// Get the native number of output channels for this backend, if any
+    fn native_output_channels(&self) -> Option<usize>;
+    /// Get the native number of input channels for this backend, if any
+    fn native_input_channels(&self) -> Option<usize>;
 }
 
 #[allow(missing_docs)]
@@ -376,7 +382,7 @@ pub mod cpal_backend {
             mut graph: Graph,
             resources: Resources,
             run_graph_settings: RunGraphSettings,
-            error_handler: impl FnMut(KnystError) + Send + 'static,
+            error_handler: Box<dyn FnMut(KnystError) + Send + 'static>,
         ) -> Result<crate::controller::Controller, AudioBackendError> {
             if self.stream.is_some() {
                 return Err(AudioBackendError::BackendAlreadyRunning);
@@ -423,6 +429,15 @@ pub mod cpal_backend {
 
         fn block_size(&self) -> Option<usize> {
             None
+        }
+
+        fn native_output_channels(&self) -> Option<usize> {
+            Some(self.num_outputs())
+        }
+
+        fn native_input_channels(&self) -> Option<usize> {
+            // TODO: support duplex streams
+            Some(0)
         }
     }
 

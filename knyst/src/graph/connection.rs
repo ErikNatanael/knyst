@@ -2,7 +2,7 @@
 //! [`Connection`]. Additionally, a [`NodeAddress`] has convenience functions to
 //! generate [`Connection`]s and the [`ConnectionBundle`] API is often more
 //! convenient and ergonomic.
-use super::{FreeError, NodeAddress, Sample};
+use super::{FreeError, NodeId, Sample};
 
 /// Connection provides a convenient API for creating connections between nodes in a
 /// graph. When used for nodes in a running graph, the shadow engine will translate the
@@ -16,7 +16,7 @@ pub enum Connection {
     /// node to node
     Node {
         /// Connect from the output of the source node
-        source: NodeAddress,
+        source: NodeId,
         /// What output channel from the source node to connect from.
         ///
         /// Either from_index or from_label can be used, but index takes precedence if both are set.
@@ -26,7 +26,7 @@ pub enum Connection {
         /// Either from_index or from_label can be used, but index takes precedence if both are set.
         from_label: Option<&'static str>,
         /// Connect to the input of the sink node
-        sink: NodeAddress,
+        sink: NodeId,
         /// What input channel on the sink node to connect to.
         ///
         /// Either to_index or to_label can be used, but index takes precedence if both are set.
@@ -51,7 +51,7 @@ pub enum Connection {
         /// New constant value
         value: Sample,
         /// The node whose input constant to set
-        sink: Option<NodeAddress>,
+        sink: Option<NodeId>,
         /// What input channel to set the constant value of.
         ///
         /// Either to_index or to_label can be used, but index takes precedence if both are set.
@@ -65,7 +65,7 @@ pub enum Connection {
     /// node to graph output
     GraphOutput {
         /// From which node to connect to the graph output.
-        source: NodeAddress,
+        source: NodeId,
         /// What output channel from the source node to connect from.
         ///
         /// Either from_index or from_label can be used, but index takes precedence if both are set.
@@ -83,7 +83,7 @@ pub enum Connection {
     /// graph input to node
     GraphInput {
         /// To which node a graph input will be connected
-        sink: NodeAddress,
+        sink: NodeId,
         /// From what index of the [`Graph`] inputs we will connect
         from_index: usize,
         /// What input channel to connect to.
@@ -103,7 +103,7 @@ pub enum Connection {
     /// Clear connections related to a node
     Clear {
         /// The node whose connections to clear
-        node: NodeAddress,
+        node: NodeId,
         /// If true, clear connections to this node
         input_nodes: bool,
         /// If true, clear constant input values of this node
@@ -130,7 +130,7 @@ pub fn constant(value: Sample) -> Connection {
 }
 impl Connection {
     /// Create a connection from `source_node` to a graph output
-    pub fn graph_output(source_node: &NodeAddress) -> Self {
+    pub fn graph_output(source_node: NodeId) -> Self {
         Self::GraphOutput {
             source: source_node.clone(),
             from_index: Some(0),
@@ -140,7 +140,7 @@ impl Connection {
         }
     }
     /// Create a connection from a graph_input to the `sink_node`
-    pub fn graph_input(sink_node: &NodeAddress) -> Self {
+    pub fn graph_input(sink_node: NodeId) -> Self {
         Self::GraphInput {
             sink: sink_node.clone(),
             from_index: 0,
@@ -150,7 +150,7 @@ impl Connection {
         }
     }
     /// Clear input constants of `node`
-    pub fn clear_constants(node: &NodeAddress) -> Self {
+    pub fn clear_constants(node: NodeId) -> Self {
         Self::Clear {
             node: node.clone(),
             input_constants: true,
@@ -162,7 +162,7 @@ impl Connection {
         }
     }
     /// Clear connections from other nodes to this `node`'s input(s)
-    pub fn clear_from_nodes(node: &NodeAddress) -> Self {
+    pub fn clear_from_nodes(node: NodeId) -> Self {
         Self::Clear {
             node: node.clone(),
             input_constants: false,
@@ -174,7 +174,7 @@ impl Connection {
         }
     }
     /// Clear connections from the `node` specified to other nodes
-    pub fn clear_to_nodes(node: &NodeAddress) -> Self {
+    pub fn clear_to_nodes(node: NodeId) -> Self {
         Self::Clear {
             node: node.clone(),
             input_constants: false,
@@ -186,7 +186,7 @@ impl Connection {
         }
     }
     /// Clear connections from the `node` to the graph outputs
-    pub fn clear_to_graph_outputs(node: &NodeAddress) -> Self {
+    pub fn clear_to_graph_outputs(node: NodeId) -> Self {
         Self::Clear {
             node: node.clone(),
             input_constants: false,
@@ -198,7 +198,7 @@ impl Connection {
         }
     }
     /// Clear connections from the graph inputs to the `node`
-    pub fn clear_from_graph_inputs(node: &NodeAddress) -> Self {
+    pub fn clear_from_graph_inputs(node: NodeId) -> Self {
         Self::Clear {
             node: node.clone(),
             input_constants: false,
@@ -211,10 +211,10 @@ impl Connection {
     }
     /// Sets the source of a Connection. Only valid for Connection::Node and
     /// Connection::GraphOutput. On other variants it does nothing.
-    pub fn from(mut self, source_node: &NodeAddress) -> Self {
+    pub fn from(mut self, source_node: NodeId) -> Self {
         match &mut self {
             Connection::Node { ref mut source, .. } => {
-                *source = source_node.clone();
+                *source = source_node;
             }
             Connection::GraphInput { .. } => {}
             Connection::Constant { .. } => {}
@@ -227,16 +227,16 @@ impl Connection {
     }
     /// Sets the source of a Connection. Does nothing on a
     /// Connection::GraphOutput or Connection::Clear.
-    pub fn to(mut self, sink_node: &NodeAddress) -> Self {
+    pub fn to(mut self, sink_node: NodeId) -> Self {
         match &mut self {
             Connection::Node { ref mut sink, .. } => {
-                *sink = sink_node.clone();
+                *sink = sink_node;
             }
             Connection::GraphInput { ref mut sink, .. } => {
-                *sink = sink_node.clone();
+                *sink = sink_node;
             }
             Connection::Constant { ref mut sink, .. } => {
-                *sink = Some(sink_node.clone());
+                *sink = Some(sink_node);
             }
             Connection::GraphOutput { .. } => {}
             Connection::Clear { .. } => {}
@@ -437,7 +437,7 @@ impl Connection {
         self
     }
     /// Get the source node address if one is set and the current variant has one.
-    pub fn get_source_node(&self) -> Option<NodeAddress> {
+    pub fn get_source_node(&self) -> Option<NodeId> {
         match self {
             Connection::Node { source, .. } => Some(source.clone()),
             Connection::GraphOutput { source, .. } => Some(source.clone()),
@@ -506,12 +506,12 @@ impl From<Sample> for Constant {
 /// A specific output from a specific node.
 #[derive(Clone, Debug)]
 pub struct NodeOutput {
-    pub(super) from_node: NodeAddress,
+    pub(super) from_node: NodeId,
     pub(super) from_channel: NodeChannel,
 }
 impl NodeOutput {
     /// Create a connection from self to the specified node.
-    pub fn to_node(&self, node: &NodeAddress) -> Connection {
+    pub fn to_node(&self, node: NodeId) -> Connection {
         let connection = Connection::Node {
             source: self.from_node.clone(),
             from_index: None,
@@ -586,7 +586,7 @@ impl From<NodeOutput> for ConstantOrNodeOutput {
 /// inputs to a new node.
 #[derive(Clone)]
 pub struct ConnectionBundle {
-    to_node: NodeAddress,
+    to_node: NodeId,
     inputs: Vec<(NodeChannel, ConstantOrNodeOutput)>,
 }
 
@@ -598,10 +598,10 @@ impl ConnectionBundle {
         for (channel, input) in &self.inputs {
             connections.push(match input {
                 ConstantOrNodeOutput::Constant(con) => {
-                    constant(con.0).to(&self.to_node).to_channel(*channel)
+                    constant(con.0).to(self.to_node).to_channel(*channel)
                 }
                 ConstantOrNodeOutput::NodeOutput(no) => {
-                    no.to_node(&self.to_node).to_channel(*channel)
+                    no.to_node(self.to_node).to_channel(*channel)
                 }
             });
         }
@@ -622,7 +622,7 @@ impl InputBundle {
         Self { inputs: Vec::new() }
     }
     /// Set the sink node to generate a [`ConnectionBundle`]
-    pub fn to(self, node_address: &NodeAddress) -> ConnectionBundle {
+    pub fn to(self, node_address: NodeId) -> ConnectionBundle {
         ConnectionBundle {
             to_node: node_address.clone(),
             inputs: self.inputs,
@@ -918,22 +918,22 @@ macro_rules! inputs {
 #[cfg(test)]
 mod tests {
     use super::InputBundle;
-    use crate::graph::NodeAddress;
+    use crate::graph::NodeId;
 
     #[test]
     fn connection_bundles() {
         struct DNode;
-        fn push_node(_node: DNode, defaults: impl Into<InputBundle>) -> NodeAddress {
+        fn push_node(_node: DNode, defaults: impl Into<InputBundle>) -> NodeId {
             let _d = defaults.into();
-            NodeAddress::new()
+            NodeId::new()
         }
         fn connect(b: impl Into<InputBundle>) {
             let b = b.into();
-            let target_node = NodeAddress::new();
-            b.to(&target_node).as_connections();
+            let target_node = NodeId::new();
+            b.to(target_node).as_connections();
         }
 
-        let node = NodeAddress::new();
+        let node = NodeId::new();
         let _c: InputBundle = ("freq", 440.0, [node.out(0)]).into();
         let _c: InputBundle = [("freq", 440.0, [node.out(0)])].into();
         connect(vec![

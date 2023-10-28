@@ -41,7 +41,7 @@ fn main() -> anyhow::Result<()> {
         g,
         resources,
         RunGraphSettings::default(),
-        controller::print_error_handler,
+        Box::new(controller::print_error_handler),
     )?;
 
     // Create a node which reads the buffer we inserted earlier and plays it back

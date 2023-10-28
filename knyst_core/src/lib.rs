@@ -17,6 +17,7 @@ pub type Sample = f32;
 pub struct SampleRate(Sample);
 
 impl SampleRate {
+    #[inline(always)]
     pub fn to_f64(self) -> f64 {
         self.0 as f64
     }
@@ -55,6 +56,7 @@ impl From<f32> for SampleRate {
 pub struct BlockSize(usize);
 
 impl From<BlockSize> for usize {
+    #[inline(always)]
     fn from(value: BlockSize) -> Self {
         value.0
     }

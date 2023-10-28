@@ -1,7 +1,7 @@
 use anyhow::Result;
 use knyst::{
     audio_backend::{CpalBackend, CpalBackendOptions},
-    controller::print_error_handler,
+    controller::{print_error_handler, KnystCommands},
     graph::Mult,
     osc::WavetableOscillatorOwned,
     prelude::*,
@@ -29,7 +29,7 @@ fn main() -> Result<()> {
             RunGraphSettings {
                 scheduling_latency: Duration::from_millis(100),
             },
-            print_error_handler,
+            Box::new(print_error_handler),
         )
         .unwrap();
     let node0 = k.push(

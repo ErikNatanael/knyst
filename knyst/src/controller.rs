@@ -14,7 +14,7 @@ use std::{
 use crate::{
     graph::{
         connection::{ConnectionBundle, ConnectionError, InputBundle},
-        Connection, GenOrGraph, GenOrGraphEnum, Graph, GraphId, GraphSettings, NodeAddress,
+        Connection, FreeError, GenOrGraph, GenOrGraphEnum, Graph, GraphId, GraphSettings, NodeId,
         ParameterChange, SimultaneousChanges,
     },
     scheduling::MusicalTimeMap,
@@ -32,13 +32,13 @@ use knyst_core::{
 enum Command {
     Push {
         gen_or_graph: GenOrGraphEnum,
-        node_address: NodeAddress,
+        node_address: NodeId,
         graph_id: GraphId,
     },
     Connect(Connection),
     Disconnect(Connection),
-    FreeNode(NodeAddress),
-    FreeNodeMendConnections(NodeAddress),
+    FreeNode(NodeId),
+    FreeNodeMendConnections(NodeId),
     ScheduleChange(ParameterChange),
     ScheduleChanges(SimultaneousChanges),
     FreeDisconnectedNodes,
@@ -56,8 +56,94 @@ enum Command {
 // TODO: What's the best way of referring to a graph? GraphId is unique, but not
 // always the handiest. It would be nice to be able to choose to refer to Graphs
 // by an identifier e.g. name. In Bevy holding on to GraphIds is easy.
+pub trait KnystCommands {
+    /// Push a Gen or Graph to the top level Graph without specifying any inputs.
+    fn push_without_inputs(&mut self, gen_or_graph: impl GenOrGraph) -> NodeId;
+    /// Push a Gen or Graph to the default Graph.
+    fn push(&mut self, gen_or_graph: impl GenOrGraph, inputs: impl Into<InputBundle>) -> NodeId;
+    /// Push a Gen or Graph to the Graph with the specified id without specifying inputs.
+    fn push_to_graph_without_inputs(
+        &mut self,
+        gen_or_graph: impl GenOrGraph,
+        graph_id: GraphId,
+    ) -> NodeId;
+    /// Push a Gen or Graph to the Graph with the specified id.
+    fn push_to_graph(
+        &mut self,
+        gen_or_graph: impl GenOrGraph,
+        graph_id: GraphId,
+        inputs: impl Into<InputBundle>,
+    ) -> NodeId;
+    /// Create a new connections
+    fn connect(&mut self, connection: Connection);
+    /// Make several connections at once using any of the ConnectionBundle
+    /// notations
+    fn connect_bundle(&mut self, bundle: impl Into<ConnectionBundle>);
+    /// Add a new beat callback. See [`BeatCallback`] for documentation.
+    fn schedule_beat_callback(
+        &mut self,
+        callback: impl FnMut(Superbeats, &mut MultiThreadedKnystCommands) -> Option<Superbeats>
+            + Send
+            + 'static,
+        start_time: StartBeat,
+    ) -> CallbackHandle;
+    /// Disconnect (undo) a [`Connection`]
+    fn disconnect(&mut self, connection: Connection);
+    /// Free any nodes that are not currently connected to the graph's outputs
+    /// via any chain of connections.
+    fn free_disconnected_nodes(&mut self);
+    /// Free a node and try to mend connections between the inputs and the
+    /// outputs of the node.
+    fn free_node_mend_connections(&mut self, node: NodeId);
+    /// Free a node.
+    fn free_node(&mut self, node: NodeId);
+    /// Schedule a change to be made.
+    ///
+    /// NB: Changes are buffered and the scheduler needs to be regularly updated
+    /// for them to be sent to the audio thread. If you are getting your
+    /// [`KnystCommands`] through `AudioBackend::start_processing` this is taken
+    /// care of automatically.
+    fn schedule_change(&mut self, change: ParameterChange);
+    /// Schedule multiple changes to be made.
+    ///
+    /// NB: Changes are buffered and the scheduler needs to be regularly updated
+    /// for them to be sent to the audio thread. If you are getting your
+    /// [`KnystCommands`] through `AudioBackend::start_processing` this is taken
+    /// care of automatically.
+    fn schedule_changes(&mut self, changes: SimultaneousChanges);
+    /// Inserts a new buffer in the [`Resources`] and returns an id which can be
+    /// converted to a key on the audio thread with access to a [`Resources`].
+    fn insert_buffer(&mut self, buffer: Buffer) -> BufferId;
+    /// Remove a buffer from the [`Resources`]
+    fn remove_buffer(&mut self, buffer_id: BufferId);
+    /// Replace a buffer in the [`Resources`]
+    fn replace_buffer(&mut self, buffer_id: BufferId, buffer: Buffer);
+    /// Inserts a new wavetable in the [`Resources`] and returns an id which can be
+    /// converted to a key on the audio thread with access to a [`Resources`].
+    fn insert_wavetable(&mut self, wavetable: Wavetable) -> WavetableId;
+    /// Remove a wavetable from the [`Resources`]
+    fn remove_wavetable(&mut self, wavetable_id: WavetableId);
+    /// Replace a wavetable in the [`Resources`]
+    fn replace_wavetable(&mut self, id: WavetableId, wavetable: Wavetable);
+    /// Make a change to the shared [`MusicalTimeMap`]
+    fn change_musical_time_map(
+        &mut self,
+        change_fn: impl FnOnce(&mut MusicalTimeMap) + Send + 'static,
+    );
+    /// Return the [`GraphSettings`] of the top level graph. This means you
+    /// don't have to manually keep track of matching sample rate and block size
+    /// for example.
+    fn default_graph_settings(&self) -> GraphSettings;
+    // /// Create a new Self which pushes to the selected GraphId by default
+    // /// TODO: modal way to set the current graph instead
+    // fn to_graph(&self, graph_id: GraphId) -> Self;
+    // /// Create a new Self which pushes to the top level GraphId by default
+    // /// TODO: modal way to set the current graph instead
+    // fn to_top_level_graph(&self) -> Self;
+}
 #[derive(Clone)]
-pub struct KnystCommands {
+/// Multi threaded implementation on KnystCommands, default
+pub struct MultiThreadedKnystCommands {
     /// Sends Commands to the Controller.
     sender: crossbeam_channel::Sender<Command>,
     /// As pushing to the top level Graph is the default we store the GraphId to that Graph.
@@ -68,29 +154,25 @@ pub struct KnystCommands {
     default_graph_id: GraphId,
 }
 
-impl KnystCommands {
+impl KnystCommands for MultiThreadedKnystCommands {
     /// Push a Gen or Graph to the top level Graph without specifying any inputs.
-    pub fn push_without_inputs(&mut self, gen_or_graph: impl GenOrGraph) -> NodeAddress {
+    fn push_without_inputs(&mut self, gen_or_graph: impl GenOrGraph) -> NodeId {
         self.push_to_graph_without_inputs(gen_or_graph, self.top_level_graph_id)
     }
     /// Push a Gen or Graph to the default Graph.
-    pub fn push(
-        &mut self,
-        gen_or_graph: impl GenOrGraph,
-        inputs: impl Into<InputBundle>,
-    ) -> NodeAddress {
+    fn push(&mut self, gen_or_graph: impl GenOrGraph, inputs: impl Into<InputBundle>) -> NodeId {
         let addr = self.push_to_graph_without_inputs(gen_or_graph, self.default_graph_id);
         let inputs: InputBundle = inputs.into();
-        self.connect_bundle(inputs.to(&addr));
+        self.connect_bundle(inputs.to(addr));
         addr
     }
     /// Push a Gen or Graph to the Graph with the specified id without specifying inputs.
-    pub fn push_to_graph_without_inputs(
+    fn push_to_graph_without_inputs(
         &mut self,
         gen_or_graph: impl GenOrGraph,
         graph_id: GraphId,
-    ) -> NodeAddress {
-        let new_node_address = NodeAddress::new();
+    ) -> NodeId {
+        let new_node_address = NodeId::new();
         let command = Command::Push {
             gen_or_graph: gen_or_graph.into_gen_or_graph_enum(),
             node_address: new_node_address.clone(),
@@ -100,33 +182,35 @@ impl KnystCommands {
         new_node_address
     }
     /// Push a Gen or Graph to the Graph with the specified id.
-    pub fn push_to_graph(
+    fn push_to_graph(
         &mut self,
         gen_or_graph: impl GenOrGraph,
         graph_id: GraphId,
         inputs: impl Into<InputBundle>,
-    ) -> NodeAddress {
+    ) -> NodeId {
         let new_node_address = self.push_to_graph_without_inputs(gen_or_graph, graph_id);
         let inputs: InputBundle = inputs.into();
-        self.connect_bundle(inputs.to(&new_node_address));
+        self.connect_bundle(inputs.to(new_node_address));
         new_node_address
     }
     /// Create a new connections
-    pub fn connect(&mut self, connection: Connection) {
+    fn connect(&mut self, connection: Connection) {
         self.sender.send(Command::Connect(connection)).unwrap();
     }
     /// Make several connections at once using any of the ConnectionBundle
     /// notations
-    pub fn connect_bundle(&mut self, bundle: impl Into<ConnectionBundle>) {
+    fn connect_bundle(&mut self, bundle: impl Into<ConnectionBundle>) {
         let bundle = bundle.into();
         for c in bundle.as_connections() {
             self.connect(c);
         }
     }
     /// Add a new beat callback. See [`BeatCallback`] for documentation.
-    pub fn schedule_beat_callback(
+    fn schedule_beat_callback(
         &mut self,
-        callback: impl FnMut(Superbeats, &mut KnystCommands) -> Option<Superbeats> + Send + 'static,
+        callback: impl FnMut(Superbeats, &mut MultiThreadedKnystCommands) -> Option<Superbeats>
+            + Send
+            + 'static,
         start_time: StartBeat,
     ) -> CallbackHandle {
         let c = BeatCallback::new(callback, Superbeats::ZERO);
@@ -136,23 +220,23 @@ impl KnystCommands {
         handle
     }
     /// Disconnect (undo) a [`Connection`]
-    pub fn disconnect(&mut self, connection: Connection) {
+    fn disconnect(&mut self, connection: Connection) {
         self.sender.send(Command::Disconnect(connection)).unwrap();
     }
     /// Free any nodes that are not currently connected to the graph's outputs
     /// via any chain of connections.
-    pub fn free_disconnected_nodes(&mut self) {
+    fn free_disconnected_nodes(&mut self) {
         self.sender.send(Command::FreeDisconnectedNodes).unwrap();
     }
     /// Free a node and try to mend connections between the inputs and the
     /// outputs of the node.
-    pub fn free_node_mend_connections(&mut self, node: NodeAddress) {
+    fn free_node_mend_connections(&mut self, node: NodeId) {
         self.sender
             .send(Command::FreeNodeMendConnections(node))
             .unwrap();
     }
     /// Free a node.
-    pub fn free_node(&mut self, node: NodeAddress) {
+    fn free_node(&mut self, node: NodeId) {
         self.sender.send(Command::FreeNode(node)).unwrap();
     }
     /// Schedule a change to be made.
@@ -161,7 +245,7 @@ impl KnystCommands {
     /// for them to be sent to the audio thread. If you are getting your
     /// [`KnystCommands`] through `AudioBackend::start_processing` this is taken
     /// care of automatically.
-    pub fn schedule_change(&mut self, change: ParameterChange) {
+    fn schedule_change(&mut self, change: ParameterChange) {
         self.sender.send(Command::ScheduleChange(change)).unwrap();
     }
     /// Schedule multiple changes to be made.
@@ -170,12 +254,12 @@ impl KnystCommands {
     /// for them to be sent to the audio thread. If you are getting your
     /// [`KnystCommands`] through `AudioBackend::start_processing` this is taken
     /// care of automatically.
-    pub fn schedule_changes(&mut self, changes: SimultaneousChanges) {
+    fn schedule_changes(&mut self, changes: SimultaneousChanges) {
         self.sender.send(Command::ScheduleChanges(changes)).unwrap();
     }
     /// Inserts a new buffer in the [`Resources`] and returns an id which can be
     /// converted to a key on the audio thread with access to a [`Resources`].
-    pub fn insert_buffer(&mut self, buffer: Buffer) -> BufferId {
+    fn insert_buffer(&mut self, buffer: Buffer) -> BufferId {
         let id = BufferId::new();
         self.sender
             .send(Command::ResourcesCommand(ResourcesCommand::InsertBuffer {
@@ -186,7 +270,7 @@ impl KnystCommands {
         id
     }
     /// Remove a buffer from the [`Resources`]
-    pub fn remove_buffer(&mut self, buffer_id: BufferId) {
+    fn remove_buffer(&mut self, buffer_id: BufferId) {
         self.sender
             .send(Command::ResourcesCommand(ResourcesCommand::RemoveBuffer {
                 id: buffer_id,
@@ -194,7 +278,7 @@ impl KnystCommands {
             .unwrap();
     }
     /// Replace a buffer in the [`Resources`]
-    pub fn replace_buffer(&mut self, buffer_id: BufferId, buffer: Buffer) {
+    fn replace_buffer(&mut self, buffer_id: BufferId, buffer: Buffer) {
         self.sender
             .send(Command::ResourcesCommand(ResourcesCommand::ReplaceBuffer {
                 id: buffer_id,
@@ -204,7 +288,7 @@ impl KnystCommands {
     }
     /// Inserts a new wavetable in the [`Resources`] and returns an id which can be
     /// converted to a key on the audio thread with access to a [`Resources`].
-    pub fn insert_wavetable(&mut self, wavetable: Wavetable) -> WavetableId {
+    fn insert_wavetable(&mut self, wavetable: Wavetable) -> WavetableId {
         let id = WavetableId::new();
         self.sender
             .send(Command::ResourcesCommand(
@@ -214,7 +298,7 @@ impl KnystCommands {
         id
     }
     /// Remove a wavetable from the [`Resources`]
-    pub fn remove_wavetable(&mut self, wavetable_id: WavetableId) {
+    fn remove_wavetable(&mut self, wavetable_id: WavetableId) {
         self.sender
             .send(Command::ResourcesCommand(
                 ResourcesCommand::RemoveWavetable { id: wavetable_id },
@@ -222,7 +306,7 @@ impl KnystCommands {
             .unwrap();
     }
     /// Replace a wavetable in the [`Resources`]
-    pub fn replace_wavetable(&mut self, id: WavetableId, wavetable: Wavetable) {
+    fn replace_wavetable(&mut self, id: WavetableId, wavetable: Wavetable) {
         self.sender
             .send(Command::ResourcesCommand(
                 ResourcesCommand::ReplaceWavetable { id, wavetable },
@@ -230,7 +314,7 @@ impl KnystCommands {
             .unwrap();
     }
     /// Make a change to the shared [`MusicalTimeMap`]
-    pub fn change_musical_time_map(
+    fn change_musical_time_map(
         &mut self,
         change_fn: impl FnOnce(&mut MusicalTimeMap) + Send + 'static,
     ) {
@@ -241,21 +325,21 @@ impl KnystCommands {
     /// Return the [`GraphSettings`] of the top level graph. This means you
     /// don't have to manually keep track of matching sample rate and block size
     /// for example.
-    pub fn default_graph_settings(&self) -> GraphSettings {
+    fn default_graph_settings(&self) -> GraphSettings {
         self.top_level_graph_settings.clone()
     }
-    /// Create a new Self which pushes to the selected GraphId by default
-    pub fn to_graph(&self, graph_id: GraphId) -> Self {
-        let mut k = self.clone();
-        k.default_graph_id = graph_id;
-        k
-    }
-    /// Create a new Self which pushes to the top level GraphId by default
-    pub fn to_top_level_graph(&self) -> Self {
-        let mut k = self.clone();
-        k.default_graph_id = self.top_level_graph_id;
-        k
-    }
+    // /// Create a new Self which pushes to the selected GraphId by default
+    // fn to_graph(&self, graph_id: GraphId) -> Self {
+    //     let mut k = self.clone();
+    //     k.default_graph_id = graph_id;
+    //     k
+    // }
+    // /// Create a new Self which pushes to the top level GraphId by default
+    // fn to_top_level_graph(&self) -> Self {
+    //     let mut k = self.clone();
+    //     k.default_graph_id = self.top_level_graph_id;
+    //     k
+    // }
 }
 
 /// Handle to modify a running/scheduled callback
@@ -268,6 +352,11 @@ impl CallbackHandle {
     pub fn free(self) {
         self.free_flag
             .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+    pub(crate) fn dummy_new() -> Self {
+        Self {
+            free_flag: Arc::new(AtomicBool::new(true)),
+        }
     }
 }
 
@@ -290,14 +379,17 @@ pub enum StartBeat {
 /// can return the time to wait until it gets called again or `None` to remove
 /// the callback.
 pub struct BeatCallback {
-    callback: Box<dyn FnMut(Superbeats, &mut KnystCommands) -> Option<Superbeats> + Send>,
+    callback:
+        Box<dyn FnMut(Superbeats, &mut MultiThreadedKnystCommands) -> Option<Superbeats> + Send>,
     next_timestamp: Superbeats,
     free_flag: Arc<AtomicBool>,
 }
 impl BeatCallback {
     /// Create a new [`BeatCallback`] with a given start time
     fn new(
-        callback: impl FnMut(Superbeats, &mut KnystCommands) -> Option<Superbeats> + Send + 'static,
+        callback: impl FnMut(Superbeats, &mut MultiThreadedKnystCommands) -> Option<Superbeats>
+            + Send
+            + 'static,
         start_time: Superbeats,
     ) -> Self {
         let free_flag = Arc::new(AtomicBool::new(false));
@@ -314,7 +406,7 @@ impl BeatCallback {
     }
     /// Called by the Controller when it is time to run the callback to schedule
     /// changes in the future.
-    fn run_callback(&mut self, k: &mut KnystCommands) -> CallbackResult {
+    fn run_callback(&mut self, k: &mut MultiThreadedKnystCommands) -> CallbackResult {
         if self.free_flag.load(std::sync::atomic::Ordering::SeqCst) {
             CallbackResult::Delete
         } else {
@@ -418,26 +510,30 @@ impl Controller {
                     },
                 }
             }
-            Command::FreeNode(node_address) => {
-                if let Some(raw_address) = node_address.to_raw() {
-                    self.top_level_graph
-                        .free_node(raw_address)
-                        .map_err(|e| From::from(e))
-                } else {
-                    self.command_queue
-                        .push((Instant::now(), Command::FreeNode(node_address)));
-                    Ok(())
+            Command::FreeNode(node) => match self.top_level_graph.free_node(node) {
+                Err(e) => {
+                    if let FreeError::NodeNotFound = e {
+                        self.command_queue
+                            .push((Instant::now(), Command::FreeNode(node)));
+                        Ok(())
+                    } else {
+                        Err(KnystError::from(e))
+                    }
                 }
-            }
-            Command::FreeNodeMendConnections(node_address) => {
-                if let Some(raw_address) = node_address.to_raw() {
-                    self.top_level_graph
-                        .free_node_mend_connections(raw_address)
-                        .map_err(|e| From::from(e))
-                } else {
-                    self.command_queue
-                        .push((Instant::now(), Command::FreeNode(node_address)));
-                    Ok(())
+                _ => Ok(()),
+            },
+            Command::FreeNodeMendConnections(node) => {
+                match self.top_level_graph.free_node_mend_connections(node) {
+                    Err(e) => {
+                        if let FreeError::NodeNotFound = e {
+                            self.command_queue
+                                .push((Instant::now(), Command::FreeNodeMendConnections(node)));
+                            Ok(())
+                        } else {
+                            Err(KnystError::from(e))
+                        }
+                    }
+                    _ => Ok(()),
                 }
             }
             Command::ScheduleChange(change) => self
@@ -603,8 +699,8 @@ impl Controller {
     }
 
     /// Create a [`KnystCommands`] that can communicate with [`Self`]
-    pub fn get_knyst_commands(&self) -> KnystCommands {
-        KnystCommands {
+    pub fn get_knyst_commands(&self) -> MultiThreadedKnystCommands {
+        MultiThreadedKnystCommands {
             sender: self.command_sender.clone(),
             top_level_graph_id: self.top_level_graph.id(),
             top_level_graph_settings: self.top_level_graph.graph_settings(),
@@ -613,7 +709,7 @@ impl Controller {
     }
 
     /// Consumes the [`Controller`] and moves it to a new thread where it will `run` in a loop.
-    pub fn start_on_new_thread(self) -> KnystCommands {
+    pub fn start_on_new_thread(self) -> MultiThreadedKnystCommands {
         let top_level_graph_id = self.top_level_graph.id();
         let top_level_graph_settings = self.top_level_graph.graph_settings();
         let mut controller = self;
@@ -624,7 +720,7 @@ impl Controller {
             std::thread::sleep(Duration::from_micros(1));
         });
 
-        KnystCommands {
+        MultiThreadedKnystCommands {
             sender,
             top_level_graph_id,
             top_level_graph_settings,

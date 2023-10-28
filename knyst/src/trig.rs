@@ -5,11 +5,13 @@
 //! triggering an envelope to restart, starting a new grain in a granular
 //! synthesizer Gen or signalling that it is time for a new value.
 //!
+use crate as knyst;
 use knyst_core::{
     gen::{Gen, GenContext, GenState},
     resources::Resources,
-    Sample,
+    Sample, SampleRate,
 };
+use knyst_macro::impl_gen;
 
 use crate::time::Superseconds;
 
@@ -40,9 +42,11 @@ impl OnceTrig {
     }
 }
 
-impl Gen for OnceTrig {
-    fn process(&mut self, ctx: GenContext, _resources: &mut Resources) -> GenState {
-        let out = ctx.outputs.iter_mut().next().unwrap();
+#[impl_gen]
+impl OnceTrig {
+    #[process]
+    pub fn process(&mut self, trig: &mut [Sample]) -> GenState {
+        let out = trig;
         if self.0 {
             for o in out.iter_mut() {
                 *o = 0.
@@ -56,15 +60,6 @@ impl Gen for OnceTrig {
             }
         }
         GenState::FreeSelf
-    }
-    fn num_inputs(&self) -> usize {
-        0
-    }
-    fn num_outputs(&self) -> usize {
-        1
-    }
-    fn output_desc(&self, _output: usize) -> &'static str {
-        "trig"
     }
 }
 
@@ -86,12 +81,17 @@ impl IntervalTrig {
     }
 }
 
-impl Gen for IntervalTrig {
-    fn process(&mut self, ctx: GenContext, _resources: &mut Resources) -> GenState {
-        let intervals_in_seconds = ctx.inputs.get_channel(0);
-        let output = ctx.outputs.iter_mut().next().unwrap();
-        let one_sample = Superseconds::from_samples(1, ctx.sample_rate as u64);
-        for (interval, trig_out) in intervals_in_seconds.iter().zip(output.iter_mut()) {
+#[impl_gen]
+impl IntervalTrig {
+    #[process]
+    fn process(
+        &mut self,
+        sample_rate: SampleRate,
+        interval: &[Sample],
+        trig: &mut [Sample],
+    ) -> GenState {
+        let one_sample = Superseconds::from_samples(1, *sample_rate as u64);
+        for (interval, trig_out) in interval.iter().zip(trig.iter_mut()) {
             // Adding first makes the time until the first trigger the same as
             // the time between subsequent triggers so it is more consistent.
             self.counter += one_sample;
@@ -108,25 +108,9 @@ impl Gen for IntervalTrig {
         }
         GenState::Continue
     }
-    fn num_inputs(&self) -> usize {
-        1
-    }
-    fn num_outputs(&self) -> usize {
-        1
-    }
-    fn input_desc(&self, _input: usize) -> &'static str {
-        "interval"
-    }
-    fn output_desc(&self, _output: usize) -> &'static str {
-        "trig"
-    }
-
-    fn init(&mut self, _block_size: usize, _sample_rate: Sample) {
+    #[init]
+    fn init(&mut self) {
         self.counter = Superseconds::ZERO;
-    }
-
-    fn name(&self) -> &'static str {
-        "IntervalTrig"
     }
 }
 
@@ -155,7 +139,7 @@ mod tests {
         graph.connect(node.to_graph_out()).unwrap();
         let every_8_samples = Superseconds::from_samples(8, SR).to_seconds_f64();
         graph
-            .connect(constant(every_8_samples as f32).to(&node))
+            .connect(constant(every_8_samples as f32).to(node))
             .unwrap();
         let (mut run_graph, _, _) = RunGraph::new(
             &mut graph,

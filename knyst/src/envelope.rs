@@ -29,12 +29,13 @@ type Point = (f32, f32);
 // - can introduce new interpolation methods
 // - because of relative time, complex behaviour of jumping around inside the envelope can be implemented (e.g. looping envelope or random/markov chain envelop movement)
 
-use knyst_core::{
-    gen::{Gen, GenContext, GenState, StopAction},
-    Sample,
-};
-
+use crate as knyst;
 use crate::trig::is_trigger;
+use knyst_core::{
+    gen::{GenState, StopAction},
+    Sample, SampleRate,
+};
+use knyst_macro::impl_gen;
 
 // TODO:
 // [ ] Different curve types:
@@ -441,17 +442,20 @@ impl EnvelopeGen {
     }
 }
 
-impl Gen for EnvelopeGen {
+#[impl_gen]
+impl EnvelopeGen {
     // TODO: Add more input options for runtime changes e.g. the values and durations of points
-    fn process(&mut self, ctx: GenContext, _resources: &mut crate::Resources) -> GenState {
-        let release_trigger_in = ctx.inputs.get_channel(0);
-        let restart_trigger_in = ctx.inputs.get_channel(1);
+    #[process]
+    fn process(
+        &mut self,
+        release_trig: &[Sample],
+        restart_trig: &[Sample],
+        amplitude: &mut [Sample],
+    ) -> GenState {
+        let release_trigger_in = release_trig;
+        let restart_trigger_in = restart_trig;
         let mut stop_sample = None;
-        for (((i, out), &release_trig), &restart_trig) in ctx
-            .outputs
-            .iter_mut()
-            .next()
-            .unwrap()
+        for (((i, out), &release_trig), &restart_trig) in amplitude
             .iter_mut()
             .enumerate()
             .zip(release_trigger_in.iter())
@@ -474,44 +478,17 @@ impl Gen for EnvelopeGen {
             self.stop_action.to_gen_state(stop_sample.unwrap())
         }
     }
-
-    fn num_inputs(&self) -> usize {
-        2
-    }
-
-    fn num_outputs(&self) -> usize {
-        1
-    }
-
-    fn init(&mut self, _block_size: usize, sample_rate: Sample) {
-        if self.sample_rate != sample_rate {
+    #[init]
+    fn init(&mut self, sample_rate: SampleRate) {
+        if self.sample_rate != *sample_rate {
             self.points = self
                 .points_secs
                 .iter()
                 .copied()
-                .map(|(x, y)| (x, y * sample_rate))
+                .map(|(x, y)| (x, y * *sample_rate))
                 .collect();
         }
-        self.sample_rate = sample_rate;
-    }
-
-    fn input_desc(&self, input: usize) -> &'static str {
-        match input {
-            0 => "release_trig",
-            1 => "restart_trig",
-            _ => "",
-        }
-    }
-
-    fn output_desc(&self, output: usize) -> &'static str {
-        match output {
-            0 => "amplitude",
-            _ => "",
-        }
-    }
-
-    fn name(&self) -> &'static str {
-        "Envelope"
+        self.sample_rate = *sample_rate;
     }
 }
 

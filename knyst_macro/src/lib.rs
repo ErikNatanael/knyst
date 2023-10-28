@@ -27,6 +27,35 @@ struct ProcessData {
     parameters: Vec<Parameter>,
 }
 
+struct NewData {
+    fn_name: Ident,
+    parameters: Vec<PatType>,
+}
+impl NewData {
+    fn into_tokens(self, type_ident: &Ident, handle_name: &Ident) -> proc_macro2::TokenStream {
+        let NewData {
+            fn_name,
+            parameters,
+        } = self;
+
+        let create_fn_name = format_ident!("{}", type_ident.to_string().to_lowercase());
+        let param_types_in_sig = parameters.iter().map(|p| quote! {#p});
+        let param_names_in_call = parameters.iter().map(|p| {
+            let ident = *p.pat.clone();
+            quote! {#ident}
+        });
+        quote! {
+                    // Init handle fn
+                    // TODO: Take parameters to new() to be able to call it
+                    pub fn #create_fn_name(#(#param_types_in_sig),*) -> knyst::handles::NodeHandle<#handle_name> {
+                        use knyst::controller::KnystCommands;
+                        let node_id =
+                            knyst::modal_interface::commands().push_without_inputs(#type_ident::#fn_name(#(#param_names_in_call),*));
+                        knyst::handles::NodeHandle::new(#handle_name{node_id})
+                    }
+        }
+    }
+}
 struct InitData {
     fn_name: Ident,
     parameters: Vec<Parameter>,
@@ -71,6 +100,8 @@ struct GenImplData {
     type_path: Path,
     process_data: ProcessData,
     init_data: Option<InitData>,
+    /// Parameters to the new function
+    new_data: Option<NewData>,
     org_item_impl: ItemImpl,
 }
 
@@ -82,6 +113,7 @@ impl GenImplData {
             process_data,
             init_data,
             org_item_impl,
+            new_data,
         } = self;
         let ProcessData {
             fn_name: process_fn_name,
@@ -137,62 +169,100 @@ impl GenImplData {
             }
         });
 
-        let handle_name = format_ident!("{type_ident}Handle");
+        // let handle_name = format_ident!("{type_ident}Handle");
+        let handle_name = Ident::new(&format!("{}Handle", type_ident), Span::call_site());
+        let init_handle_fn = new_data.map(|nd| nd.into_tokens(&type_ident, &handle_name));
         let handle_functions = inputs.iter().map(|i| {
+            let param_ident = Ident::new(&i.to_string().to_lowercase(), Span::call_site());
+            let param_string = i.to_string();
             quote! {
-                fn #i(&self, #i: f32) {
-                    todo!();
+                        pub fn #i(&self, #param_ident: impl Into<knyst::handles::Input>) -> knyst::handles::NodeHandle<Self> {
+                            use knyst::controller::KnystCommands;
+            let inp = #param_ident.into();
+            match inp {
+                knyst::handles::Input::Constant(v) => {
+                            knyst::modal_interface::commands().connect(knyst::graph::connection::constant(v).to(self.node_id).to_channel(#param_string));
+                }
+                knyst::handles::Input::Handle { output_channels } => {
+                    for (i, (node_id, chan)) in output_channels.enumerate() {
+                            knyst::modal_interface::commands().connect(node_id.to(self.node_id).from_channel(chan).to_channel(#param_string));
+                    }
                 }
             }
+            knyst::handles::NodeHandle::new(*self)
+                        }
+                    }
         });
         Ok(quote! {
-                #org_item_impl
+                    #org_item_impl
 
-                impl knyst::prelude::Gen for #type_path {
-                    fn process(&mut self, ctx: knyst::prelude::GenContext, resources: &mut knyst::prelude::Resources) -> knyst::prelude::GenState {
-                        #(#extract_other_process_parameters)*
-                        let mut inputs = ctx.inputs;
-                        #(#extract_inputs)*
+                    impl knyst::prelude::Gen for #type_path {
+                        fn process(&mut self, ctx: knyst::prelude::GenContext, resources: &mut knyst::prelude::Resources) -> knyst::prelude::GenState {
+                            #(#extract_other_process_parameters)*
+                            let mut inputs = ctx.inputs;
+                            #(#extract_inputs)*
 
-                        let mut outputs = ctx.outputs.iter_mut();
-                        #(#extract_outputs)*
+                            let mut outputs = ctx.outputs.iter_mut();
+                            #(#extract_outputs)*
 
-                        self.#process_fn_name ( #(#parameters_in_sig),* )
+                            self.#process_fn_name ( #(#parameters_in_sig),* )
+                        }
+
+            fn num_inputs(&self) -> usize {
+                #num_inputs
+            }
+            fn num_outputs(&self) -> usize {
+                #num_outputs
+            }
+            fn input_desc(&self, input: usize) -> &'static str {
+                match input {
+                    #(#match_input_names)*
+                    _ => ""
+                }
+            }
+            fn output_desc(&self, output: usize) -> &'static str {
+                match output {
+                    #(#match_output_names)*
+                    _ => ""
+                }
+            }
+            #init_function
+            fn name(&self) -> &'static str {
+                #type_name_string
+            }
                     }
 
-        fn num_inputs(&self) -> usize {
-            #num_inputs
+                    // Handle
+                    #[derive(Copy, Clone, Debug)]
+                    pub struct #handle_name {
+                        node_id: knyst::prelude::NodeId,
+                    }
+                    impl #handle_name {
+                        #(#handle_functions)*
+                    }
+                    impl knyst::handles::NodeHandleData for #handle_name {
+        fn out_channels(&self) -> knyst::handles::ChannelIter {
+            knyst::handles::ChannelIter::single_node_id(
+                self.node_id,
+                #num_outputs,
+            )
         }
-        fn num_outputs(&self) -> usize {
-            #num_outputs
-        }
-        fn input_desc(&self, input: usize) -> &'static str {
-            match input {
-                #(#match_input_names)*
-                _ => ""
-            }
-        }
-        fn output_desc(&self, output: usize) -> &'static str {
-            match output {
-                #(#match_output_names)*
-                _ => ""
-            }
-        }
-        #init_function
-        fn name(&self) -> &'static str {
-            #type_name_string
-        }
-                }
 
-                // Handle
-                #[derive(Copy, Clone, Debug)]
-                struct #handle_name {
-                    node_id: u64,
-                }
-                impl #handle_name {
-                    #(#handle_functions)*
-                }
-            })
+        fn in_channels(&self) -> knyst::handles::ChannelIter {
+            knyst::handles::ChannelIter::single_node_id(
+                self.node_id,
+                #num_inputs,
+            )
+        }
+
+        fn node_ids(&self) -> knyst::handles::NodeIdIter {
+            knyst::handles::NodeIdIter::Single(self.node_id)
+        }
+
+                    }
+
+                    #init_handle_fn
+                })
     }
 }
 
@@ -220,6 +290,7 @@ impl Parse for GenImplData {
 
         let mut process_data = None;
         let mut init_data = None;
+        let mut new_data = None;
 
         let full_item_span = item_impl.span();
 
@@ -238,6 +309,10 @@ impl Parse for GenImplData {
                                 "init" => {
                                     remove_attributes.push(attr_i);
                                     init_data = Some(parse_init_fn(impl_item_fn)?);
+                                }
+                                "new" => {
+                                    remove_attributes.push(attr_i);
+                                    new_data = Some(parse_new_fn(impl_item_fn)?);
                                 }
                                 _ => (),
                             }
@@ -266,6 +341,7 @@ impl Parse for GenImplData {
             type_ident,
             process_data,
             init_data,
+            new_data,
         })
     }
 }
@@ -369,6 +445,29 @@ fn parse_init_fn(impl_item_fn: &ImplItemFn) -> Result<InitData> {
         }
     }
     Ok(InitData {
+        parameters,
+        fn_name,
+    })
+}
+
+fn parse_new_fn(impl_item_fn: &ImplItemFn) -> Result<NewData> {
+    let mut parameters = vec![];
+
+    // TODO: Check that the function returns Self
+    // if let ReturnType::Default = impl_item_fn.sig.output {
+    // } else {
+    //     return Err(syn::Error::new(
+    //         impl_item_fn.sig.output.span(),
+    //         "#[init] method should return nothing",
+    //     ));
+    // }
+    let fn_name = impl_item_fn.sig.ident.clone();
+    for arg in &impl_item_fn.sig.inputs {
+        if let FnArg::Typed(param) = arg {
+            parameters.push(param.clone());
+        }
+    }
+    Ok(NewData {
         parameters,
         fn_name,
     })

@@ -2,7 +2,7 @@
 //!
 //! Metadata from the structs in this module can be used to visualise and/or
 //! manipulate a graph based on the whole graph structure.
-use crate::graph::NodeAddress;
+use crate::graph::NodeId;
 
 /// The metadata of a Graph
 // TODO: Feedback edges
@@ -28,7 +28,7 @@ pub struct NodeInspection {
     /// The name of the node (usually the name of the Gen inside it)
     pub name: String,
     /// The address of the node, useable to schedule changes to the node or free it
-    pub address: NodeAddress,
+    pub address: NodeId,
     /// The names of the inputs channels to the node
     pub input_channels: Vec<String>,
     /// The names of the output channels from the node

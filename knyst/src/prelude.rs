@@ -1,11 +1,11 @@
 //! Exports the most often used parts of Knyst
 
 pub use crate::audio_backend::AudioBackend;
-pub use crate::controller::{CallbackHandle, KnystCommands};
+pub use crate::controller::{CallbackHandle, KnystCommands, MultiThreadedKnystCommands};
 pub use crate::graph::{
     connection::constant,
     connection::{ConnectionBundle, InputBundle},
-    gen, Connection, Graph, GraphInput, GraphSettings, Lag, Mult, NodeAddress, PanMonoToStereo,
+    gen, Connection, Graph, GraphInput, GraphSettings, Lag, Mult, NodeId, PanMonoToStereo,
     ParameterChange, Ramp, RunGraphSettings,
 };
 pub use crate::inputs;

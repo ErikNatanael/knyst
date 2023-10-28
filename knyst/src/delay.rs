@@ -1,9 +1,12 @@
 //! # Delay
 //! This module contains some basic delay Gens
 
+use crate as knyst;
 use knyst_core::gen::Gen;
 use knyst_core::gen::GenContext;
 use knyst_core::gen::GenState;
+use knyst_core::SampleRate;
+use knyst_macro::impl_gen;
 
 use crate::time::Superseconds;
 use crate::Resources;
@@ -32,14 +35,22 @@ impl SampleDelay {
     }
 }
 
-impl Gen for SampleDelay {
-    fn process(&mut self, ctx: GenContext, _resources: &mut Resources) -> GenState {
-        let sig_buf = ctx.inputs.get_channel(0);
-        let time_buf = ctx.inputs.get_channel(1);
-        let out_buf = ctx.outputs.iter_mut().next().unwrap();
+#[impl_gen]
+impl SampleDelay {
+    #[process]
+    fn process(
+        &mut self,
+        signal: &[Sample],
+        delay_time: &[Sample],
+        output: &mut [Sample],
+        sample_rate: SampleRate,
+    ) -> GenState {
+        let sig_buf = signal;
+        let time_buf = delay_time;
+        let out_buf = output;
         for ((&input, &time), o) in sig_buf.iter().zip(time_buf).zip(out_buf.iter_mut()) {
             self.buffer[self.write_position] = input;
-            let delay_samples = (time * ctx.sample_rate) as usize;
+            let delay_samples = (time * *sample_rate) as usize;
             *o = self.buffer
                 [(self.write_position + self.buffer.len() - delay_samples) % self.buffer.len()];
             self.write_position = (self.write_position + 1) % self.buffer.len();
@@ -47,34 +58,11 @@ impl Gen for SampleDelay {
         GenState::Continue
     }
 
-    fn num_inputs(&self) -> usize {
-        2
-    }
-
-    fn num_outputs(&self) -> usize {
-        1
-    }
-
-    fn init(&mut self, _block_size: usize, sample_rate: Sample) {
+    #[init]
+    fn init(&mut self, sample_rate: SampleRate) {
         self.buffer =
-            vec![0.0; (self.max_delay_length.to_seconds_f64() * sample_rate as f64) as usize];
+            vec![0.0; (self.max_delay_length.to_seconds_f64() * sample_rate.to_f64()) as usize];
         self.write_position = 0;
-    }
-
-    fn input_desc(&self, input: usize) -> &'static str {
-        match input {
-            0 => "signal",
-            1 => "delay_time",
-            _ => "",
-        }
-    }
-
-    fn output_desc(&self, _output: usize) -> &'static str {
-        "signal"
-    }
-
-    fn name(&self) -> &'static str {
-        "SampleDelay"
     }
 }
 

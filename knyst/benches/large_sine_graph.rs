@@ -102,7 +102,7 @@ fn create_pyramid_graph(power_of_two: usize, mut graph_settings: GraphSettings) 
             } else {
                 let index = j / 2;
                 graph
-                    .connect(node_id.to(&last_layer_node_ids[index]))
+                    .connect(node_id.to(last_layer_node_ids[index]))
                     .unwrap();
             }
             this_layer_node_ids.push(node_id);

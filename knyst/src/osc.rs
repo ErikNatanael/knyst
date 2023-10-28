@@ -58,8 +58,6 @@ impl Oscillator {
         sig: &mut [Sample],
         resources: &mut Resources,
     ) -> GenState {
-        drop(freq);
-        sig[0] = freq[0];
         let wt_key = match self.wavetable {
             IdOrKey::Id(id) => {
                 if let Some(key) = resources.wavetable_key_from_id(id) {
@@ -376,17 +374,6 @@ pub struct WavetableOscillatorOwned {
 }
 
 impl WavetableOscillatorOwned {
-    #[allow(missing_docs)]
-    #[must_use]
-    pub fn new(wavetable: Wavetable) -> Self {
-        WavetableOscillatorOwned {
-            step: 0,
-            phase: WavetablePhase(0),
-            wavetable,
-            amp: 1.0,
-            freq_to_phase_inc: 0.0, // set to a real value in init
-        }
-    }
     /// Set the frequency of the oscillation. This will be overwritten by the
     /// input frequency if used as a Gen.
     pub fn set_freq(&mut self, freq: Sample) {
@@ -413,41 +400,33 @@ impl WavetableOscillatorOwned {
     }
 }
 
-impl Gen for WavetableOscillatorOwned {
-    fn process(&mut self, ctx: GenContext, _resources: &mut Resources) -> GenState {
-        let output = ctx.outputs.iter_mut().next().unwrap();
-        let freq_buf = ctx.inputs.get_channel(0);
-        assert!(freq_buf.len() == output.len());
-        for (&freq, o) in freq_buf.iter().zip(output.iter_mut()) {
+#[impl_gen]
+impl WavetableOscillatorOwned {
+    #[allow(missing_docs)]
+    #[must_use]
+    #[new]
+    pub fn new(wavetable: Wavetable) -> Self {
+        WavetableOscillatorOwned {
+            step: 0,
+            phase: WavetablePhase(0),
+            wavetable,
+            amp: 1.0,
+            freq_to_phase_inc: 0.0, // set to a real value in init
+        }
+    }
+    #[process]
+    fn process(&mut self, freq: &[Sample], sig: &mut [Sample]) -> GenState {
+        assert!(freq.len() == sig.len());
+        for (&freq, o) in freq.iter().zip(sig.iter_mut()) {
             self.set_freq(freq);
             *o = self.next_sample();
         }
         GenState::Continue
     }
-    fn input_desc(&self, input: usize) -> &'static str {
-        match input {
-            0 => "freq",
-            _ => "",
-        }
-    }
-    fn output_desc(&self, output: usize) -> &'static str {
-        match output {
-            0 => "sig",
-            _ => "",
-        }
-    }
-    fn num_outputs(&self) -> usize {
-        1
-    }
-    fn num_inputs(&self) -> usize {
-        1
-    }
-    fn init(&mut self, _block_size: usize, sample_rate: Sample) {
+    #[init]
+    fn init(&mut self, sample_rate: SampleRate) {
         self.reset_phase();
         self.freq_to_phase_inc =
-            TABLE_SIZE as f64 * FRACTIONAL_PART as f64 * (1.0 / sample_rate as f64);
-    }
-    fn name(&self) -> &'static str {
-        "WavetableOscillatorOwned"
+            TABLE_SIZE as f64 * FRACTIONAL_PART as f64 * (1.0 / sample_rate.to_f64());
     }
 }
