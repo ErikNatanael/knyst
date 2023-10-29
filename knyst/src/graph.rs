@@ -3872,14 +3872,14 @@ pub struct Lag {
     sample_rate: Sample,
 }
 
+impl Lag {}
+#[impl_gen]
 impl Lag {
+    #[new]
     #[allow(missing_docs)]
     pub fn new() -> Self {
         Self::default()
     }
-}
-#[impl_gen]
-impl Lag {
     #[process]
     fn process(
         &mut self,
@@ -3918,15 +3918,15 @@ pub struct Ramp {
     sample_rate: Sample,
 }
 
+impl Ramp {}
+#[impl_gen]
 impl Ramp {
+    #[new]
     #[allow(missing_docs)]
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
-}
-#[impl_gen]
-impl Ramp {
     #[process]
     fn process(
         &mut self,
@@ -4164,6 +4164,11 @@ impl Gen for Bus {
 pub struct PanMonoToStereo;
 #[impl_gen]
 impl PanMonoToStereo {
+    #[new]
+    #[must_use]
+    pub fn new() -> Self {
+        Self
+    }
     #[process]
     fn process(
         #[allow(unused)] &mut self,

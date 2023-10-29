@@ -2,7 +2,7 @@ use anyhow::Result;
 use knyst::{
     audio_backend::{CpalBackend, CpalBackendOptions},
     handles::{graph_output, NodeHandle},
-    osc::{wavetableoscillatorowned, WavetableOscillatorOwnedHandle},
+    osc::{wavetable_oscillator_owned, WavetableOscillatorOwnedHandle},
     prelude::*,
     sphere::{KnystSphere, SphereSettings},
 };
@@ -40,5 +40,5 @@ fn main() -> Result<()> {
 }
 
 fn sine() -> NodeHandle<WavetableOscillatorOwnedHandle> {
-    wavetableoscillatorowned(Wavetable::sine())
+    wavetable_oscillator_owned(Wavetable::sine())
 }

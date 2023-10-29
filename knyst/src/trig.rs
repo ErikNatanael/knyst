@@ -35,15 +35,13 @@ pub fn is_trigger_in_place(inputs: &[Sample], outputs: &mut [bool]) {
 /// 0. "trig": The trigger
 pub struct OnceTrig(bool);
 
+#[impl_gen]
 impl OnceTrig {
+    #[new]
     #[allow(missing_docs)]
     pub fn new() -> Self {
         OnceTrig(false)
     }
-}
-
-#[impl_gen]
-impl OnceTrig {
     #[process]
     pub fn process(&mut self, trig: &mut [Sample]) -> GenState {
         let out = trig;
@@ -72,17 +70,16 @@ pub struct IntervalTrig {
     // counter: Vec<Sample>,
     counter: Superseconds,
 }
+
+#[impl_gen]
 impl IntervalTrig {
+    #[new]
     #[allow(missing_docs)]
     pub fn new() -> Self {
         Self {
             counter: Superseconds::ZERO,
         }
     }
-}
-
-#[impl_gen]
-impl IntervalTrig {
     #[process]
     fn process(
         &mut self,

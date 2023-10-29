@@ -24,7 +24,11 @@ pub struct SampleDelay {
     write_position: usize,
     max_delay_length: Superseconds,
 }
+impl SampleDelay {}
+
+#[impl_gen]
 impl SampleDelay {
+    #[new]
     /// Create a new SampleDelay with a maximum delay time.
     pub fn new(max_delay_length: Superseconds) -> Self {
         Self {
@@ -33,10 +37,6 @@ impl SampleDelay {
             write_position: 0,
         }
     }
-}
-
-#[impl_gen]
-impl SampleDelay {
     #[process]
     fn process(
         &mut self,

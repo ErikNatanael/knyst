@@ -29,6 +29,7 @@ pub struct Oscillator {
 #[allow(missing_docs)]
 #[impl_gen]
 impl Oscillator {
+    #[new]
     #[must_use]
     pub fn new(wavetable: IdOrKey<WavetableId, WavetableKey>) -> Self {
         Oscillator {
@@ -137,6 +138,7 @@ pub struct BufferReader {
 
 #[impl_gen]
 impl BufferReader {
+    #[new]
     #[allow(missing_docs)]
     pub fn new(
         buffer_key: IdOrKey<BufferId, BufferKey>,

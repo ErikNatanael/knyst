@@ -38,7 +38,10 @@ impl NewData {
             parameters,
         } = self;
 
-        let create_fn_name = format_ident!("{}", type_ident.to_string().to_lowercase());
+        let create_fn_name = format_ident!(
+            "{}",
+            ident_case::RenameRule::SnakeCase.apply_to_variant(type_ident.to_string())
+        );
         let param_types_in_sig = parameters.iter().map(|p| quote! {#p});
         let param_names_in_call = parameters.iter().map(|p| {
             let ident = *p.pat.clone();
