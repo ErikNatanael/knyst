@@ -138,8 +138,8 @@ pub struct BufferReader {
 
 #[impl_gen]
 impl BufferReader {
-    #[new]
     #[allow(missing_docs)]
+    #[must_use]
     pub fn new(
         buffer_key: IdOrKey<BufferId, BufferKey>,
         rate: f64,
@@ -164,7 +164,6 @@ impl BufferReader {
         self.read_pointer = new_pointer_pos;
         self.finished = false;
     }
-    #[process]
     pub fn process(
         &mut self,
         out: &mut [Sample],
@@ -406,7 +405,6 @@ impl WavetableOscillatorOwned {
 impl WavetableOscillatorOwned {
     #[allow(missing_docs)]
     #[must_use]
-    #[new]
     pub fn new(wavetable: Wavetable) -> Self {
         WavetableOscillatorOwned {
             step: 0,
@@ -416,7 +414,6 @@ impl WavetableOscillatorOwned {
             freq_to_phase_inc: 0.0, // set to a real value in init
         }
     }
-    #[process]
     fn process(&mut self, freq: &[Sample], sig: &mut [Sample]) -> GenState {
         assert!(freq.len() == sig.len());
         for (&freq, o) in freq.iter().zip(sig.iter_mut()) {
@@ -425,7 +422,6 @@ impl WavetableOscillatorOwned {
         }
         GenState::Continue
     }
-    #[init]
     fn init(&mut self, sample_rate: SampleRate) {
         self.reset_phase();
         self.freq_to_phase_inc =

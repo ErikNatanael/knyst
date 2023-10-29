@@ -301,21 +301,43 @@ impl Parse for GenImplData {
             if let ImplItem::Fn(ref mut impl_item_fn) = item {
                 let mut remove_attributes = vec![];
                 // Does this function have an attribute we recognise?
+                let mut handled_through_attribute = false;
                 for (attr_i, attr) in impl_item_fn.attrs.iter().enumerate() {
                     if let Meta::Path(p) = &attr.meta {
                         if let Some(path_segment) = p.segments.first() {
                             match path_segment.ident.to_string().as_ref() {
                                 "process" => {
+                                    if process_data.is_some() {
+                                        return Err(syn::Error::new(
+                                            impl_item_fn.span(),
+                                            "Multiple process functions in impl.",
+                                        ));
+                                    }
                                     remove_attributes.push(attr_i);
                                     process_data = Some(parse_process_fn(impl_item_fn)?);
+                                    handled_through_attribute = true;
                                 }
                                 "init" => {
+                                    if init_data.is_some() {
+                                        return Err(syn::Error::new(
+                                            impl_item_fn.span(),
+                                            "Multiple init functions in impl.",
+                                        ));
+                                    }
                                     remove_attributes.push(attr_i);
                                     init_data = Some(parse_init_fn(impl_item_fn)?);
+                                    handled_through_attribute = true;
                                 }
                                 "new" => {
+                                    if new_data.is_some() {
+                                        return Err(syn::Error::new(
+                                            impl_item_fn.span(),
+                                            "Multiple new functions in impl.",
+                                        ));
+                                    }
                                     remove_attributes.push(attr_i);
                                     new_data = Some(parse_new_fn(impl_item_fn)?);
+                                    handled_through_attribute = true;
                                 }
                                 _ => (),
                             }
@@ -324,6 +346,40 @@ impl Parse for GenImplData {
                 }
                 for i in remove_attributes.iter().rev() {
                     impl_item_fn.attrs.remove(*i);
+                }
+                if !handled_through_attribute {
+                    // Fn didn't have a recognised attribute. Check if the function name matches an attribute name instead.
+                    let fn_name = &impl_item_fn.sig.ident;
+                    match fn_name.to_string().as_str() {
+                        "process" => {
+                            if process_data.is_some() {
+                                return Err(syn::Error::new(
+                                    impl_item_fn.span(),
+                                    "Multiple process functions in impl.",
+                                ));
+                            }
+                            process_data = Some(parse_process_fn(impl_item_fn)?);
+                        }
+                        "init" => {
+                            if init_data.is_some() {
+                                return Err(syn::Error::new(
+                                    impl_item_fn.span(),
+                                    "Multiple init functions in impl.",
+                                ));
+                            }
+                            init_data = Some(parse_init_fn(impl_item_fn)?);
+                        }
+                        "new" => {
+                            if new_data.is_some() {
+                                return Err(syn::Error::new(
+                                    impl_item_fn.span(),
+                                    "Multiple new functions in impl.",
+                                ));
+                            }
+                            new_data = Some(parse_new_fn(impl_item_fn)?);
+                        }
+                        _ => (),
+                    }
                 }
             }
         }
