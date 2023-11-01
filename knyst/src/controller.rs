@@ -260,7 +260,7 @@ impl KnystCommands for MultiThreadedKnystCommands {
     /// Inserts a new buffer in the [`Resources`] and returns an id which can be
     /// converted to a key on the audio thread with access to a [`Resources`].
     fn insert_buffer(&mut self, buffer: Buffer) -> BufferId {
-        let id = BufferId::new();
+        let id = BufferId::new(&buffer);
         self.sender
             .send(Command::ResourcesCommand(ResourcesCommand::InsertBuffer {
                 id,

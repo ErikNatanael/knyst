@@ -179,7 +179,7 @@ impl KnystCommands for UnifiedKnystCommands {
             UnifiedKnystCommands::Real(kc) => kc.borrow_mut().insert_buffer(buffer),
             UnifiedKnystCommands::Dummy(kc) => {
                 kc.report_dummy();
-                BufferId::new()
+                BufferId::new(&buffer)
             }
         }
     }

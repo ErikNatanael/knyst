@@ -10,7 +10,7 @@ use knyst_core::{
 use knyst_macro::impl_gen;
 
 // Necessary to use impl_gen from inside the knyst crate
-use crate as knyst;
+use crate::{self as knyst, handles::NodeHandleData, modal_interface::commands};
 
 /// Oscillator using a shared [`Wavetable`] stored in a [`Resources`]
 /// *inputs*
@@ -141,12 +141,12 @@ impl BufferReader {
     #[allow(missing_docs)]
     #[must_use]
     pub fn new(
-        buffer_key: IdOrKey<BufferId, BufferKey>,
+        buffer: impl Into<IdOrKey<BufferId, BufferKey>>,
         rate: f64,
         stop_action: StopAction,
     ) -> Self {
         BufferReader {
-            buffer_key,
+            buffer_key: buffer.into(),
             read_pointer: 0.0,
             base_rate: 0.0, // initialise to the correct value the first time next() is called
             rate,
@@ -228,7 +228,7 @@ impl BufferReader {
 /// value, not zeroed.
 #[derive(Clone, Debug)]
 pub struct BufferReaderMulti {
-    buffer_key: BufferKey,
+    buffer_key: IdOrKey<BufferId, BufferKey>,
     read_pointer: f64,
     rate: f64,
     num_channels: usize,
@@ -242,9 +242,13 @@ pub struct BufferReaderMulti {
 // TODO: Make this generic over the number of inputs? How would that interact with the impl_gen macro?
 impl BufferReaderMulti {
     #[allow(missing_docs)]
-    pub fn new(buffer_key: BufferKey, rate: f64, stop_action: StopAction) -> Self {
+    pub fn new(
+        buffer: impl Into<IdOrKey<BufferId, BufferKey>>,
+        rate: f64,
+        stop_action: StopAction,
+    ) -> Self {
         Self {
-            buffer_key,
+            buffer_key: buffer.into(),
             read_pointer: 0.0,
             base_rate: 0.0, // initialise to the correct value the first time next() is called
             rate,
@@ -279,26 +283,35 @@ impl Gen for BufferReaderMulti {
     fn process(&mut self, ctx: GenContext, resources: &mut crate::Resources) -> GenState {
         let mut stop_sample = None;
         if !self.finished {
-            if let Some(buffer) = &mut resources.buffer(self.buffer_key) {
-                // Initialise the base rate if it hasn't been set
-                if self.base_rate == 0.0 {
-                    self.base_rate = buffer.buf_rate_scale(ctx.sample_rate.into());
+            if let IdOrKey::Id(id) = self.buffer_key {
+                match resources.buffer_key_from_id(id) {
+                    Some(key) => self.buffer_key = IdOrKey::Key(key),
+                    None => (),
                 }
-                for i in 0..ctx.block_size() {
-                    let samples = buffer.get_interleaved((self.read_pointer) as usize);
-                    for (out_num, sample) in samples.iter().take(self.num_channels).enumerate() {
-                        ctx.outputs.write(*sample, out_num, i);
+            }
+            if let IdOrKey::Key(buffer_key) = self.buffer_key {
+                if let Some(buffer) = &mut resources.buffer(buffer_key) {
+                    // Initialise the base rate if it hasn't been set
+                    if self.base_rate == 0.0 {
+                        self.base_rate = buffer.buf_rate_scale(ctx.sample_rate.into());
                     }
-                    self.read_pointer += self.base_rate * self.rate;
-                    if self.read_pointer >= buffer.num_frames() {
-                        self.finished = true;
-                        if self.looping {
-                            self.reset();
+                    for i in 0..ctx.block_size() {
+                        let samples = buffer.get_interleaved((self.read_pointer) as usize);
+                        for (out_num, sample) in samples.iter().take(self.num_channels).enumerate()
+                        {
+                            ctx.outputs.write(*sample, out_num, i);
                         }
-                    }
-                    if self.finished {
-                        stop_sample = Some(i + 1);
-                        break;
+                        self.read_pointer += self.base_rate * self.rate;
+                        if self.read_pointer >= buffer.num_frames() {
+                            self.finished = true;
+                            if self.looping {
+                                self.reset();
+                            }
+                        }
+                        if self.finished {
+                            stop_sample = Some(i + 1);
+                            break;
+                        }
                     }
                 }
             } else {
@@ -340,6 +353,38 @@ impl Gen for BufferReaderMulti {
 
     fn name(&self) -> &'static str {
         "BufferReader"
+    }
+}
+
+pub fn buffer_reader_multi(
+    buffer: BufferId,
+    rate: f64,
+    stop_action: StopAction,
+) -> knyst::handles::NodeHandle<BufferReaderMultiHandle> {
+    let gen = BufferReaderMulti::new(buffer, rate, stop_action);
+    let num_channels = buffer.num_channels();
+    let id = knyst::prelude::KnystCommands::push_without_inputs(&mut commands(), gen);
+    knyst::handles::NodeHandle::new(BufferReaderMultiHandle {
+        node_id: id,
+        num_channels,
+    })
+}
+#[derive(Clone, Copy, Debug)]
+pub struct BufferReaderMultiHandle {
+    node_id: knyst::graph::NodeId,
+    num_channels: usize,
+}
+impl NodeHandleData for BufferReaderMultiHandle {
+    fn out_channels(&self) -> knyst::handles::ChannelIter {
+        knyst::handles::ChannelIter::single_node_id(self.node_id, self.num_channels)
+    }
+
+    fn in_channels(&self) -> knyst::handles::ChannelIter {
+        todo!()
+    }
+
+    fn node_ids(&self) -> knyst::handles::NodeIdIter {
+        knyst::handles::NodeIdIter::Single(self.node_id)
     }
 }
 

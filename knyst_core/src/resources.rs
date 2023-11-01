@@ -74,19 +74,24 @@ where
 }
 
 type IdType = u64;
-/// A unique id for a Buffer. Can be converted to a [`BufferKey`] by the [`Resources`].
+/// A unique id for a Buffer. Can be converted to a [`BufferKey`] by the [`Resources`]. Also contains data about the number of channels in the buffer, which is necessary to know for many operations and cannot change once the Buffer has been uploaded.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-pub struct BufferId(IdType);
+pub struct BufferId {
+    id: IdType,
+    channels: usize,
+}
 
 impl BufferId {
     /// Generate a new unique `BufferId`
-    pub fn new() -> Self {
-        Self(NEXT_BUFFER_ID.fetch_add(1, std::sync::atomic::Ordering::Release))
+    pub fn new(buf: &Buffer) -> Self {
+        Self {
+            id: NEXT_BUFFER_ID.fetch_add(1, std::sync::atomic::Ordering::Release),
+            channels: buf.num_channels(),
+        }
     }
-}
-impl Default for BufferId {
-    fn default() -> Self {
-        Self::new()
+    /// Number of channels in the Buffer this id points to
+    pub fn num_channels(&self) -> usize {
+        self.channels
     }
 }
 
@@ -117,6 +122,11 @@ new_key_type! {
 
 impl From<WavetableId> for IdOrKey<WavetableId, WavetableKey> {
     fn from(value: WavetableId) -> Self {
+        IdOrKey::Id(value)
+    }
+}
+impl From<BufferId> for IdOrKey<BufferId, BufferKey> {
+    fn from(value: BufferId) -> Self {
         IdOrKey::Id(value)
     }
 }
@@ -329,7 +339,8 @@ impl Resources {
     /// # Errors
     /// May fail if there is not room for any more buffers in the `Resources`
     pub fn insert_buffer(&mut self, buf: Buffer) -> Result<BufferKey, ResourcesError> {
-        self.insert_buffer_with_id(buf, BufferId::new())
+        let id = BufferId::new(&buf);
+        self.insert_buffer_with_id(buf, id)
     }
     /// Inserts a buffer and returns the `BufferKey` if successful, mapping the
     /// key to the given [`BufferId`].
