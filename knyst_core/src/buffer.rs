@@ -261,8 +261,40 @@ impl Buffer {
         &self.buffer[index..index + self.num_channels]
         // unsafe{ *self.buffer.get_unchecked(index) }
     }
+    pub fn save_to_disk(&self, path: impl Into<PathBuf>) -> Result<(), hound::Error> {
+        let spec = hound::WavSpec {
+            channels: self.num_channels as u16,
+            sample_rate: self.sample_rate as u32,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        };
+        let mut writer = hound::WavWriter::create(path.into(), spec)?;
+
+        for sample in &self.buffer {
+            let amplitude = i16::MAX as f32;
+            writer.write_sample((sample * amplitude) as i16)?;
+        }
+        Ok(())
+    }
     /// Size in number of frames regardless of the number of samples
     pub fn num_frames(&self) -> f64 {
         self.num_frames
+    }
+    /// The number of channels in the Buffer. Mustn't change once uploaded/inserted in a Resources or anything else on the audio thread.
+    pub fn num_channels(&self) -> usize {
+        self.num_channels
+    }
+    pub fn length_seconds(&self) -> f64 {
+        self.num_frames / self.sample_rate
+    }
+    pub fn remove_dc(&mut self) {
+        let mut prev = vec![0.0; self.num_channels];
+        let mut lpf_sample = vec![0.0; self.num_channels];
+        for (i, sample) in self.buffer.iter_mut().enumerate() {
+            let c = i % self.num_channels;
+            lpf_sample[c] = lpf_sample[c] * 0.999 + *sample - prev[c];
+            prev[c] = *sample;
+            *sample = lpf_sample[c];
+        }
     }
 }

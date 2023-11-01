@@ -15,3 +15,5 @@ downcast-rs = "1.2.0"
 fastrand = "2.0.1"
 # Loading audio buffers
 symphonia = { version = "0.5.1", features = ["mp3"] }
+# Saving to wav
+hound = "3.5.1"
