@@ -9,6 +9,7 @@ pub use crate::graph::{
     ParameterChange, Ramp, RunGraphSettings,
 };
 pub use crate::inputs;
+pub use crate::sphere::{KnystSphere, SphereSettings};
 pub use crate::time::{Superbeats, Superseconds};
 pub use knyst_core::buffer::{Buffer, BufferKey};
 pub use knyst_core::gen::{Gen, GenContext, GenState, StopAction};
