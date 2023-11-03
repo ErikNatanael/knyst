@@ -1,8 +1,9 @@
 use proc_macro2::{Ident, Span};
 use quote::{format_ident, quote};
 use syn::{
-    parse::Parse, parse_macro_input, spanned::Spanned, FnArg, ImplItem, ImplItemFn, ItemImpl, Meta,
-    Pat, PatIdent, PatType, Path, Result, ReturnType, Type, TypePath,
+    parse::Parse, parse_macro_input, punctuated::Punctuated, spanned::Spanned, ExprAssign,
+    ExprPath, FnArg, ImplItem, ImplItemFn, ItemImpl, Meta, Pat, PatIdent, PatType, Path, Result,
+    ReturnType, Token, Type, TypePath,
 };
 
 #[proc_macro_attribute]
@@ -10,10 +11,10 @@ pub fn impl_gen(
     args: proc_macro::TokenStream,
     input: proc_macro::TokenStream,
 ) -> proc_macro::TokenStream {
-    let _ = args;
+    let arg_data = parse_macro_input!(args as ArgData);
     let gen_impl_data = parse_macro_input!(input as GenImplData);
     gen_impl_data
-        .into_token_stream()
+        .into_token_stream(arg_data)
         .unwrap_or_else(syn::Error::into_compile_error)
         .into()
     // gen_parse(args.into(), input.into()).unwrap_or_else(syn::Error::into_compile_error).into()
@@ -25,6 +26,73 @@ struct ProcessData {
     inputs: Vec<Ident>,
     outputs: Vec<Ident>,
     parameters: Vec<Parameter>,
+}
+
+struct ArgData {
+    range: Option<Range>,
+}
+impl Parse for ArgData {
+    fn parse(input: syn::parse::ParseStream) -> Result<Self> {
+        let mut range = None;
+        let assigns = Punctuated::<ExprAssign, Token![,]>::parse_terminated(input)?;
+        for assign in assigns {
+            match &*assign.left {
+                syn::Expr::Path(ExprPath {
+                    attrs: _,
+                    qself: _,
+                    path,
+                }) => {
+                    let name = path.segments.first().map(|s| s.ident.to_string());
+                    match name.as_deref() {
+                        Some("range") => {
+                            let value = get_expr_path_ident(&assign.right)?;
+                            match value.to_string().as_str() {
+                                "normal" => range = Some(Range::Normal),
+                                _ => {
+                                    return Err(syn::Error::new(
+                                        assign.right.span(),
+                                        "unsupported value to range",
+                                    ))
+                                }
+                            }
+                        }
+                        _ => {
+                            return Err(syn::Error::new(
+                                assign.left.span(),
+                                "unsupported argument to macro",
+                            ))
+                        }
+                    }
+                }
+                _ => {
+                    return Err(syn::Error::new(
+                        assign.left.span(),
+                        "unsupported argument to macro",
+                    ))
+                }
+            }
+        }
+        Ok(ArgData { range })
+    }
+}
+fn get_expr_path_ident(expr: &syn::Expr) -> Result<&Ident> {
+    match expr {
+        syn::Expr::Path(ExprPath {
+            attrs: _,
+            qself: _,
+            path,
+        }) => path
+            .segments
+            .first()
+            .map(|s| Ok(&s.ident))
+            .unwrap_or_else(|| Err(syn::Error::new(expr.span(), "no segment in path"))),
+        _ => Err(syn::Error::new(expr.span(), "unexpected value")),
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Range {
+    Normal,
 }
 
 struct NewData {
@@ -109,7 +177,7 @@ struct GenImplData {
 }
 
 impl GenImplData {
-    fn into_token_stream(self) -> Result<proc_macro2::TokenStream> {
+    fn into_token_stream(self, arg_data: ArgData) -> Result<proc_macro2::TokenStream> {
         let GenImplData {
             type_ident,
             type_path,
@@ -124,6 +192,7 @@ impl GenImplData {
             outputs,
             parameters,
         } = process_data;
+        let ArgData { range } = arg_data;
         let init_function = if let Some(init_data) = init_data {
             init_data.into_tokens()
         } else {
@@ -175,6 +244,13 @@ impl GenImplData {
         // let handle_name = format_ident!("{type_ident}Handle");
         let handle_name = Ident::new(&format!("{}Handle", type_ident), Span::call_site());
         let init_handle_fn = new_data.map(|nd| nd.into_tokens(&type_ident, &handle_name));
+        let handle_range_impl = range.map(|range| match range {
+            Range::Normal => {
+                quote! {
+                    impl knyst::handles::NodeHandleNormalRange for #handle_name {}
+                }
+            }
+        });
         let handle_functions = inputs.iter().map(|i| {
             let param_ident = Ident::new(&i.to_string().to_lowercase(), Span::call_site());
             let param_string = i.to_string();
@@ -265,6 +341,8 @@ impl GenImplData {
                     }
 
                     #init_handle_fn
+
+                    #handle_range_impl
                 })
     }
 }
