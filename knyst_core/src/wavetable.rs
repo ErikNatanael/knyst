@@ -53,12 +53,7 @@ impl Wavetable {
     /// The [`Wavetable`] contains a buffer with the difference between each
     /// sample of the buffer for efficiency reason.
     pub fn update_diff_buffer(&mut self) {
-        let diff_buffer: Vec<f32> = self
-            .buffer
-            .iter()
-            .zip(self.buffer.iter().skip(1).cycle())
-            .map(|(&a, &b)| b - a)
-            .collect();
+        // let diff_buffer: Vec<Sample> = self
         self.diff_buffer = diff_buffer;
     }
     /// Create a [`Wavetable`] from an existing buffer.
