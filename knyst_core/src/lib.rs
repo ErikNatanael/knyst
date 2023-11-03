@@ -45,7 +45,12 @@ impl From<SampleRate> for f64 {
 
 impl From<f32> for SampleRate {
     fn from(value: f32) -> Self {
-        Self(value)
+        Self(value as Sample)
+    }
+}
+impl From<f64> for SampleRate {
+    fn from(value: f64) -> Self {
+        Self(value as Sample)
     }
 }
 

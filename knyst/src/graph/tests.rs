@@ -8,8 +8,8 @@ use knyst_core::Resources;
 use super::{Gen, RunGraph};
 use crate as knyst;
 use crate::controller::KnystCommands;
+use crate::gen::{BufferReader, WavetableOscillatorOwned};
 use crate::graph::{FreeError, Oversampling, ScheduleError};
-use crate::osc::{BufferReader, WavetableOscillatorOwned};
 use crate::prelude::*;
 use crate::time::{Superbeats, Superseconds};
 use crate::{controller::Controller, graph::connection::constant};
@@ -27,7 +27,7 @@ impl OneGen {
     }
 }
 struct DummyGen {
-    counter: f32,
+    counter: Sample,
 }
 #[impl_gen]
 impl DummyGen {
@@ -155,8 +155,8 @@ fn feedback_in_graph() {
     graph.connect(n4.to(n0).feedback(true)).unwrap();
     let mut run_graph = test_run_graph(&mut graph, RunGraphSettings::default());
     run_graph.process_block();
-    let block1 = vec![2.0f32, 4., 6., 8.];
-    let block2 = vec![39f32, 47., 55., 63.];
+    let block1 = vec![2.0 as Sample, 4., 6., 8.];
+    let block2 = vec![39 as Sample, 47., 55., 63.];
     for (&output, expected) in run_graph
         .graph_output_buffers()
         .get_channel(0)
@@ -210,11 +210,11 @@ fn changing_the_graph() {
         run_graph.process_block();
         assert_eq!(
             run_graph.graph_output_buffers().read(0, 0),
-            (i + 1) as f32 * 0.5 + triangular_sequence(i + 1) as f32,
+            (i + 1) as Sample * 0.5 + triangular_sequence(i + 1) as Sample,
             "i: {}, output: {}, expected: {}",
             i,
             run_graph.graph_output_buffers().read(0, 0),
-            (i + 1) as f32 * 0.5 + triangular_sequence(i + 1) as f32,
+            (i + 1) as Sample * 0.5 + triangular_sequence(i + 1) as Sample,
         );
     }
 }
@@ -457,7 +457,7 @@ fn scheduling() {
     const SR: u64 = 44100;
     let mut graph: Graph = Graph::new(GraphSettings {
         block_size: BLOCK,
-        sample_rate: SR as f32,
+        sample_rate: SR as Sample,
         ..Default::default()
     });
     // let mut graph_node = graph_node(&mut graph);
@@ -765,7 +765,7 @@ fn start_nodes_with_sample_precision() {
     const BLOCK_SIZE: usize = 8;
     let graph_settings = GraphSettings {
         block_size: BLOCK_SIZE,
-        sample_rate: SR as f32,
+        sample_rate: SR as Sample,
         num_outputs: 2,
         ..Default::default()
     };
@@ -846,7 +846,7 @@ fn beat_scheduling() {
     const BLOCK_SIZE: usize = SR as usize;
     let graph_settings = GraphSettings {
         block_size: BLOCK_SIZE,
-        sample_rate: SR as f32,
+        sample_rate: SR as Sample,
         num_outputs: 2,
         ..Default::default()
     };
@@ -920,7 +920,7 @@ fn inner_graph_different_block_size() {
     const BLOCK_SIZE: usize = 2_usize.pow(5);
     let graph_settings = GraphSettings {
         block_size: BLOCK_SIZE,
-        sample_rate: SR as f32,
+        sample_rate: SR as Sample,
         num_outputs: 10,
         ..Default::default()
     };
@@ -934,7 +934,7 @@ fn inner_graph_different_block_size() {
     for i in 1..10 {
         let graph_settings = GraphSettings {
             block_size: 2_usize.pow(i),
-            sample_rate: SR as f32,
+            sample_rate: SR as Sample,
             num_outputs: 1,
             ..Default::default()
         };
@@ -993,7 +993,7 @@ fn inner_graph_different_oversampling() {
     const BLOCK_SIZE: usize = 16;
     let graph_settings = GraphSettings {
         block_size: BLOCK_SIZE,
-        sample_rate: SR as f32,
+        sample_rate: SR as Sample,
         oversampling: Oversampling::X1,
         num_outputs: 10,
         ..Default::default()
@@ -1009,7 +1009,7 @@ fn inner_graph_different_oversampling() {
         let graph_settings = GraphSettings {
             block_size: BLOCK_SIZE,
             oversampling: Oversampling::from_usize(2_usize.pow(i)).unwrap(),
-            sample_rate: SR as f32,
+            sample_rate: SR as Sample,
             num_outputs: 1,
             ..Default::default()
         };

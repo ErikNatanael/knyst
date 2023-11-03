@@ -3,7 +3,6 @@ use knyst::{
     audio_backend::{CpalBackend, CpalBackendOptions},
     controller::{print_error_handler, StartBeat},
     graph::Mult,
-    osc::WavetableOscillatorOwned,
     prelude::*,
     time::Superbeats,
 };
@@ -13,7 +12,7 @@ use std::time::Duration;
 fn main() -> Result<()> {
     let mut backend = CpalBackend::new(CpalBackendOptions::default())?;
 
-    let sample_rate = backend.sample_rate() as f32;
+    let sample_rate = backend.sample_rate() as Sample;
     let block_size = backend.block_size().unwrap_or(64);
     let resources = Resources::new(ResourcesSettings {
         ..Default::default()
@@ -63,12 +62,14 @@ fn main() -> Result<()> {
             println!("Callback called {i} for time {time:?}");
             let mut rng = thread_rng();
             let freq = rng.gen_range(200..600);
-            k.schedule_change(ParameterChange::beats(node0.clone(), freq as f32, time).l("freq"));
+            k.schedule_change(
+                ParameterChange::beats(node0.clone(), freq as Sample, time).l("freq"),
+            );
             let freq = rng.gen_range(200..600);
             k.schedule_change(
                 ParameterChange::beats(
                     node0.clone(),
-                    freq as f32,
+                    freq as Sample,
                     time + Superbeats::from_beats_f32(0.5),
                 )
                 .l("freq"),

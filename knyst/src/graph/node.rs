@@ -84,8 +84,8 @@ impl Node {
         self.output_buffers =
             Box::<[Sample]>::into_raw(vec![0.0; self.num_outputs * block_size].into_boxed_slice());
         self.output_buffers_first_ptr = if block_size * self.num_outputs > 0 {
-            // Get the pointer to the first f32 in the block without limiting its scope or going through a reference
-            self.output_buffers.cast::<f32>()
+            // Get the pointer to the first Sample in the block without limiting its scope or going through a reference
+            self.output_buffers.cast::<Sample>()
         } else {
             std::ptr::null_mut()
         };

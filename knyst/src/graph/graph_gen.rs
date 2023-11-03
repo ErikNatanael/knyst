@@ -17,8 +17,8 @@ use super::{
 };
 
 pub(super) fn make_graph_gen(
-    sample_rate: f32,
-    parent_sample_rate: f32,
+    sample_rate: Sample,
+    parent_sample_rate: Sample,
     current_task_data: TaskData,
     block_size: usize,
     parent_block_size: usize,
@@ -35,7 +35,7 @@ pub(super) fn make_graph_gen(
     arc_inputs_buffers_ptr: Arc<OwnedRawBuffer>,
 ) -> Box<dyn Gen + Send> {
     let graph_gen = Box::new(GraphGen {
-        sample_rate: sample_rate * oversampling.as_usize() as f32,
+        sample_rate: sample_rate * oversampling.as_usize() as Sample,
         current_task_data,
         block_size: block_size * oversampling.as_usize(),
         num_outputs,
@@ -242,7 +242,7 @@ impl Gen for GraphBlockConverterGen {
                 num_batches,
                 inputs_buffers_ptr,
             } => {
-                let input_buffers_first_sample = inputs_buffers_ptr.ptr.cast::<f32>();
+                let input_buffers_first_sample = inputs_buffers_ptr.ptr.cast::<Sample>();
                 let mut input_buffers = NodeBufferRef::new(
                     input_buffers_first_sample,
                     self.graph_gen_node.num_inputs(),
@@ -387,7 +387,7 @@ impl Gen for GraphConvertOversampling2XGen {
         //     );
         //     // TODO: Can a Vec based output be converted to a NodeBufferRef for free?
         //     // Copy into out NodeBufferRef structure
-        //     let input_buffers_first = self.inputs_oversampled_buffers_ptr.ptr.cast::<f32>();
+        //     let input_buffers_first = self.inputs_oversampled_buffers_ptr.ptr.cast::<Sample>();
         //     let mut converted_inputs = NodeBufferRef::new(
         //         input_buffers_first,
         //         self.graph_gen_node.num_inputs(),
@@ -415,7 +415,7 @@ impl Gen for GraphConvertOversampling2XGen {
         let gen_state = self.graph_gen_node.process(&input_buffers, 0., resources);
         // dbg!(self.graph_gen_node.output_buffers().get_channel(0));
 
-        // TODO: Remove this step if we can get NodeBufferRef compatible with &[AsRef<[f32]>]
+        // TODO: Remove this step if we can get NodeBufferRef compatible with &[AsRef<[Sample]>]
         /*
                 for (vec_channel, noderef_channel) in self
                     .inner_outputs_conversion

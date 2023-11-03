@@ -72,11 +72,11 @@ pub mod controller;
 pub mod delay;
 pub mod envelope;
 mod filter;
+pub mod gen;
 pub mod graph;
 pub mod handles;
 pub mod inspection;
 pub mod modal_interface;
-pub mod osc;
 pub mod prelude;
 pub mod scheduling;
 pub mod sphere;
@@ -109,12 +109,12 @@ pub enum KnystError {
 /// Convert db to amplitude
 #[inline]
 #[must_use]
-pub fn db_to_amplitude(db: f32) -> f32 {
-    (10.0_f32).powf(db / 20.0)
+pub fn db_to_amplitude(db: Sample) -> Sample {
+    (10.0 as Sample).powf(db / 20.0)
 }
 /// Convert amplitude to db
 #[inline]
 #[must_use]
-pub fn amplitude_to_db(amplitude: f32) -> f32 {
+pub fn amplitude_to_db(amplitude: Sample) -> Sample {
     20.0 * amplitude.log10()
 }

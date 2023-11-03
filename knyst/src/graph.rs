@@ -5,7 +5,6 @@
 //!
 //! ```
 //! # use knyst::prelude::*;
-//! # use knyst::osc::*;
 //! # use knyst_core::wavetable::*;
 //! let graph_settings = GraphSettings {
 //!     block_size: 64,
@@ -910,7 +909,7 @@ impl Default for GraphSettings {
 /// Hold on to an allocation and drop it when we're done. Can be easily wrapped
 /// in an Arc. This ensures we free the memory.
 struct OwnedRawBuffer {
-    ptr: *mut [f32],
+    ptr: *mut [Sample],
 }
 impl Drop for OwnedRawBuffer {
     fn drop(&mut self) {
@@ -945,7 +944,6 @@ impl Drop for OwnedRawBuffer {
 /// ```
 /// use knyst::prelude::*;
 /// use knyst_core::wavetable::*;
-/// use knyst::osc::*;
 /// use knyst::graph::RunGraph;
 /// let graph_settings = GraphSettings {
 ///     block_size: 64,
@@ -1316,7 +1314,7 @@ impl Graph {
             .collect();
         node.init(
             self.block_size * self.oversampling.as_usize(),
-            self.sample_rate * (self.oversampling.as_usize() as f32),
+            self.sample_rate * (self.oversampling.as_usize() as Sample),
         );
         let key = self.get_nodes_mut().insert(node);
         self.node_input_edges.insert(key, vec![]);
@@ -1658,7 +1656,7 @@ impl Graph {
                 ggc.send_clock_update(clock_update.clone()); // Make sure all the clocks in the GraphGens are in sync.
             }
             ggc.scheduler.start(
-                self.sample_rate * (self.oversampling.as_usize() as f32),
+                self.sample_rate * (self.oversampling.as_usize() as Sample),
                 self.block_size * self.oversampling.as_usize(),
                 latency,
                 start_ts,
@@ -3018,7 +3016,7 @@ impl Graph {
         let mut tasks = vec![];
         // Safety: No other thread will access the SlotMap. All we're doing with the buffers is taking pointers; there's no manipulation.
         let nodes = unsafe { &mut *self.nodes.get() };
-        let first_sample = self.inputs_buffers_ptr.ptr.cast::<f32>();
+        let first_sample = self.inputs_buffers_ptr.ptr.cast::<Sample>();
         for &node_key in &self.node_order {
             let num_inputs = nodes[node_key].num_inputs();
             let mut input_buffers = NodeBufferRef::new(
@@ -3162,7 +3160,7 @@ impl Graph {
         for (_key, n) in self.get_nodes_mut() {
             n.init(
                 block_size * oversampling.as_usize(),
-                sample_rate * (oversampling.as_usize() as f32),
+                sample_rate * (oversampling.as_usize() as Sample),
             );
         }
         // self.tasks = self.generate_tasks();
@@ -3637,7 +3635,7 @@ struct ClockUpdate {
     timestamp: Arc<AtomicU64>,
     /// The sample rate of the graph that the timestamp above comes from. Used
     /// to convert between timestamps in different sample rates.
-    clock_sample_rate: f32,
+    clock_sample_rate: Sample,
 }
 
 struct ScheduleReceiver {
@@ -3657,7 +3655,7 @@ impl ScheduleReceiver {
             clock_update_consumer,
         }
     }
-    fn clock_update(&mut self, sample_rate: f32) -> Option<u64> {
+    fn clock_update(&mut self, sample_rate: Sample) -> Option<u64> {
         let mut new_timestamp = None;
         while let Ok(clock) = self.clock_update_consumer.pop() {
             let samples = clock.timestamp.load(Ordering::SeqCst);
@@ -3857,115 +3855,6 @@ struct FeedbackEdge {
     feedback_destination: NodeKey,
 }
 
-/// Move to the target value exponentially by -60db attenuation over the specified time.
-/// *Inputs*
-/// 0. "value"
-/// 1. "time" in seconds
-/// *Outputs*
-/// 0. "smoothed_value"
-#[derive(Default)]
-pub struct Lag {
-    // Compare with the current value. If there is change, recalculate the mix.
-    last_time: Sample,
-    current_value: Sample,
-    mix: Sample,
-    sample_rate: Sample,
-}
-
-impl Lag {}
-#[impl_gen]
-impl Lag {
-    #[new]
-    #[allow(missing_docs)]
-    pub fn new() -> Self {
-        Self::default()
-    }
-    #[process]
-    fn process(
-        &mut self,
-        value: &[Sample],
-        time: &[Sample],
-        smoothed_value: &mut [Sample],
-        block_size: BlockSize,
-    ) -> GenState {
-        for i in 0..*block_size {
-            let value = value[i];
-            let time = time[i];
-            if time != self.last_time {
-                self.last_time = time;
-                let num_samples = (time * self.sample_rate).floor();
-                self.mix = 1.0 - (0.001_f32).powf(1.0 / num_samples);
-            }
-            self.current_value += (value - self.current_value) * self.mix;
-            smoothed_value[i] = self.current_value;
-        }
-        GenState::Continue
-    }
-    #[init]
-    fn init(&mut self, sample_rate: SampleRate) {
-        self.sample_rate = *sample_rate;
-    }
-}
-/// When input 0 changes, move smoothly to the new value over the time in seconds given by input 1.
-#[derive(Default)]
-pub struct Ramp {
-    // Compare with the current value. If there is change, recalculate the step.
-    last_value: Sample,
-    // Compare with the current value. If there is change, recalculate the step.
-    last_time: Sample,
-    current_value: Sample,
-    step: Sample,
-    sample_rate: Sample,
-}
-
-impl Ramp {}
-#[impl_gen]
-impl Ramp {
-    #[new]
-    #[allow(missing_docs)]
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-    #[process]
-    fn process(
-        &mut self,
-        value: &[Sample],
-        time: &[Sample],
-        ramped_value: &mut [Sample],
-        block_size: BlockSize,
-    ) -> GenState {
-        for i in 0..*block_size {
-            let mut recalculate = false;
-            let v = value[i];
-            let t = time[i];
-            if v != self.last_value {
-                self.last_value = v;
-                recalculate = true;
-            }
-            if t != self.last_time {
-                self.last_time = t;
-                recalculate = true;
-            }
-            if recalculate {
-                let num_samples = (t * self.sample_rate).floor();
-                self.step = (v - self.current_value) / num_samples;
-            }
-            if (self.current_value - v).abs() < 0.0001 {
-                self.current_value = v;
-                self.step = 0.0;
-            }
-            self.current_value += self.step;
-            ramped_value[i] = self.current_value;
-        }
-        GenState::Continue
-    }
-
-    #[init]
-    fn init(&mut self, sample_rate: SampleRate) {
-        self.sample_rate = *sample_rate;
-    }
-}
 /// Multiply two inputs together and produce one output.
 ///
 /// # Example
@@ -4031,85 +3920,6 @@ impl Mult {
     }
 }
 
-/// Mul(num out channels)
-///
-/// Variable number channel Mul Gen. Every pair of inputs are multiplied together into one output.
-pub struct MulGen(pub usize);
-impl Gen for MulGen {
-    fn process(&mut self, ctx: GenContext, _resources: &mut Resources) -> GenState {
-        let block_size = ctx.block_size();
-        let mut out_bufs = ctx.outputs.iter_mut();
-
-        for i in 0..self.0 {
-            let product = out_bufs.next().unwrap();
-            let value0 = ctx.inputs.get_channel(i * 2);
-            let value1 = ctx.inputs.get_channel(i * 2 + 1);
-
-            // fallback
-            #[cfg(not(feature = "unstable"))]
-            {
-                for i in 0..block_size {
-                    product[i] = value0[i] * value1[i];
-                }
-            }
-            #[cfg(feature = "unstable")]
-            {
-                use std::simd::f32x2;
-                let simd_width = 2;
-                for _ in 0..block_size / simd_width {
-                    let s_in0 = f32x2::from_slice(&value0[..simd_width]);
-                    let s_in1 = f32x2::from_slice(&value1[..simd_width]);
-                    let product = s_in0 * s_in1;
-                    product.copy_to_slice(out_buf);
-                    in0 = &value0[simd_width..];
-                    in1 = &value1[simd_width..];
-                    out_buf = &mut out_buf[simd_width..];
-                }
-            }
-        }
-        GenState::Continue
-    }
-
-    fn num_inputs(&self) -> usize {
-        self.0 * 2
-    }
-
-    fn num_outputs(&self) -> usize {
-        self.0
-    }
-
-    fn name(&self) -> &'static str {
-        "MulGen"
-    }
-}
-/// Bus(channels)
-///
-/// Convenience Gen for collecting many signals to one node address. Inputs will
-/// be copied to the corresponding outputs.
-pub struct Bus(pub usize);
-impl Gen for Bus {
-    fn process(&mut self, ctx: GenContext, _resources: &mut Resources) -> GenState {
-        let mut out_bufs = ctx.outputs.iter_mut();
-        for channel in 0..self.0 {
-            let in_buf = ctx.inputs.get_channel(channel);
-            let out_buf = out_bufs.next().unwrap();
-            out_buf.copy_from_slice(in_buf);
-        }
-        GenState::Continue
-    }
-
-    fn num_inputs(&self) -> usize {
-        self.0
-    }
-
-    fn num_outputs(&self) -> usize {
-        self.0
-    }
-
-    fn name(&self) -> &'static str {
-        "Bus"
-    }
-}
 /// Pan a mono signal to stereo using the cos/sine pan law. Pan value should be
 /// between -1 and 1, 0 being in the center.
 ///
@@ -4182,9 +3992,9 @@ impl PanMonoToStereo {
             let signal = signal[i];
             // The equation needs pan to be in the range [0, 1]
             let pan = pan[i] * 0.5 + 0.5;
-            let pan_pos_radians = pan * std::f32::consts::FRAC_PI_2;
-            let left_gain = fastapprox::fast::cos(pan_pos_radians);
-            let right_gain = fastapprox::fast::sin(pan_pos_radians);
+            let pan_pos_radians = pan * std::f64::consts::FRAC_PI_2 as Sample;
+            let left_gain = fastapprox::fast::cos(pan_pos_radians as f32) as Sample;
+            let right_gain = fastapprox::fast::sin(pan_pos_radians as f32) as Sample;
             left[i] = signal * left_gain;
             right[i] = signal * right_gain;
         }

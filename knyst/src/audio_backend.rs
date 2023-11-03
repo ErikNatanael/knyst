@@ -144,7 +144,7 @@ mod jack_backend {
             mut graph: Graph,
             resources: Resources,
             run_graph_settings: RunGraphSettings,
-            error_handler: impl FnMut(KnystError) + Send + 'static,
+            error_handler: Box<dyn FnMut(KnystError) + Send + 'static>,
         ) -> Result<Controller, AudioBackendError> {
             if let Some(JackClient::Passive(client)) = self.client.take() {
                 let mut in_ports = vec![];
@@ -199,6 +199,14 @@ mod jack_backend {
 
         fn block_size(&self) -> Option<usize> {
             Some(self.block_size)
+        }
+
+        fn native_output_channels(&self) -> Option<usize> {
+            None
+        }
+
+        fn native_input_channels(&self) -> Option<usize> {
+            None
         }
     }
 
@@ -321,6 +329,7 @@ pub mod cpal_backend {
     use crate::{graph::Graph, Resources};
     use assert_no_alloc::*;
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+    use knyst_core::Sample;
 
     #[allow(missing_docs)]
     pub struct CpalBackendOptions {
@@ -447,7 +456,7 @@ pub mod cpal_backend {
         mut run_graph: RunGraph,
     ) -> Result<cpal::Stream, AudioBackendError>
     where
-        T: cpal::Sample + cpal::FromSample<f32> + cpal::SizedSample,
+        T: cpal::Sample + cpal::FromSample<Sample> + cpal::SizedSample,
     {
         let channels = config.channels as usize;
 

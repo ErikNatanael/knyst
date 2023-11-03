@@ -16,7 +16,6 @@ use knyst::{
     envelope::{Curve, Envelope},
     graph::{ClosureGen, Mult, NodeId},
     inputs,
-    osc::{BufferReader, Oscillator, WavetableOscillatorOwned},
     prelude::*,
     trig::OnceTrig,
 };
@@ -30,7 +29,7 @@ use std::{sync::Arc, time::Duration};
 use termion::input::TermRead;
 use termion::raw::IntoRawMode;
 
-static ROOT_FREQ: f32 = 200.;
+static ROOT_FREQ: Sample = 200.;
 
 struct State {
     potential_reverb_inputs: Vec<NodeId>,
@@ -49,7 +48,7 @@ struct State {
 fn main() -> Result<()> {
     let mut backend = CpalBackend::new(CpalBackendOptions::default())?;
 
-    let sample_rate = backend.sample_rate() as f32;
+    let sample_rate = backend.sample_rate() as Sample;
     let block_size = backend.block_size().unwrap_or(64);
     dbg!(block_size);
     let resources = Resources::new(ResourcesSettings::default());
@@ -139,7 +138,7 @@ fn main() -> Result<()> {
             let harmony_nodes: Vec<NodeId> = (0..chords[0].len())
                 .map(|i| {
                     let node = k.push_to_graph(
-                        Oscillator::new(harmony_wavetable_id.into()),
+                        Oscillator::new(harmony_wavetable_id),
                         sub_graph_id,
                         ("freq", 400.),
                     );
@@ -175,7 +174,7 @@ fn main() -> Result<()> {
                     k.schedule_change(
                         ParameterChange::now(
                             node.clone(),
-                            degree_53_to_hz(new_chord[i] as f32, ROOT_FREQ * 2.0),
+                            degree_53_to_hz(new_chord[i] as Sample, ROOT_FREQ * 2.0),
                         )
                         .label("freq"),
                     );
@@ -291,10 +290,10 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn degree_53_to_hz(degree: f32, root: f32) -> f32 {
-    root * 2.0_f32.powf(degree / 53.)
+fn degree_53_to_hz(degree: Sample, root: Sample) -> Sample {
+    root * (2.0 as Sample).powf(degree / 53.)
 }
-fn character_to_hz(c: char) -> f32 {
+fn character_to_hz(c: char) -> Sample {
     degree_53_to_hz(
         match c {
             'a' => 0,
@@ -321,7 +320,7 @@ fn character_to_hz(c: char) -> f32 {
             'å' => 31 + 53,
             'ä' => 36 + 53,
             _ => 0,
-        } as f32,
+        } as Sample,
         ROOT_FREQ * 4.,
     )
 }
@@ -365,7 +364,7 @@ fn handle_special_keys(c: char, mut k: MultiThreadedKnystCommands, state: &mut S
             let mut new_harmony_wavetable = Wavetable::sine();
             new_harmony_wavetable.add_odd_harmonics(
                 rand::random::<usize>() % 16 + 1,
-                rand::random::<f32>() + 1.0,
+                rand::random::<Sample>() + 1.0,
             );
             new_harmony_wavetable.fill_sine(rand::random::<usize>() % 16 + 4, 1.0);
             new_harmony_wavetable.normalize();
@@ -470,7 +469,7 @@ async fn tokio_knyst(k: MultiThreadedKnystCommands, mut trigger: Arc<AtomicBool>
     loop {
         receive_trigger(&mut trigger).await;
         let k = k.clone();
-        let speed = rng.gen_range(0.1..0.6_f32);
+        let speed = rng.gen_range(0.1..0.6);
         tokio::spawn(async move {
             play_a_little_tune(k, speed).await;
         });
@@ -484,7 +483,7 @@ async fn receive_trigger(trigger: &mut Arc<AtomicBool>) {
     trigger.store(false, std::sync::atomic::Ordering::SeqCst);
 }
 
-async fn play_a_little_tune(mut k: MultiThreadedKnystCommands, speed: f32) {
+async fn play_a_little_tune(mut k: MultiThreadedKnystCommands, speed: Sample) {
     let melody = vec![
         (17, 1.),
         (22, 1.),
@@ -497,13 +496,13 @@ async fn play_a_little_tune(mut k: MultiThreadedKnystCommands, speed: f32) {
         (53 + 17, 6.),
     ];
     for (degree_53, beats) in melody {
-        let freq = degree_53_to_hz(degree_53 as f32 + 53., ROOT_FREQ);
+        let freq = degree_53_to_hz(degree_53 as Sample + 53., ROOT_FREQ);
         spawn_note(&mut k, freq, beats * speed).await;
-        tokio::time::sleep(tokio::time::Duration::from_secs_f32(beats * speed)).await;
+        tokio::time::sleep(tokio::time::Duration::from_secs_f32((beats * speed) as f32)).await;
     }
 }
 
-async fn spawn_note(k: &mut MultiThreadedKnystCommands, freq: f32, length_seconds: f32) {
+async fn spawn_note(k: &mut MultiThreadedKnystCommands, freq: Sample, length_seconds: Sample) {
     let mut settings = k.default_graph_settings();
     settings.num_outputs = 1;
     settings.num_inputs = 0;

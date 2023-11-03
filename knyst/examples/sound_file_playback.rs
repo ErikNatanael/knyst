@@ -4,7 +4,6 @@ use std::time::Duration;
 use knyst::{
     audio_backend::{CpalBackend, CpalBackendOptions},
     controller,
-    osc::BufferReaderMulti,
     prelude::*,
 };
 
@@ -12,7 +11,7 @@ fn main() -> anyhow::Result<()> {
     // Create the backend to get the backend settings needed to create a Graph with the correct block size and sample rate etc.
     let mut backend = CpalBackend::new(CpalBackendOptions::default())?;
 
-    let sample_rate = backend.sample_rate() as f32;
+    let sample_rate = backend.sample_rate() as Sample;
     let block_size = backend.block_size().unwrap_or(64);
     let mut resources = Resources::new(ResourcesSettings {
         ..Default::default()

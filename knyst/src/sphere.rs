@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use knyst_core::{resources::ResourcesSettings, Resources};
+use knyst_core::{resources::ResourcesSettings, Resources, Sample};
 
 use crate::{
     controller::print_error_handler,
@@ -30,7 +30,7 @@ impl KnystSphere {
                 .native_output_channels()
                 .unwrap_or(settings.num_outputs),
             block_size: backend.block_size().unwrap_or(64),
-            sample_rate: backend.sample_rate() as f32,
+            sample_rate: backend.sample_rate() as Sample,
             ..Default::default()
         };
         let graph: Graph = Graph::new(graph_settings);
@@ -61,13 +61,13 @@ impl KnystSphere {
 }
 
 pub struct SphereSettings {
-    name: String,
-    resources_settings: ResourcesSettings,
+    pub name: String,
+    pub resources_settings: ResourcesSettings,
     /// num inputs if determinable by the user (e.g. in the JACK backend)
-    num_inputs: usize,
+    pub num_inputs: usize,
     /// num outputs if determinable by the user (e.g. in the JACK backend)
-    num_outputs: usize,
-    scheduling_latency: Duration,
+    pub num_outputs: usize,
+    pub scheduling_latency: Duration,
 }
 
 impl Default for SphereSettings {

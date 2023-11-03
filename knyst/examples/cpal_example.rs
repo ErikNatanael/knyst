@@ -3,7 +3,6 @@ use knyst::{
     audio_backend::{CpalBackend, CpalBackendOptions},
     controller::{print_error_handler, KnystCommands},
     graph::Mult,
-    osc::WavetableOscillatorOwned,
     prelude::*,
 };
 use std::time::Duration;
@@ -11,7 +10,7 @@ use std::time::Duration;
 fn main() -> Result<()> {
     let mut backend = CpalBackend::new(CpalBackendOptions::default())?;
 
-    let sample_rate = backend.sample_rate() as f32;
+    let sample_rate = backend.sample_rate() as Sample;
     let block_size = backend.block_size().unwrap_or(64);
     let resources = Resources::new(ResourcesSettings {
         ..Default::default()
@@ -56,7 +55,9 @@ fn main() -> Result<()> {
                 println!("{}", input.trim());
                 let input = input.trim();
                 if let Ok(freq) = input.parse::<usize>() {
-                    k.schedule_change(ParameterChange::now(node0.clone(), freq as f32).l("freq"));
+                    k.schedule_change(
+                        ParameterChange::now(node0.clone(), freq as Sample).l("freq"),
+                    );
                 } else if input == "q" {
                     break;
                 }

@@ -41,7 +41,7 @@ impl NodeBufferRef {
     }
     /// Write a value to a single sample
     #[inline]
-    pub fn write(&mut self, value: f32, channel: usize, sample_index: usize) {
+    pub fn write(&mut self, value: Sample, channel: usize, sample_index: usize) {
         assert!(channel < self.num_channels);
         assert!(sample_index < self.block_size - self.block_start_offset);
         assert!(!self.buf.is_null());
@@ -62,7 +62,7 @@ impl NodeBufferRef {
     /// mutable references to the same channel this way is, however, UB. Use
     /// `split_mut` for an iterator to all channels instead.
     #[inline]
-    pub unsafe fn get_channel_mut<'a, 'b>(&'a mut self, channel: usize) -> &'b mut [f32] {
+    pub unsafe fn get_channel_mut<'a, 'b>(&'a mut self, channel: usize) -> &'b mut [Sample] {
         assert!(channel < self.num_channels);
         assert!(!self.buf.is_null());
         let channel_offset = channel * self.block_size;
@@ -78,7 +78,7 @@ impl NodeBufferRef {
     /// This is safe because the slices are guaranteed not to overlap
     /// and multiple immutable references are allowed.
     #[inline]
-    pub fn get_channel(&self, channel: usize) -> &[f32] {
+    pub fn get_channel(&self, channel: usize) -> &[Sample] {
         assert!(channel < self.num_channels);
         assert!(!self.buf.is_null());
         let channel_offset = channel * self.block_size;
@@ -90,7 +90,7 @@ impl NodeBufferRef {
     }
     /// Adds the given value to the selected sample
     #[inline]
-    pub fn add(&mut self, value: f32, channel: usize, sample_index: usize) {
+    pub fn add(&mut self, value: Sample, channel: usize, sample_index: usize) {
         assert!(channel < self.num_channels);
         assert!(sample_index < self.block_size - self.block_start_offset);
         assert!(!self.buf.is_null());
@@ -118,7 +118,7 @@ impl NodeBufferRef {
     }
     /// Fill a channel with one and the same value
     #[inline]
-    pub fn fill_channel(&mut self, value: f32, channel: usize) {
+    pub fn fill_channel(&mut self, value: Sample, channel: usize) {
         assert!(channel < self.num_channels);
         assert!(!self.buf.is_null());
         let channel_offset = channel * self.block_size;
@@ -135,7 +135,7 @@ impl NodeBufferRef {
     }
     /// Fill all channels in the buffer with one and the same value
     #[inline]
-    pub fn fill(&mut self, value: f32) {
+    pub fn fill(&mut self, value: Sample) {
         assert!(!self.buf.is_null());
         let buffer_slice = unsafe {
             std::slice::from_raw_parts_mut(self.buf, self.num_channels * self.block_size)

@@ -6,9 +6,9 @@ use std::{
 use knyst_core::Sample;
 
 use crate::{
-    graph::{connection::NodeChannel, Bus, MulGen, NodeId},
+    graph::{connection::NodeChannel, NodeId},
     modal_interface::commands,
-    prelude::KnystCommands,
+    prelude::{Bus, KnystCommands, MulGen, RampGen},
 };
 
 #[derive(Copy, Clone, Debug)]
@@ -252,7 +252,7 @@ where
     }
 }
 
-impl<B: Copy + NodeHandleData> Mul<NodeHandle<B>> for f32 {
+impl<B: Copy + NodeHandleData> Mul<NodeHandle<B>> for Sample {
     type Output = NodeHandle<MulHandle>;
 
     fn mul(self, rhs: NodeHandle<B>) -> Self::Output {
@@ -272,10 +272,10 @@ impl<B: Copy + NodeHandleData> Mul<NodeHandle<B>> for f32 {
         })
     }
 }
-impl<B: Copy + NodeHandleData> Mul<f32> for NodeHandle<B> {
+impl<B: Copy + NodeHandleData> Mul<Sample> for NodeHandle<B> {
     type Output = NodeHandle<MulHandle>;
 
-    fn mul(self, rhs: f32) -> Self::Output {
+    fn mul(self, rhs: Sample) -> Self::Output {
         rhs * self
     }
 }
@@ -301,7 +301,7 @@ where
     }
 }
 
-impl<B: Copy + NodeHandleData> Add<NodeHandle<B>> for f32 {
+impl<B: Copy + NodeHandleData> Add<NodeHandle<B>> for Sample {
     type Output = NodeHandle<AddHandle>;
 
     fn add(self, rhs: NodeHandle<B>) -> Self::Output {
@@ -321,10 +321,10 @@ impl<B: Copy + NodeHandleData> Add<NodeHandle<B>> for f32 {
         })
     }
 }
-impl<B: Copy + NodeHandleData> Add<f32> for NodeHandle<B> {
+impl<B: Copy + NodeHandleData> Add<Sample> for NodeHandle<B> {
     type Output = NodeHandle<AddHandle>;
 
-    fn add(self, rhs: f32) -> Self::Output {
+    fn add(self, rhs: Sample) -> Self::Output {
         rhs + self
     }
 }
@@ -351,8 +351,8 @@ pub enum Input {
     Constant(Sample),
     Handle { output_channels: ChannelIter },
 }
-impl From<f32> for Input {
-    fn from(value: f32) -> Self {
+impl From<Sample> for Input {
+    fn from(value: Sample) -> Self {
         Input::Constant(value)
     }
 }
@@ -366,6 +366,98 @@ impl<H: Copy + NodeHandleData> From<NodeHandle<H>> for Input {
 impl From<&AnyNodeHandle> for Input {
     fn from(value: &AnyNodeHandle) -> Self {
         todo!()
+    }
+}
+
+/// Marker trait to mark that the output of the Gen will be between -1 and 1 inclusive
+pub trait NodeHandleNormalRange {}
+
+#[derive(Clone, Copy, Debug)]
+pub struct RangeHandle {
+    node_id: NodeId,
+    num_out_channels: usize,
+}
+impl NodeHandleData for RangeHandle {
+    fn out_channels(&self) -> ChannelIter {
+        ChannelIter::SingleNodeId {
+            node_id: self.node_id,
+            num_channels: self.num_out_channels,
+            current_iter_index: 0,
+        }
+    }
+
+    fn in_channels(&self) -> ChannelIter {
+        ChannelIter::SingleNodeId {
+            node_id: self.node_id,
+            num_channels: self.num_out_channels * 2,
+            current_iter_index: 0,
+        }
+    }
+
+    fn node_ids(&self) -> NodeIdIter {
+        NodeIdIter::Single(self.node_id)
+    }
+}
+
+impl<H: NodeHandleData + Copy + NodeHandleNormalRange> NodeHandle<H> {
+    pub fn range(
+        mut self,
+        min: impl Into<Input>,
+        max: impl Into<Input>,
+    ) -> NodeHandle<RangeHandle> {
+        // Convert to the correct range for the RangeGen
+        let input = self * 0.5 + 0.5;
+        let num_out_channels = input.out_channels().collect::<Vec<_>>().len();
+        let node_id = commands().push_without_inputs(RampGen(num_out_channels));
+        match min.into() {
+            Input::Constant(c) => {
+                commands().connect(
+                    crate::graph::connection::constant(c)
+                        .to(node_id)
+                        .to_channel(0),
+                );
+            }
+            Input::Handle {
+                ref mut output_channels,
+            } => {
+                if let Some((node, chan)) = output_channels.next() {
+                    commands().connect(node.to(node_id).from_channel(chan).to_channel(0));
+                } else {
+                    // TODO: Error: empty handle as min input to ramp
+                }
+                if output_channels.next().is_some() {
+                    // TODO: Warn: multi channel handle as min input to ramp
+                }
+            }
+        }
+        match max.into() {
+            Input::Constant(c) => {
+                commands().connect(
+                    crate::graph::connection::constant(c)
+                        .to(node_id)
+                        .to_channel(1),
+                );
+            }
+            Input::Handle {
+                ref mut output_channels,
+            } => {
+                if let Some((node, chan)) = output_channels.next() {
+                    commands().connect(node.to(node_id).from_channel(chan).to_channel(1));
+                } else {
+                    // TODO: Error: empty handle as max input to ramp
+                }
+                if output_channels.next().is_some() {
+                    // TODO: Warn: multi channel handle as maxinput to ramp
+                }
+            }
+        }
+        for (i, out0) in input.out_channels().enumerate() {
+            commands().connect(out0.0.to(node_id).from_channel(out0.1).to_channel(i + 2));
+        }
+        NodeHandle::new(RangeHandle {
+            node_id,
+            num_out_channels,
+        })
     }
 }
 

@@ -1,7 +1,5 @@
 use anyhow::Result;
-use knyst::{
-    audio_backend::JackBackend, controller, graph::Mult, osc::WavetableOscillatorOwned, prelude::*,
-};
+use knyst::{audio_backend::JackBackend, controller, graph::Mult, prelude::*};
 
 fn main() -> Result<()> {
     let mut backend = JackBackend::new("Knyst<3JACK")?;
@@ -25,7 +23,7 @@ fn main() -> Result<()> {
         graph,
         resources,
         RunGraphSettings::default(),
-        controller::print_error_handler,
+        Box::new(controller::print_error_handler),
     )?;
     let node0 = k.push(
         WavetableOscillatorOwned::new(Wavetable::sine()),

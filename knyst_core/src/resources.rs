@@ -130,6 +130,11 @@ impl From<BufferId> for IdOrKey<BufferId, BufferKey> {
         IdOrKey::Id(value)
     }
 }
+impl From<BufferKey> for IdOrKey<BufferId, BufferKey> {
+    fn from(value: BufferKey) -> Self {
+        IdOrKey::Key(value)
+    }
+}
 
 /// Common resources for all Nodes in a Graph and all its sub Graphs:
 /// - [`Wavetable`]

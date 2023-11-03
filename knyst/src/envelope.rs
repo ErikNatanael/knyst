@@ -20,7 +20,7 @@
 //! ```
 
 // level, duration
-type Point = (f32, f32);
+type Point = (Sample, Sample);
 // Storing time as samples in an f64 is fine, there's adequate range and avoids type casting.
 
 // Benefits compared to Spline implementation:
@@ -101,17 +101,19 @@ pub enum SustainMode {
 #[derive(Debug, Clone, Copy)]
 pub enum Curve {
     Linear,
-    Exponential(f32),
+    Exponential(Sample),
 }
 
 impl Curve {
     /// Convert from linear 0<=a<1.0 to this curve
     #[inline]
-    pub fn transform(&self, a: f32) -> f32 {
+    pub fn transform(&self, a: Sample) -> Sample {
         match self {
             Curve::Linear => a,
             // Using the fastapprox::faster variant is significantly faster, but too inaccurate
-            Curve::Exponential(exponent) => fastapprox::fast::pow(a, *exponent),
+            Curve::Exponential(exponent) => {
+                fastapprox::fast::pow(a as f32, *exponent as f32) as Sample
+            }
         }
     }
 }
@@ -122,18 +124,18 @@ impl Curve {
 #[derive(Debug, Clone)]
 pub struct EnvelopeGen {
     #[allow(missing_docs)]
-    pub start_value: f32,
+    pub start_value: Sample,
 
     // Points with their time value as seconds. This enables setting the sample rate when the Gen is initiated.
     points_secs: Vec<Point>,
     points: Vec<Point>,
     curves: Vec<Curve>,
-    source_value: f32,
-    target_value: f32,
+    source_value: Sample,
+    target_value: Sample,
     /// The difference between source_value and target_value
-    source_target_diff: f32,
-    fade_out_duration: f32,
-    segment_duration: f32,
+    source_target_diff: Sample,
+    fade_out_duration: Sample,
+    segment_duration: Sample,
     current_curve: Curve,
     current_timestep: f64,
     /// Goes from 0 to 1 over a segment
@@ -141,7 +143,7 @@ pub struct EnvelopeGen {
     next_index: usize,
     #[allow(missing_docs)]
     pub playing: bool,
-    sample_rate: f32,
+    sample_rate: Sample,
     sustain: SustainMode,
     stop_action: StopAction,
     // pub sustaining: bool, // if the envelope should stop at a certain point before release
@@ -153,7 +155,7 @@ pub struct EnvelopeGen {
 
 impl EnvelopeGen {
     /// Create a new Envelope. points are in the format (level, duration) where the duration is given in seconds, and later converted to samples internally.
-    pub fn new(start_value: f32, mut points: Vec<Point>, sample_rate: f32) -> Self {
+    pub fn new(start_value: Sample, mut points: Vec<Point>, sample_rate: Sample) -> Self {
         let points_secs = points.clone();
         // Convert durations from seconds to samples
         for point in &mut points {
@@ -190,11 +192,11 @@ impl EnvelopeGen {
 
     /// Convenience method for an ADSR envelope
     pub fn adsr(
-        attack_time: f32,
-        decay_time: f32,
-        sustain_level: f32,
-        release_time: f32,
-        sample_rate: f32,
+        attack_time: Sample,
+        decay_time: Sample,
+        sustain_level: Sample,
+        release_time: Sample,
+        sample_rate: Sample,
     ) -> Self {
         let points = vec![
             (1.0, attack_time),
@@ -335,7 +337,7 @@ impl EnvelopeGen {
         self.current_curve = Curve::Linear;
     }
     /// Change the value of a specific point.
-    pub fn set_value(&mut self, value: f32, index: usize) {
+    pub fn set_value(&mut self, value: Sample, index: usize) {
         self.points[index].0 = value;
         // Also update the value if it's currently playing
         if index == self.next_index - 1 {
@@ -350,7 +352,7 @@ impl EnvelopeGen {
         }
     }
     /// Set the duration of a segment in seconds (the duration to reach the value with the same index). Will not affect the currently playing segment.
-    pub fn set_duration(&mut self, duration: f32, index: usize) {
+    pub fn set_duration(&mut self, duration: Sample, index: usize) {
         // Convert seconds to samples
         self.points[index].1 = duration * self.sample_rate;
     }
@@ -416,7 +418,7 @@ impl EnvelopeGen {
     #[inline(always)]
     fn current_value(&mut self) -> Sample {
         // note: t goes from 1 to just above 0 over the duration of a segment
-        let t = self.current_curve.transform(self.duration_passed as f32);
+        let t = self.current_curve.transform(self.duration_passed as Sample);
         // linear interpolation
         self.source_value + (t * self.source_target_diff)
     }

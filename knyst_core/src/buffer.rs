@@ -181,8 +181,8 @@ impl Buffer {
                                 // Get the capacity of the decoded buffer. Note: This is capacity, not length!
                                 let duration = audio_buf.capacity() as u64;
 
-                                // Create the f32 sample buffer.
-                                sample_buf = Some(SampleBuffer::<f32>::new(duration, spec));
+                                // Create the Sample sample buffer.
+                                sample_buf = Some(SampleBuffer::<Sample>::new(duration, spec));
                             }
 
                             // Copy the decoded audio buffer into the sample buffer in an interleaved format.
@@ -233,6 +233,7 @@ impl Buffer {
                 cp.channels.unwrap().bits().count_ones() as usize,
             )
         };
+        let buffer = buffer.into_iter().map(|v| v as Sample).collect();
         // TODO: Return Err if there's no audio data
         Ok(Self::from_vec_interleaved(
             buffer,
@@ -271,7 +272,7 @@ impl Buffer {
         let mut writer = hound::WavWriter::create(path.into(), spec)?;
 
         for sample in &self.buffer {
-            let amplitude = i16::MAX as f32;
+            let amplitude = i16::MAX as Sample;
             writer.write_sample((sample * amplitude) as i16)?;
         }
         Ok(())

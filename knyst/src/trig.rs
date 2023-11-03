@@ -127,7 +127,7 @@ mod tests {
         const BLOCK_SIZE: usize = 128 as usize;
         let graph_settings = GraphSettings {
             block_size: BLOCK_SIZE,
-            sample_rate: SR as f32,
+            sample_rate: SR as Sample,
             num_outputs: 2,
             ..Default::default()
         };
@@ -136,7 +136,7 @@ mod tests {
         graph.connect(node.to_graph_out()).unwrap();
         let every_8_samples = Superseconds::from_samples(8, SR).to_seconds_f64();
         graph
-            .connect(constant(every_8_samples as f32).to(node))
+            .connect(constant(every_8_samples as Sample).to(node))
             .unwrap();
         let (mut run_graph, _, _) = RunGraph::new(
             &mut graph,

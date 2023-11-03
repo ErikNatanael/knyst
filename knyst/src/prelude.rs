@@ -2,11 +2,12 @@
 
 pub use crate::audio_backend::AudioBackend;
 pub use crate::controller::{CallbackHandle, KnystCommands, MultiThreadedKnystCommands};
+pub use crate::gen::*;
 pub use crate::graph::{
     connection::constant,
     connection::{ConnectionBundle, InputBundle},
-    gen, Connection, Graph, GraphInput, GraphSettings, Lag, Mult, NodeId, PanMonoToStereo,
-    ParameterChange, Ramp, RunGraphSettings,
+    gen, Connection, Graph, GraphInput, GraphSettings, Mult, NodeId, PanMonoToStereo,
+    ParameterChange, RunGraphSettings,
 };
 pub use crate::inputs;
 pub use crate::sphere::{KnystSphere, SphereSettings};

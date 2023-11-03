@@ -27,15 +27,15 @@ pub struct Oscillator {
 }
 
 #[allow(missing_docs)]
-#[impl_gen]
+#[impl_gen(range = normal)]
 impl Oscillator {
     #[new]
     #[must_use]
-    pub fn new(wavetable: IdOrKey<WavetableId, WavetableKey>) -> Self {
+    pub fn new(wavetable: impl Into<IdOrKey<WavetableId, WavetableKey>>) -> Self {
         Oscillator {
             step: 0,
             phase: WavetablePhase(0),
-            wavetable,
+            wavetable: wavetable.into(),
             amp: 1.0,
             freq_to_phase_inc: 0., // set to a real value in init
         }
@@ -75,7 +75,7 @@ impl Oscillator {
             for (&f, o) in freq.iter().zip(sig.iter_mut()) {
                 self.set_freq(f);
                 self.phase.increase(self.step);
-                *o = wt.get(self.phase) * self.amp;
+                *o = wt.get_linear_interp(self.phase) * self.amp;
             }
         } else {
             sig.fill(0.0);
@@ -446,7 +446,7 @@ impl WavetableOscillatorOwned {
     }
 }
 
-#[impl_gen]
+#[impl_gen(range=normal)]
 impl WavetableOscillatorOwned {
     #[allow(missing_docs)]
     #[must_use]

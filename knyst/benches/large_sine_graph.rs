@@ -1,5 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use knyst::{graph::RunGraph, osc::WavetableOscillatorOwned, prelude::*};
+use knyst::{graph::RunGraph, prelude::*};
 
 pub fn empty_graph(c: &mut Criterion) {
     let graph_settings = GraphSettings {

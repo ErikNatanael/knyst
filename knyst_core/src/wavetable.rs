@@ -4,7 +4,7 @@ use crate::Sample;
 
 // use std::f64::consts::PI;
 use crate::xorrng::XOrShift32Rng;
-use std::f32::consts::PI;
+use std::f64::consts::PI;
 
 /// Decides the number of samples per [`Wavetable`] buffer, and therefore also
 /// the number of high bits used for the phase indexing into the wavetable. With
@@ -54,6 +54,20 @@ impl Wavetable {
     /// sample of the buffer for efficiency reason.
     pub fn update_diff_buffer(&mut self) {
         // let diff_buffer: Vec<Sample> = self
+        //     .buffer
+        //     .iter()
+        //     .zip(self.buffer.iter().skip(1).cycle())
+        //     .map(|(&a, &b)| a - b)
+        //     .collect();
+        let mut diff_buffer = vec![0.0; self.buffer.len()];
+        for (i, diff) in diff_buffer.iter_mut().enumerate() {
+            *diff = self.buffer[(i + 1) % self.buffer.len()] - self.buffer[i];
+        }
+        assert_eq!(self.buffer[1] - self.buffer[0], diff_buffer[0]);
+        assert_eq!(
+            self.buffer[0] - self.buffer.iter().last().unwrap(),
+            *diff_buffer.iter().last().unwrap()
+        );
         self.diff_buffer = diff_buffer;
     }
     /// Create a [`Wavetable`] from an existing buffer.
@@ -93,7 +107,7 @@ impl Wavetable {
         let mut wt = Wavetable::new();
         // Fill buffer with a sine
         for i in 0..wavetable_size {
-            wt.buffer[i] = ((i as Sample / TABLE_SIZE as f32) * PI * 2.0).sin();
+            wt.buffer[i] = ((i as f64 / TABLE_SIZE as f64) * PI * 2.0).sin() as Sample;
         }
         wt.update_diff_buffer();
         wt
@@ -131,7 +145,7 @@ impl Wavetable {
         let mut wt = Wavetable::new();
         // This approach was heavily influenced by the SuperCollider Signal implementation
         wt.fill(0.5);
-        wt.add_sine(1.0, 0.5, -0.5 * PI);
+        wt.add_sine(1.0, 0.5, -0.5 * PI as Sample);
         wt.update_diff_buffer();
         wt
     }
@@ -141,7 +155,7 @@ impl Wavetable {
         let mut wt = Wavetable::new();
         // This approach was heavily influenced by the SuperCollider Signal implementation
         wt.fill(0.53836);
-        wt.add_sine(1.0, 0.46164, -0.5 * PI);
+        wt.add_sine(1.0, 0.46164, -0.5 * PI as Sample);
         wt.update_diff_buffer();
         wt
     }
@@ -166,7 +180,7 @@ impl Wavetable {
     /// frequency 2.0 Hz and then playing the wavetable at frequency 200 Hz that
     /// sine wave will sound at 400 Hz.
     pub fn add_sine(&mut self, freq: Sample, amplitude: Sample, phase: Sample) {
-        let step = (freq * PI * 2.0) / TABLE_SIZE as f32;
+        let step = (freq * PI as Sample * 2.0) / TABLE_SIZE as Sample;
         let mut phase = phase;
         for sample in &mut self.buffer {
             *sample += phase.sin() * amplitude;
@@ -183,11 +197,14 @@ impl Wavetable {
                 _ => ((num_harmonics - n) as Sample / (num_harmonics) as Sample) * 0.5,
             };
             for i in 0..TABLE_SIZE {
-                self.buffer[i] +=
-                    ((i as Sample / TABLE_SIZE as f32) * PI * 2.0 * freq * (n + 1) as Sample
-                        + start_phase)
-                        .sin()
-                        * harmonic_amp;
+                self.buffer[i] += ((i as Sample / TABLE_SIZE as Sample)
+                    * PI as Sample
+                    * 2.0
+                    * freq
+                    * (n + 1) as Sample
+                    + start_phase)
+                    .sin()
+                    * harmonic_amp;
             }
         }
         self.update_diff_buffer();
@@ -196,14 +213,16 @@ impl Wavetable {
     pub fn add_aliasing_saw(&mut self, num_harmonics: usize, amp: Sample) {
         for i in 0..num_harmonics {
             let start_phase = 0.0;
-            let harmonic_amp = 1.0 / ((i + 1) as Sample * PI);
+            let harmonic_amp = 1.0 / ((i + 1) as Sample * PI as Sample);
             for k in 0..self.buffer.len() {
-                self.buffer[k] +=
-                    ((k as Sample / self.buffer.len() as Sample * PI * 2.0 * (i + 1) as Sample
-                        + start_phase)
-                        .sin()
-                        * harmonic_amp)
-                        * amp;
+                self.buffer[k] += ((k as Sample / self.buffer.len() as Sample
+                    * PI as Sample
+                    * 2.0
+                    * (i + 1) as Sample
+                    + start_phase)
+                    .sin()
+                    * harmonic_amp)
+                    * amp;
             }
         }
         self.update_diff_buffer();
@@ -222,7 +241,7 @@ impl Wavetable {
             // Add this odd harmonic to the buffer
             for k in 0..self.buffer.len() {
                 self.buffer[k] += (k as Sample / self.buffer.len() as Sample
-                    * PI
+                    * PI as Sample
                     * 2.0
                     * ((i * 2) as Sample + 1.0)
                     + start_phase)
@@ -237,7 +256,7 @@ impl Wavetable {
         let mut xorrng = XOrShift32Rng::new(seed);
         for sample in &mut self.buffer {
             if xorrng.gen_f64() > probability {
-                *sample += xorrng.gen_f32() - 0.5;
+                *sample += xorrng.gen_f32() as Sample - 0.5;
                 if *sample > 1.0 {
                     *sample -= 1.0;
                 }
@@ -278,7 +297,7 @@ impl Wavetable {
     #[must_use]
     pub fn get_linear_interp(&self, phase: WavetablePhase) -> Sample {
         let index = phase.integer_component();
-        let mix = phase.fractional_component_f32();
+        let mix = phase.fractional_component_f32() as Sample;
         self.buffer[index] + self.diff_buffer[index] * mix
     }
 

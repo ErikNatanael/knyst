@@ -21,7 +21,7 @@ pub struct RunGraph {
     graph_node: Node,
     graph_sample_rate: Sample,
     resources: Resources,
-    input_buffer_ptr: *mut f32,
+    input_buffer_ptr: *mut Sample,
     input_buffer_length: usize,
     input_node_buffer_ref: NodeBufferRef,
     output_node_buffer_ref: NodeBufferRef,
@@ -55,7 +55,7 @@ impl RunGraph {
                     let input_buffer = vec![0.0 as Sample; input_buffer_length].into_boxed_slice();
                     let input_buffer = Box::into_raw(input_buffer);
                     // Safety: we just created the slice of non-zero length
-                    input_buffer.cast::<f32>()
+                    input_buffer.cast::<Sample>()
                 } else {
                     std::ptr::null_mut()
                 };
