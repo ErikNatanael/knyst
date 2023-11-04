@@ -97,7 +97,8 @@ impl BufferId {
 
 /// Get a unique id for a Buffer from this by using `fetch_add`
 pub(crate) static NEXT_BUFFER_ID: AtomicU64 = AtomicU64::new(0);
-pub(crate) static NEXT_WAVETABLE_ID: AtomicU64 = AtomicU64::new(0);
+/// Get a unique id for a wavetable. Starts after all the default wavetables, see WavetableId impl block
+pub(crate) static NEXT_WAVETABLE_ID: AtomicU64 = AtomicU64::new(1);
 
 /// A unique id for a Wavetable. Can be converted to a [`WavetableKey`] by the [`Resources`].
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -107,6 +108,9 @@ impl WavetableId {
     /// Generate a new unique `WavetableId`
     pub fn new() -> Self {
         Self(NEXT_WAVETABLE_ID.fetch_add(1, std::sync::atomic::Ordering::Release))
+    }
+    pub fn cos() -> Self {
+        Self(0)
     }
 }
 impl Default for WavetableId {
@@ -217,14 +221,20 @@ impl Resources {
         // let freq_to_phase_inc =
         //     TABLE_SIZE as f64 * FRACTIONAL_PART as f64 * (1.0 / settings.sample_rate as f64);
 
-        Resources {
+        let mut r = Resources {
             buffers,
             buffer_ids,
             wavetables,
             wavetable_ids,
             user_data,
             rng,
-        }
+        };
+
+        // Insert default wavetables
+        r.insert_wavetable_with_id(Wavetable::cosine(), WavetableId::cos())
+            .expect("No space in Resources for default wavetables");
+
+        r
     }
     pub fn apply_command(&mut self, command: ResourcesCommand) -> ResourcesResponse {
         match command {

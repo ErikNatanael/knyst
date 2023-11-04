@@ -8,7 +8,8 @@ use std::time::Instant;
 use knyst_core::resources::{BufferId, WavetableId};
 
 use crate::controller::KnystCommands;
-use crate::graph::{GraphSettings, NodeId};
+use crate::graph::{Graph, GraphSettings, NodeId};
+use crate::handles::{GraphHandle, Handle};
 use crate::prelude::{CallbackHandle, MultiThreadedKnystCommands};
 use crate::sphere::KnystSphere;
 
@@ -249,6 +250,26 @@ impl KnystCommands for UnifiedKnystCommands {
             UnifiedKnystCommands::Dummy(kc) => {
                 kc.report_dummy();
                 GraphSettings::default()
+            }
+        }
+    }
+
+    fn init_local_graph(&mut self, settings: GraphSettings) -> crate::graph::GraphId {
+        match self {
+            UnifiedKnystCommands::Real(kc) => kc.borrow_mut().init_local_graph(settings),
+            UnifiedKnystCommands::Dummy(kc) => {
+                kc.report_dummy();
+                0
+            }
+        }
+    }
+
+    fn upload_local_graph(&mut self) -> Handle<GraphHandle> {
+        match self {
+            UnifiedKnystCommands::Real(kc) => kc.borrow_mut().upload_local_graph(),
+            UnifiedKnystCommands::Dummy(kc) => {
+                kc.report_dummy();
+                Handle::new(GraphHandle::new(NodeId::new(), 0, 0))
             }
         }
     }

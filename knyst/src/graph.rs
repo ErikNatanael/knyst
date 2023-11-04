@@ -653,6 +653,8 @@ pub trait GenOrGraph {
         parent_graph_oversampling: Oversampling,
     ) -> (Option<Graph>, Box<dyn Gen + Send>);
     fn into_gen_or_graph_enum(self) -> GenOrGraphEnum;
+    fn num_outputs(&self) -> usize;
+    fn num_inputs(&self) -> usize;
 }
 
 impl<T: Gen + Send + 'static> GenOrGraph for T {
@@ -666,6 +668,14 @@ impl<T: Gen + Send + 'static> GenOrGraph for T {
     }
     fn into_gen_or_graph_enum(self) -> GenOrGraphEnum {
         GenOrGraphEnum::Gen(Box::new(self))
+    }
+
+    fn num_outputs(&self) -> usize {
+        self.num_outputs()
+    }
+
+    fn num_inputs(&self) -> usize {
+        self.num_inputs()
     }
 }
 // impl<T: Gen + Send> GenOrGraph for Box<T> {
@@ -710,6 +720,14 @@ impl GenOrGraph for Graph {
     }
     fn into_gen_or_graph_enum(self) -> GenOrGraphEnum {
         GenOrGraphEnum::Graph(self)
+    }
+
+    fn num_outputs(&self) -> usize {
+        self.num_outputs()
+    }
+
+    fn num_inputs(&self) -> usize {
+        self.num_inputs()
     }
 }
 

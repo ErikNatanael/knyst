@@ -10,9 +10,9 @@ use knyst_core::{
 use knyst_macro::impl_gen;
 
 // Necessary to use impl_gen from inside the knyst crate
-use crate::{self as knyst, handles::NodeHandleData, modal_interface::commands};
+use crate::{self as knyst, handles::HandleData, modal_interface::commands};
 
-/// Oscillator using a shared [`Wavetable`] stored in a [`Resources`]
+/// Oscillator using a shared [`Wavetable`] stored in a [`Resources`]. Assumes the wavetable has normal range for the `range` method on the Handle.
 /// *inputs*
 /// 0. "freq": Frequency of oscillation
 /// *outputs*
@@ -22,7 +22,6 @@ pub struct Oscillator {
     step: u32,
     phase: WavetablePhase,
     wavetable: IdOrKey<WavetableId, WavetableKey>,
-    amp: Sample,
     freq_to_phase_inc: f64,
 }
 
@@ -36,17 +35,12 @@ impl Oscillator {
             step: 0,
             phase: WavetablePhase(0),
             wavetable: wavetable.into(),
-            amp: 1.0,
             freq_to_phase_inc: 0., // set to a real value in init
         }
     }
     #[inline]
     pub fn set_freq(&mut self, freq: Sample) {
         self.step = (freq as f64 * self.freq_to_phase_inc) as u32;
-    }
-    #[inline]
-    pub fn set_amp(&mut self, amp: Sample) {
-        self.amp = amp;
     }
     #[inline]
     pub fn reset_phase(&mut self) {
@@ -75,7 +69,8 @@ impl Oscillator {
             for (&f, o) in freq.iter().zip(sig.iter_mut()) {
                 self.set_freq(f);
                 self.phase.increase(self.step);
-                *o = wt.get_linear_interp(self.phase) * self.amp;
+                // TODO: Set a buffer of phase values and request them all from the wavetable all at the same time. Should enable SIMD in the wavetable lookup.
+                *o = wt.get_linear_interp(self.phase);
             }
         } else {
             sig.fill(0.0);
@@ -360,11 +355,11 @@ pub fn buffer_reader_multi(
     buffer: BufferId,
     rate: f64,
     stop_action: StopAction,
-) -> knyst::handles::NodeHandle<BufferReaderMultiHandle> {
+) -> knyst::handles::Handle<BufferReaderMultiHandle> {
     let gen = BufferReaderMulti::new(buffer, rate, stop_action);
     let num_channels = buffer.num_channels();
     let id = knyst::prelude::KnystCommands::push_without_inputs(&mut commands(), gen);
-    knyst::handles::NodeHandle::new(BufferReaderMultiHandle {
+    knyst::handles::Handle::new(BufferReaderMultiHandle {
         node_id: id,
         num_channels,
     })
@@ -374,7 +369,7 @@ pub struct BufferReaderMultiHandle {
     node_id: knyst::graph::NodeId,
     num_channels: usize,
 }
-impl NodeHandleData for BufferReaderMultiHandle {
+impl HandleData for BufferReaderMultiHandle {
     fn out_channels(&self) -> knyst::handles::ChannelIter {
         knyst::handles::ChannelIter::single_node_id(self.node_id, self.num_channels)
     }

@@ -2,7 +2,11 @@
 
 ## Current changes
 
-- Update all dependencies to the latest version
+Large breaking changes in this version
+- Updated all dependencies to the latest version.
+- New `impl_gen` macro for implementing the Gen trait and adding a Handle with much less error prone boilerplate.
+- Fixed bug in the `Wavetable` which produced artefacts.
+- Refactored the codebase to something more logical. Many paths have changed, but importing the prelude should give you most of what you need.
 
 ## v0.4.3 
 

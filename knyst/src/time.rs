@@ -113,12 +113,7 @@ impl From<Duration> for Superseconds {
 
 impl PartialOrd for Superseconds {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        if self.seconds == other.seconds {
-            self.subsample_tesimals
-                .partial_cmp(&other.subsample_tesimals)
-        } else {
-            self.seconds.partial_cmp(&other.seconds)
-        }
+        Some(self.cmp(other))
     }
 }
 impl Ord for Superseconds {
@@ -261,11 +256,7 @@ impl std::iter::Sum for Superbeats {
 }
 impl PartialOrd for Superbeats {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        if self.beats == other.beats {
-            self.beat_tesimals.partial_cmp(&other.beat_tesimals)
-        } else {
-            self.beats.partial_cmp(&other.beats)
-        }
+        Some(self.cmp(other))
     }
 }
 impl Ord for Superbeats {

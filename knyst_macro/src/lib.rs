@@ -118,11 +118,11 @@ impl NewData {
         quote! {
                     // Init handle fn
                     // TODO: Take parameters to new() to be able to call it
-                    pub fn #create_fn_name(#(#param_types_in_sig),*) -> knyst::handles::NodeHandle<#handle_name> {
+                    pub fn #create_fn_name(#(#param_types_in_sig),*) -> knyst::handles::Handle<#handle_name> {
                         use knyst::controller::KnystCommands;
                         let node_id =
                             knyst::modal_interface::commands().push_without_inputs(#type_ident::#fn_name(#(#param_names_in_call),*));
-                        knyst::handles::NodeHandle::new(#handle_name{node_id})
+                        knyst::handles::Handle::new(#handle_name{node_id})
                     }
         }
     }
@@ -247,7 +247,7 @@ impl GenImplData {
         let handle_range_impl = range.map(|range| match range {
             Range::Normal => {
                 quote! {
-                    impl knyst::handles::NodeHandleNormalRange for #handle_name {}
+                    impl knyst::handles::HandleNormalRange for #handle_name {}
                 }
             }
         });
@@ -255,7 +255,7 @@ impl GenImplData {
             let param_ident = Ident::new(&i.to_string().to_lowercase(), Span::call_site());
             let param_string = i.to_string();
             quote! {
-                        pub fn #i(&self, #param_ident: impl Into<knyst::handles::Input>) -> knyst::handles::NodeHandle<Self> {
+                        pub fn #i(&self, #param_ident: impl Into<knyst::handles::Input>) -> knyst::handles::Handle<Self> {
                             use knyst::controller::KnystCommands;
             let inp = #param_ident.into();
             match inp {
@@ -268,7 +268,7 @@ impl GenImplData {
                     }
                 }
             }
-            knyst::handles::NodeHandle::new(*self)
+            knyst::handles::Handle::new(*self)
                         }
                     }
         });
@@ -319,7 +319,7 @@ impl GenImplData {
                     impl #handle_name {
                         #(#handle_functions)*
                     }
-                    impl knyst::handles::NodeHandleData for #handle_name {
+                    impl knyst::handles::HandleData for #handle_name {
         fn out_channels(&self) -> knyst::handles::ChannelIter {
             knyst::handles::ChannelIter::single_node_id(
                 self.node_id,

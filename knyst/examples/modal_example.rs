@@ -3,7 +3,9 @@ use std::default;
 use anyhow::Result;
 use knyst::{
     audio_backend::{CpalBackend, CpalBackendOptions, JackBackend},
-    handles::{graph_output, NodeHandle},
+    envelope::Envelope,
+    graph,
+    handles::{graph_output, handle, Handle},
     modal_interface::commands,
     prelude::*,
     sphere::{KnystSphere, SphereSettings},
@@ -40,29 +42,46 @@ fn main() -> Result<()> {
     //     graph_output(0, (node0 * modulator * 0.0025).repeat_outputs(1));
     // }
 
-    let mut rng = thread_rng();
-    for _ in 0..10 {
-        let freq = (sine(wt).freq(
-            sine(wt)
-                .freq(
-                    sine(wt)
-                        .freq(0.01)
-                        .range(0.02, rng.gen_range(0.05..0.3 as Sample)),
-                )
-                .range(0.0, 400.),
-        ) * 100.0)
-            + 440.;
-        // let freq = sine().freq(0.5).range(200.0, 200.0 * 9.0 / 8.0);
-        let node0 = sine(wt);
-        node0.freq(freq);
-        let modulator = sine(wt);
-        modulator.freq(sine(wt).freq(0.09) * -5.0 + 6.0);
-        graph_output(0, (node0 * modulator * 0.025).repeat_outputs(1));
+    // let mut rng = thread_rng();
+    // for _ in 0..10 {
+    //     let freq = (sine().freq(
+    //         sine(wt)
+    //             .freq(
+    //                 sine(wt)
+    //                     .freq(0.01)
+    //                     .range(0.02, rng.gen_range(0.05..0.3 as Sample)),
+    //             )
+    //             .range(0.0, 400.),
+    //     ) * 100.0)
+    //         + 440.;
+    //     // let freq = sine().freq(0.5).range(200.0, 200.0 * 9.0 / 8.0);
+    //     let node0 = sine();
+    //     node0.freq(freq);
+    //     let modulator = sine();
+    //     modulator.freq(sine().freq(0.09) * -5.0 + 6.0);
+    //     graph_output(0, (node0 * modulator * 0.025).repeat_outputs(1));
+    // }
+
+    for &freq in [400, 600, 500].iter().cycle() {
+        // new graph
+        commands().init_local_graph(commands().default_graph_settings());
+        let sig = sine().freq(freq as f32) * 0.25;
+        let env = Envelope {
+            points: vec![(1.0, 0.005), (0.0, 0.5)],
+            stop_action: StopAction::FreeGraph,
+            ..Default::default()
+        };
+        let sig = sig * handle(env.to_gen());
+
+        graph_output(0, sig.repeat_outputs(1));
+        // push graph to sphere
+        let graph = commands().upload_local_graph();
+
+        graph_output(0, graph);
+        std::thread::sleep(std::time::Duration::from_millis(250));
     }
 
     // graph_output(0, (sine(wt).freq(200.)).repeat_outputs(1));
-
-    // std::thread::sleep(std::time::Duration::from_secs(5));
 
     let mut input = String::new();
     loop {
@@ -87,6 +106,6 @@ fn main() -> Result<()> {
 // fn sine() -> NodeHandle<WavetableOscillatorOwnedHandle> {
 //     wavetable_oscillator_owned(Wavetable::sine())
 // }
-fn sine(wt: WavetableId) -> NodeHandle<OscillatorHandle> {
-    oscillator(wt)
+fn sine() -> Handle<OscillatorHandle> {
+    oscillator(WavetableId::cos())
 }

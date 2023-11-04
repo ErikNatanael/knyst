@@ -100,7 +100,7 @@ impl Wavetable {
         w.update_diff_buffer();
         w
     }
-    /// Create a new wavetable containing a sine wave
+    /// Create a new wavetable containing a sine wave. For audio, you often want a cosine instead since it starts at 0 to avoid discontinuities.
     #[must_use]
     pub fn sine() -> Self {
         let wavetable_size = TABLE_SIZE;
@@ -108,6 +108,18 @@ impl Wavetable {
         // Fill buffer with a sine
         for i in 0..wavetable_size {
             wt.buffer[i] = ((i as f64 / TABLE_SIZE as f64) * PI * 2.0).sin() as Sample;
+        }
+        wt.update_diff_buffer();
+        wt
+    }
+    /// Create a new wavetable containing a cosine wave.
+    #[must_use]
+    pub fn cosine() -> Self {
+        let wavetable_size = TABLE_SIZE;
+        let mut wt = Wavetable::new();
+        // Fill buffer with a sine
+        for i in 0..wavetable_size {
+            wt.buffer[i] = ((i as f64 / TABLE_SIZE as f64) * PI * 2.0).cos() as Sample;
         }
         wt.update_diff_buffer();
         wt

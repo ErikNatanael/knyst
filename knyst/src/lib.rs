@@ -82,6 +82,7 @@ pub mod scheduling;
 pub mod sphere;
 pub mod time;
 pub mod trig;
+pub use knyst_core::xorrng;
 
 /// Combined error type for Knyst, containing any other error in the library.
 #[derive(thiserror::Error, Debug)]

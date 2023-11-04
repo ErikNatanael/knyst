@@ -6,17 +6,18 @@ use std::{
 use knyst_core::Sample;
 
 use crate::{
-    graph::{connection::NodeChannel, NodeId},
+    graph::{connection::NodeChannel, GenOrGraph, NodeId},
     modal_interface::commands,
     prelude::{Bus, KnystCommands, MulGen, RampGen},
 };
 
+/// Handle
 #[derive(Copy, Clone, Debug)]
-pub struct NodeHandle<H: Copy> {
+pub struct Handle<H: Copy> {
     handle: H,
 }
 
-impl<H: Copy> Deref for NodeHandle<H> {
+impl<H: Copy> Deref for Handle<H> {
     type Target = H;
 
     fn deref(&self) -> &Self::Target {
@@ -28,18 +29,18 @@ impl<H: Copy> Deref for NodeHandle<H> {
 //         value.handle.into()
 //     }
 // }
-impl<A: Copy + NodeHandleData> NodeHandle<A> {
+impl<A: Copy + HandleData> Handle<A> {
     pub fn new(handle: A) -> Self {
         Self { handle }
     }
-    pub fn repeat_outputs(self, n: usize) -> NodeHandle<RepeatOutputs<A>> {
-        NodeHandle::new(RepeatOutputs {
+    pub fn repeat_outputs(self, n: usize) -> Handle<RepeatOutputs<A>> {
+        Handle::new(RepeatOutputs {
             handle: self.handle,
             repeats: n,
         })
     }
 }
-impl<H: NodeHandleData + Copy> NodeHandleData for NodeHandle<H> {
+impl<H: HandleData + Copy> HandleData for Handle<H> {
     fn out_channels(&self) -> ChannelIter {
         self.handle.out_channels()
     }
@@ -53,11 +54,11 @@ impl<H: NodeHandleData + Copy> NodeHandleData for NodeHandle<H> {
     }
 }
 #[derive(Copy, Clone, Debug)]
-pub struct RepeatOutputs<H: Copy + NodeHandleData> {
+pub struct RepeatOutputs<H: Copy + HandleData> {
     handle: H,
     repeats: usize,
 }
-impl<H: Copy + NodeHandleData> NodeHandleData for RepeatOutputs<H> {
+impl<H: Copy + HandleData> HandleData for RepeatOutputs<H> {
     fn out_channels(&self) -> ChannelIter {
         let channels = self
             .handle
@@ -80,7 +81,7 @@ pub struct MulHandle {
     node_id: NodeId,
     num_out_channels: usize,
 }
-impl NodeHandleData for MulHandle {
+impl HandleData for MulHandle {
     fn out_channels(&self) -> ChannelIter {
         ChannelIter::SingleNodeId {
             node_id: self.node_id,
@@ -106,7 +107,7 @@ pub struct AddHandle {
     node_id: NodeId,
     num_out_channels: usize,
 }
-impl NodeHandleData for AddHandle {
+impl HandleData for AddHandle {
     fn out_channels(&self) -> ChannelIter {
         ChannelIter::SingleNodeId {
             node_id: self.node_id,
@@ -128,12 +129,12 @@ impl NodeHandleData for AddHandle {
     }
 }
 
-pub trait NodeHandleData {
-    /// All output channels of this `NodeHandle` in order
+pub trait HandleData {
+    /// All output channels of this `Handle` in order
     fn out_channels(&self) -> ChannelIter;
-    /// All input channels of this `NodeHandle` in order
+    /// All input channels of this `Handle` in order
     fn in_channels(&self) -> ChannelIter;
-    /// All `NodeIds` referenced by thi`NodeHandle` in any order
+    /// All `NodeIds` referenced by this `Handle` in any order
     fn node_ids(&self) -> NodeIdIter;
 }
 pub enum NodeIdIter {
@@ -231,31 +232,31 @@ impl Iterator for ChannelIter {
     }
 }
 
-impl<A, B> Mul<NodeHandle<A>> for NodeHandle<B>
+impl<A, B> Mul<Handle<A>> for Handle<B>
 where
-    A: Copy + NodeHandleData,
-    B: Copy + NodeHandleData,
+    A: Copy + HandleData,
+    B: Copy + HandleData,
 {
-    type Output = NodeHandle<MulHandle>;
+    type Output = Handle<MulHandle>;
 
-    fn mul(self, rhs: NodeHandle<A>) -> Self::Output {
+    fn mul(self, rhs: Handle<A>) -> Self::Output {
         let num_out_channels = self.out_channels().collect::<Vec<_>>().len();
         let mul_id = commands().push_without_inputs(MulGen(num_out_channels));
         for (i, (out0, out1)) in self.out_channels().zip(rhs.out_channels()).enumerate() {
             commands().connect(out0.0.to(mul_id).from_channel(out0.1).to_channel(i * 2));
             commands().connect(out1.0.to(mul_id).from_channel(out1.1).to_channel(i * 2 + 1));
         }
-        NodeHandle::new(MulHandle {
+        Handle::new(MulHandle {
             node_id: mul_id,
             num_out_channels,
         })
     }
 }
 
-impl<B: Copy + NodeHandleData> Mul<NodeHandle<B>> for Sample {
-    type Output = NodeHandle<MulHandle>;
+impl<B: Copy + HandleData> Mul<Handle<B>> for Sample {
+    type Output = Handle<MulHandle>;
 
-    fn mul(self, rhs: NodeHandle<B>) -> Self::Output {
+    fn mul(self, rhs: Handle<B>) -> Self::Output {
         let num_out_channels = rhs.out_channels().collect::<Vec<_>>().len();
         let mul_id = commands().push_without_inputs(MulGen(num_out_channels));
         for (i, (out0, out1)) in std::iter::repeat(self).zip(rhs.out_channels()).enumerate() {
@@ -266,45 +267,45 @@ impl<B: Copy + NodeHandleData> Mul<NodeHandle<B>> for Sample {
             );
             commands().connect(out1.0.to(mul_id).from_channel(out1.1).to_channel(i * 2 + 1));
         }
-        NodeHandle::new(MulHandle {
+        Handle::new(MulHandle {
             node_id: mul_id,
             num_out_channels,
         })
     }
 }
-impl<B: Copy + NodeHandleData> Mul<Sample> for NodeHandle<B> {
-    type Output = NodeHandle<MulHandle>;
+impl<B: Copy + HandleData> Mul<Sample> for Handle<B> {
+    type Output = Handle<MulHandle>;
 
     fn mul(self, rhs: Sample) -> Self::Output {
         rhs * self
     }
 }
 // Add
-impl<A, B> Add<NodeHandle<A>> for NodeHandle<B>
+impl<A, B> Add<Handle<A>> for Handle<B>
 where
-    A: Copy + NodeHandleData,
-    B: Copy + NodeHandleData,
+    A: Copy + HandleData,
+    B: Copy + HandleData,
 {
-    type Output = NodeHandle<AddHandle>;
+    type Output = Handle<AddHandle>;
 
-    fn add(self, rhs: NodeHandle<A>) -> Self::Output {
+    fn add(self, rhs: Handle<A>) -> Self::Output {
         let num_out_channels = self.out_channels().collect::<Vec<_>>().len();
         let node_id = commands().push_without_inputs(Bus(num_out_channels));
         for (i, (out0, out1)) in self.out_channels().zip(rhs.out_channels()).enumerate() {
             commands().connect(out0.0.to(node_id).from_channel(out0.1).to_channel(i));
             commands().connect(out1.0.to(node_id).from_channel(out1.1).to_channel(i));
         }
-        NodeHandle::new(AddHandle {
+        Handle::new(AddHandle {
             node_id,
             num_out_channels,
         })
     }
 }
 
-impl<B: Copy + NodeHandleData> Add<NodeHandle<B>> for Sample {
-    type Output = NodeHandle<AddHandle>;
+impl<B: Copy + HandleData> Add<Handle<B>> for Sample {
+    type Output = Handle<AddHandle>;
 
-    fn add(self, rhs: NodeHandle<B>) -> Self::Output {
+    fn add(self, rhs: Handle<B>) -> Self::Output {
         let num_out_channels = rhs.out_channels().collect::<Vec<_>>().len();
         let node_id = commands().push_without_inputs(Bus(num_out_channels));
         for (i, (out0, out1)) in std::iter::repeat(self).zip(rhs.out_channels()).enumerate() {
@@ -315,14 +316,14 @@ impl<B: Copy + NodeHandleData> Add<NodeHandle<B>> for Sample {
             );
             commands().connect(out1.0.to(node_id).from_channel(out1.1).to_channel(i));
         }
-        NodeHandle::new(AddHandle {
+        Handle::new(AddHandle {
             node_id,
             num_out_channels,
         })
     }
 }
-impl<B: Copy + NodeHandleData> Add<Sample> for NodeHandle<B> {
-    type Output = NodeHandle<AddHandle>;
+impl<B: Copy + HandleData> Add<Sample> for Handle<B> {
+    type Output = Handle<AddHandle>;
 
     fn add(self, rhs: Sample) -> Self::Output {
         rhs + self
@@ -336,8 +337,8 @@ pub struct AnyNodeHandle {
     node_ids: NodeIdIter,
 }
 
-impl<H: Copy + NodeHandleData + 'static> From<NodeHandle<H>> for AnyNodeHandle {
-    fn from(value: NodeHandle<H>) -> Self {
+impl<H: Copy + HandleData + 'static> From<Handle<H>> for AnyNodeHandle {
+    fn from(value: Handle<H>) -> Self {
         AnyNodeHandle {
             org_handle: Box::new(value),
             in_channel_iter: value.in_channels(),
@@ -356,8 +357,8 @@ impl From<Sample> for Input {
         Input::Constant(value)
     }
 }
-impl<H: Copy + NodeHandleData> From<NodeHandle<H>> for Input {
-    fn from(value: NodeHandle<H>) -> Self {
+impl<H: Copy + HandleData> From<Handle<H>> for Input {
+    fn from(value: Handle<H>) -> Self {
         Input::Handle {
             output_channels: value.out_channels(),
         }
@@ -370,14 +371,14 @@ impl From<&AnyNodeHandle> for Input {
 }
 
 /// Marker trait to mark that the output of the Gen will be between -1 and 1 inclusive
-pub trait NodeHandleNormalRange {}
+pub trait HandleNormalRange {}
 
 #[derive(Clone, Copy, Debug)]
 pub struct RangeHandle {
     node_id: NodeId,
     num_out_channels: usize,
 }
-impl NodeHandleData for RangeHandle {
+impl HandleData for RangeHandle {
     fn out_channels(&self) -> ChannelIter {
         ChannelIter::SingleNodeId {
             node_id: self.node_id,
@@ -399,12 +400,8 @@ impl NodeHandleData for RangeHandle {
     }
 }
 
-impl<H: NodeHandleData + Copy + NodeHandleNormalRange> NodeHandle<H> {
-    pub fn range(
-        mut self,
-        min: impl Into<Input>,
-        max: impl Into<Input>,
-    ) -> NodeHandle<RangeHandle> {
+impl<H: HandleData + Copy + HandleNormalRange> Handle<H> {
+    pub fn range(mut self, min: impl Into<Input>, max: impl Into<Input>) -> Handle<RangeHandle> {
         // Convert to the correct range for the RangeGen
         let input = self * 0.5 + 0.5;
         let num_out_channels = input.out_channels().collect::<Vec<_>>().len();
@@ -454,7 +451,7 @@ impl<H: NodeHandleData + Copy + NodeHandleNormalRange> NodeHandle<H> {
         for (i, out0) in input.out_channels().enumerate() {
             commands().connect(out0.0.to(node_id).from_channel(out0.1).to_channel(i + 2));
         }
-        NodeHandle::new(RangeHandle {
+        Handle::new(RangeHandle {
             node_id,
             num_out_channels,
         })
@@ -482,5 +479,72 @@ pub fn graph_output(index: usize, input: impl Into<Input>) {
                 );
             }
         }
+    }
+}
+
+#[derive(Copy, Clone)]
+pub struct GenericHandle {
+    node_id: NodeId,
+    num_inputs: usize,
+    num_outputs: usize,
+}
+impl HandleData for GenericHandle {
+    fn out_channels(&self) -> ChannelIter {
+        ChannelIter::SingleNodeId {
+            node_id: self.node_id,
+            num_channels: self.num_outputs,
+            current_iter_index: 0,
+        }
+    }
+
+    fn in_channels(&self) -> ChannelIter {
+        ChannelIter::single_node_id(self.node_id, self.num_inputs)
+    }
+
+    fn node_ids(&self) -> NodeIdIter {
+        NodeIdIter::Single(self.node_id)
+    }
+}
+pub fn handle(gen: impl GenOrGraph) -> Handle<GenericHandle> {
+    let num_inputs = gen.num_inputs();
+    let num_outputs = gen.num_outputs();
+    let node_id = commands().push_without_inputs(gen);
+    Handle::new(GenericHandle {
+        node_id,
+        num_inputs,
+        num_outputs,
+    })
+}
+
+#[derive(Copy, Clone)]
+pub struct GraphHandle {
+    node_id: NodeId,
+    num_inputs: usize,
+    num_outputs: usize,
+}
+impl GraphHandle {
+    pub(crate) fn new(id: NodeId, num_inputs: usize, num_outputs: usize) -> Self {
+        Self {
+            node_id: id,
+            num_inputs,
+            num_outputs,
+        }
+    }
+}
+impl HandleData for GraphHandle {
+    fn out_channels(&self) -> ChannelIter {
+        ChannelIter::SingleNodeId {
+            node_id: self.node_id,
+            num_channels: self.num_outputs,
+            current_iter_index: 0,
+        }
+    }
+
+    fn in_channels(&self) -> ChannelIter {
+        ChannelIter::single_node_id(self.node_id, self.num_inputs)
+    }
+
+    fn node_ids(&self) -> NodeIdIter {
+        NodeIdIter::Single(self.node_id)
     }
 }
