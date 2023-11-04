@@ -209,12 +209,15 @@ impl Resources {
     /// Create a new `Resources` using `settings`
     #[must_use]
     pub fn new(settings: ResourcesSettings) -> Self {
+        const NUM_DEFAULT_WAVETABLES: usize = 1;
         // let user_data = HopSlotMap::with_capacity_and_key(1000);
         let user_data = HashMap::with_capacity(1000);
         let rng = fastrand::Rng::new();
         // Add standard wavetables to the arena
-        let wavetables = SlotMap::with_capacity_and_key(settings.max_wavetables);
-        let wavetable_ids = SecondaryMap::with_capacity(settings.max_wavetables);
+        let wavetables =
+            SlotMap::with_capacity_and_key(settings.max_wavetables + NUM_DEFAULT_WAVETABLES);
+        let wavetable_ids =
+            SecondaryMap::with_capacity(settings.max_wavetables + NUM_DEFAULT_WAVETABLES);
         let buffers = SlotMap::with_capacity_and_key(settings.max_buffers);
         let buffer_ids = SecondaryMap::with_capacity(settings.max_buffers);
 
