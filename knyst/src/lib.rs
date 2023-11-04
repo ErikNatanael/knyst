@@ -56,6 +56,7 @@ use std::ops::{Deref, DerefMut};
 // Import these for docs
 #[allow(unused_imports)]
 use graph::{Connection, Graph, RunGraph};
+pub use modal_interface::commands;
 pub use resources::Resources;
 
 // assert_no_alloc to make sure we are not allocating on the audio thread. The
@@ -127,6 +128,9 @@ pub fn amplitude_to_db(amplitude: Sample) -> Sample {
 /// The current sample type used throughout Knyst
 pub type Sample = f32;
 
+/// Marker for inputs that are trigs. This makes it possible to set that value correctly through a Handle.
+pub type Trig = Sample;
+
 /// Newtype for a sample rate to identify it in function signatures. Derefs to a `Sample` for easy use on the audio thread.
 #[derive(Copy, Clone, Debug)]
 pub struct SampleRate(Sample);
@@ -135,6 +139,10 @@ impl SampleRate {
     #[inline(always)]
     pub fn to_f64(self) -> f64 {
         self.0 as f64
+    }
+    #[inline(always)]
+    pub fn to_usize(self) -> usize {
+        self.0 as usize
     }
 }
 

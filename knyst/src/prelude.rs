@@ -17,5 +17,5 @@ pub use crate::resources::{Resources, ResourcesSettings};
 pub use crate::sphere::{KnystSphere, SphereSettings};
 pub use crate::time::{Superbeats, Superseconds};
 pub use crate::wavetable::{Wavetable, TABLE_POWER, TABLE_SIZE};
-pub use crate::{BlockSize, Sample, SampleRate};
+pub use crate::{BlockSize, Sample, SampleRate, Trig};
 pub use knyst_macro::impl_gen;

@@ -151,6 +151,8 @@ impl InitData {
                 ParameterTy::BlockSize => quote! {
                     let #p_ident: knyst::prelude::BlockSize = block_size.into();
                 },
+                ParameterTy::InputTrig => todo!(),
+                ParameterTy::OutputTrig => todo!(),
             }
         });
         let parameters_in_sig = parameters.iter().map(|p| &p.ident);
@@ -225,7 +227,10 @@ impl GenImplData {
         let extract_other_process_parameters = parameters.iter().map(|p| {
             let p_ident = &Ident::new(&format!("__impl_gen_{}", p.ident), Span::call_site());
             match p._ty {
-                ParameterTy::Input | ParameterTy::Output => quote! {},
+                ParameterTy::Input
+                | ParameterTy::Output
+                | ParameterTy::InputTrig
+                | ParameterTy::OutputTrig => quote! {},
                 ParameterTy::SampleRate => {
                     quote! { let #p_ident: knyst::prelude::SampleRate = ctx.sample_rate.into(); }
                 }
@@ -251,26 +256,49 @@ impl GenImplData {
                 }
             }
         });
-        let handle_functions = inputs.iter().map(|i| {
-            let param_ident = Ident::new(&i.to_string().to_lowercase(), Span::call_site());
-            let param_string = i.to_string();
-            quote! {
-                        pub fn #i(&self, #param_ident: impl Into<knyst::handles::Input>) -> knyst::handles::Handle<Self> {
-                            use knyst::controller::KnystCommands;
-            let inp = #param_ident.into();
-            match inp {
-                knyst::handles::Input::Constant(v) => {
+        let handle_functions = parameters.iter().filter(|&p| matches!(p._ty, ParameterTy::Input | ParameterTy::InputTrig)).map(|p| {
+            let param_ident = Ident::new(&p.ident.to_string().to_lowercase(), Span::call_site());
+            let param_string = p.ident.to_string();
+            let i = &p.ident;
+            let set_fn = quote! {
+                pub fn #i(self, #param_ident: impl Into<knyst::handles::Input>) -> knyst::handles::Handle<Self> {
+                    use knyst::controller::KnystCommands;
+                    let inp = #param_ident.into();
+                    match inp {
+                        knyst::handles::Input::Constant(v) => {
                             knyst::modal_interface::commands().connect(knyst::graph::connection::constant(v).to(self.node_id).to_channel(#param_string));
-                }
-                knyst::handles::Input::Handle { output_channels } => {
-                    for (i, (node_id, chan)) in output_channels.enumerate() {
+                        }
+                        knyst::handles::Input::Handle { output_channels } => {
+                            for (i, (node_id, chan)) in output_channels.enumerate() {
                             knyst::modal_interface::commands().connect(node_id.to(self.node_id).from_channel(chan).to_channel(#param_string));
-                    }
-                }
-            }
-            knyst::handles::Handle::new(*self)
+                            }
                         }
                     }
+                    knyst::handles::Handle::new(self)
+                }
+            };
+            match p._ty {
+                ParameterTy::Input => quote!{#set_fn},
+                ParameterTy::InputTrig => {
+                    let trig_fn_name = format_ident!("{}_trig", i);
+                    let doc_str = format!("Send a trigger to the {i} input.");
+                    // TODO: Move SimultaneousChanges into a modal setting on the commands.
+                    quote!{
+                        #set_fn
+                        #[doc = #doc_str]
+                        pub fn #trig_fn_name(self) -> knyst::handles::Handle<Self> {
+                            use knyst::handles::HandleData;
+                            for id in self.node_ids() {
+                                let mut s = knyst::graph::SimultaneousChanges::now();
+                                s.push(id.change().trigger(#param_string));
+                                knyst::commands().schedule_changes(s);
+                            }
+                            knyst::handles::Handle::new(self)
+                        }
+                    }
+                },
+                _ => unreachable!()
+            }
         });
         Ok(quote! {
                     #org_item_impl
@@ -497,6 +525,9 @@ enum ParameterTy {
     ResourcesShared,
     ResourcesMut,
     BlockSize,
+    /// Same as Input, but will create a special set function on the handle
+    InputTrig,
+    OutputTrig,
 }
 
 struct Parameter {
@@ -539,8 +570,10 @@ fn parse_process_fn(impl_item_fn: &ImplItemFn) -> Result<ProcessData> {
             };
             let parameter = parse_parameter(param, name)?;
             match parameter._ty {
-                ParameterTy::Input => inputs.push(parameter.ident.clone()),
-                ParameterTy::Output => outputs.push(parameter.ident.clone()),
+                ParameterTy::Input | ParameterTy::InputTrig => inputs.push(parameter.ident.clone()),
+                ParameterTy::Output | ParameterTy::OutputTrig => {
+                    outputs.push(parameter.ident.clone())
+                }
                 _ => (),
             }
             parameters.push(parameter);
@@ -617,24 +650,40 @@ fn parse_parameter(param: &PatType, name: &Ident) -> Result<Parameter> {
                 Type::Slice(ref slice_type) => {
                     match *slice_type.elem {
                         Type::Path(ref p) if p.path.segments.first().unwrap().ident == "Sample" => {
+                            // The type is okay to be an input or output
+                            if ty.mutability.is_some() {
+                                // outputs.push(name.clone());
+                                Ok(Parameter {
+                                    _ty: ParameterTy::Output,
+                                    ident: name.clone(),
+                                })
+                            } else {
+                                // inputs.push(name.clone());
+                                Ok(Parameter {
+                                    _ty: ParameterTy::Input,
+                                    ident: name.clone(),
+                                })
+                            }
+                        }
+                        Type::Path(ref p) if p.path.segments.first().unwrap().ident == "Trig" => {
+                            // The type is okay to be an input or output
+                            if ty.mutability.is_some() {
+                                // outputs.push(name.clone());
+                                Ok(Parameter {
+                                    _ty: ParameterTy::OutputTrig,
+                                    ident: name.clone(),
+                                })
+                            } else {
+                                // inputs.push(name.clone());
+                                Ok(Parameter {
+                                    _ty: ParameterTy::InputTrig,
+                                    ident: name.clone(),
+                                })
+                            }
                         }
                         _ => {
                             return Err(syn::Error::new(slice_type.elem.span(), "Unknown input"));
                         }
-                    }
-                    // The type is okay to be an input or output
-                    if ty.mutability.is_some() {
-                        // outputs.push(name.clone());
-                        Ok(Parameter {
-                            _ty: ParameterTy::Output,
-                            ident: name.clone(),
-                        })
-                    } else {
-                        // inputs.push(name.clone());
-                        Ok(Parameter {
-                            _ty: ParameterTy::Input,
-                            ident: name.clone(),
-                        })
                     }
                 }
                 Type::Path(ty_path) => {

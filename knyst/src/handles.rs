@@ -329,7 +329,7 @@ impl<B: Copy + HandleData> Add<Sample> for Handle<B> {
         rhs + self
     }
 }
-/// A safe way to store a NodeHandle without the generic parameter, but keep being able to use it
+/// A safe way to store a Handle without the generic parameter, but keep being able to use it
 pub struct AnyNodeHandle {
     org_handle: Box<dyn Any>,
     in_channel_iter: ChannelIter,

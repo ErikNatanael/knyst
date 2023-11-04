@@ -993,6 +993,8 @@ pub struct Graph {
     name: String,
     nodes: Arc<UnsafeCell<SlotMap<NodeKey, Node>>>,
     node_keys_to_free_when_safe: Vec<(NodeKey, Arc<AtomicBool>)>,
+    buffers_to_free_when_safe: Vec<Arc<OwnedRawBuffer>>,
+    new_inputs_buffers_ptr: bool,
     /// Set of keys pending removal to easily check if a node is pending
     /// removal. TODO: Maybe it's actually faster and easier to just look
     /// through node_keys_to_free_when_safe than to bother with a HashSet since
@@ -1098,6 +1100,8 @@ impl Graph {
             ring_buffer_size,
             graph_gen_communicator: None,
             recalculation_required: false,
+            buffers_to_free_when_safe: vec![],
+            new_inputs_buffers_ptr: false,
         }
     }
     /// Create a node that will run this graph. This will fail if a Node or Gen has already been created from the Graph since only one Gen is allowed to exist per Graph.
@@ -1291,6 +1295,34 @@ impl Graph {
             Err(PushError::GraphNotFound(to_node))
         }
     }
+    /// Increase the maximum number of inputs a node can have. This means reallocating the inputs buffer and marking the old for deletion.
+    fn increase_max_node_inputs(&mut self, new_max_node_inputs: usize) {
+        let inputs_buffers_ptr = Box::<[Sample]>::into_raw(
+            vec![
+                0.0 as Sample;
+                self.block_size * self.oversampling.as_usize() * new_max_node_inputs
+            ]
+            .into_boxed_slice(),
+        );
+        let inputs_buffers_ptr = Arc::new(OwnedRawBuffer {
+            ptr: inputs_buffers_ptr,
+        });
+        let old_input_buffers_ptr = mem::replace(&mut self.inputs_buffers_ptr, inputs_buffers_ptr);
+        if let Some(ggc) = &mut self.graph_gen_communicator {
+            // The GraphGen has been created so we have to be more careful
+            self.buffers_to_free_when_safe.push(old_input_buffers_ptr);
+            // Send the new inputs buffers to the GraphGen together with the next TaskData
+            self.new_inputs_buffers_ptr = true;
+        } else {
+            // The GraphGen has not been created so there is nothing running on the audio thread we can do things the easy way
+            assert_eq!(
+                std::sync::Arc::<OwnedRawBuffer>::strong_count(&old_input_buffers_ptr),
+                1
+            );
+            drop(old_input_buffers_ptr);
+        }
+        self.max_node_inputs = new_max_node_inputs;
+    }
     /// Add a node to this Graph. The Node will be (re)initialised with the
     /// correct block size for this Graph.
     ///
@@ -1307,9 +1339,7 @@ impl Graph {
             }
         }
         if node.num_inputs() > self.max_node_inputs {
-            eprintln!(
-                "Warning: You are trying to add a node with more inputs than the maximum for this Graph. Try increasing the maximum number of node inputs in the GraphSettings."
-            );
+            self.increase_max_node_inputs(node.num_inputs());
         }
         let nodes = self.get_nodes();
         if nodes.capacity() == nodes.len() {
@@ -3119,6 +3149,7 @@ impl Graph {
             applied: Arc::new(AtomicBool::new(false)),
             tasks,
             output_tasks,
+            new_inputs_buffers_ptr: Some(self.inputs_buffers_ptr.clone()),
         };
         // let task_data = Box::into_raw(Box::new(task_data));
         // let task_data_ptr = Arc::new(AtomicPtr::new(task_data));
@@ -3196,7 +3227,12 @@ impl Graph {
                 let output_tasks = self.generate_output_tasks().into_boxed_slice();
                 let tasks = self.generate_tasks().into_boxed_slice();
                 if let Some(ggc) = &mut self.graph_gen_communicator {
-                    ggc.send_updated_tasks(tasks, output_tasks);
+                    let new_inputs_buffers_ptr = if self.new_inputs_buffers_ptr {
+                        Some(self.inputs_buffers_ptr.clone())
+                    } else {
+                        None
+                    };
+                    ggc.send_updated_tasks(tasks, output_tasks, new_inputs_buffers_ptr);
                 }
                 self.recalculation_required = false;
             }
@@ -3256,6 +3292,19 @@ impl Graph {
                 self.node_keys_to_free_when_safe.remove(i);
             } else {
                 i += 1;
+            }
+        }
+        // Remove old buffers
+        if !self.buffers_to_free_when_safe.is_empty() {
+            let mut i = self.buffers_to_free_when_safe.len() - 1;
+            loop {
+                if Arc::<OwnedRawBuffer>::strong_count(&self.buffers_to_free_when_safe[i]) == 1 {
+                    self.buffers_to_free_when_safe.remove(i);
+                }
+                if i == 0 {
+                    break;
+                }
+                i -= 1;
             }
         }
     }
@@ -3727,6 +3776,8 @@ struct TaskData {
     applied: Arc<AtomicBool>,
     tasks: Box<[Task]>,
     output_tasks: Box<[OutputTask]>,
+    // if the inputs buffers have been replaced, replace the Arc to them in the GraphGen as well. This avoids the scenario of the buffers being dropped if the Graph is dropped, but the GraphGen is still running.
+    new_inputs_buffers_ptr: Option<Arc<OwnedRawBuffer>>,
 }
 
 struct GraphGenCommunicator {
@@ -3776,7 +3827,12 @@ impl GraphGenCommunicator {
     /// Sends the updated tasks to the GraphGen. NB: Always check if any
     /// resoruces in the Graph can be freed before running this.
     /// GraphGenCommunicator will free its own resources.
-    fn send_updated_tasks(&mut self, tasks: Box<[Task]>, output_tasks: Box<[OutputTask]>) {
+    fn send_updated_tasks(
+        &mut self,
+        tasks: Box<[Task]>,
+        output_tasks: Box<[OutputTask]>,
+        new_inputs_buffers_ptr: Option<Arc<OwnedRawBuffer>>,
+    ) {
         self.free_old();
 
         let current_change_flag =
@@ -3786,6 +3842,7 @@ impl GraphGenCommunicator {
             applied: current_change_flag,
             tasks,
             output_tasks,
+            new_inputs_buffers_ptr,
         };
         if let Err(e) = self.new_task_data_producer.push(td) {
             eprintln!(

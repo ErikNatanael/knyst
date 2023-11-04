@@ -570,7 +570,13 @@ impl Gen for GraphGen {
                     applied: _,
                     tasks,
                     output_tasks,
+                    new_inputs_buffers_ptr,
                 } = task_data;
+
+                if let Some(inputs_buffers_ptr) = new_inputs_buffers_ptr.take() {
+                    // The old buffers will be kept alive until the Arc has been dropped in the GraphGen
+                    self._arc_inputs_buffers_ptr = inputs_buffers_ptr;
+                }
 
                 let changes = self.schedule_receiver.changes();
 
