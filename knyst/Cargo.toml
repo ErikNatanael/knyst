@@ -21,7 +21,6 @@ default = ["cpal", "jack"]
 unstable = []
 
 [dependencies]
-# knyst_core = { path = "../knyst_core" }
 knyst_macro = { path = "../knyst_macro" }
 slotmap = "1.0"
 # For ergonomic error handling
