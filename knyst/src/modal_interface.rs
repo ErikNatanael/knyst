@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::sync::{atomic::AtomicU16, Mutex};
 use std::time::Instant;
 
-use knyst_core::resources::{BufferId, WavetableId};
+use crate::resources::{BufferId, WavetableId};
 
 use crate::controller::KnystCommands;
 use crate::graph::{Graph, GraphSettings, NodeId};
@@ -172,10 +172,7 @@ impl KnystCommands for UnifiedKnystCommands {
         }
     }
 
-    fn insert_buffer(
-        &mut self,
-        buffer: knyst_core::buffer::Buffer,
-    ) -> knyst_core::resources::BufferId {
+    fn insert_buffer(&mut self, buffer: crate::buffer::Buffer) -> crate::resources::BufferId {
         match self {
             UnifiedKnystCommands::Real(kc) => kc.borrow_mut().insert_buffer(buffer),
             UnifiedKnystCommands::Dummy(kc) => {
@@ -185,7 +182,7 @@ impl KnystCommands for UnifiedKnystCommands {
         }
     }
 
-    fn remove_buffer(&mut self, buffer_id: knyst_core::resources::BufferId) {
+    fn remove_buffer(&mut self, buffer_id: crate::resources::BufferId) {
         match self {
             UnifiedKnystCommands::Real(kc) => kc.borrow_mut().remove_buffer(buffer_id),
             UnifiedKnystCommands::Dummy(kc) => kc.report_dummy(),
@@ -194,8 +191,8 @@ impl KnystCommands for UnifiedKnystCommands {
 
     fn replace_buffer(
         &mut self,
-        buffer_id: knyst_core::resources::BufferId,
-        buffer: knyst_core::buffer::Buffer,
+        buffer_id: crate::resources::BufferId,
+        buffer: crate::buffer::Buffer,
     ) {
         match self {
             UnifiedKnystCommands::Real(kc) => kc.borrow_mut().replace_buffer(buffer_id, buffer),
@@ -205,8 +202,8 @@ impl KnystCommands for UnifiedKnystCommands {
 
     fn insert_wavetable(
         &mut self,
-        wavetable: knyst_core::wavetable::Wavetable,
-    ) -> knyst_core::resources::WavetableId {
+        wavetable: crate::wavetable::Wavetable,
+    ) -> crate::resources::WavetableId {
         match self {
             UnifiedKnystCommands::Real(kc) => kc.borrow_mut().insert_wavetable(wavetable),
             UnifiedKnystCommands::Dummy(kc) => {
@@ -216,7 +213,7 @@ impl KnystCommands for UnifiedKnystCommands {
         }
     }
 
-    fn remove_wavetable(&mut self, wavetable_id: knyst_core::resources::WavetableId) {
+    fn remove_wavetable(&mut self, wavetable_id: crate::resources::WavetableId) {
         match self {
             UnifiedKnystCommands::Real(kc) => kc.borrow_mut().remove_wavetable(wavetable_id),
             UnifiedKnystCommands::Dummy(kc) => kc.report_dummy(),
@@ -225,8 +222,8 @@ impl KnystCommands for UnifiedKnystCommands {
 
     fn replace_wavetable(
         &mut self,
-        id: knyst_core::resources::WavetableId,
-        wavetable: knyst_core::wavetable::Wavetable,
+        id: crate::resources::WavetableId,
+        wavetable: crate::wavetable::Wavetable,
     ) {
         match self {
             UnifiedKnystCommands::Real(kc) => kc.borrow_mut().replace_wavetable(id, wavetable),

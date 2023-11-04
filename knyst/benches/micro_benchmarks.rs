@@ -1,10 +1,10 @@
 use std::f32::consts::{PI, TAU};
 
+use crate::wavetable::{PhaseF32, WavetablePhase, FRACTIONAL_PART};
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use fundsp::wavetable;
 use knyst::envelope::{Curve, Envelope};
 use knyst::prelude::*;
-use knyst_core::wavetable::{PhaseF32, WavetablePhase, FRACTIONAL_PART};
 
 // Test if integer phase is in fact faster than floating point phase
 pub fn phase_float_or_uint(c: &mut Criterion) {

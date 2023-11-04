@@ -2,10 +2,10 @@
 //! This module contains some basic delay Gens
 
 use crate as knyst;
-use knyst_core::gen::Gen;
-use knyst_core::gen::GenContext;
-use knyst_core::gen::GenState;
-use knyst_core::SampleRate;
+use crate::gen::Gen;
+use crate::gen::GenContext;
+use crate::gen::GenState;
+use crate::SampleRate;
 use knyst_macro::impl_gen;
 
 use crate::time::Superseconds;

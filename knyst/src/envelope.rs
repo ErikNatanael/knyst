@@ -31,7 +31,7 @@ type Point = (Sample, Sample);
 
 use crate as knyst;
 use crate::trig::is_trigger;
-use knyst_core::{
+use crate::{
     gen::{GenState, StopAction},
     Sample, SampleRate,
 };

@@ -326,10 +326,10 @@ pub mod cpal_backend {
     use crate::controller::Controller;
     use crate::graph::{RunGraph, RunGraphSettings};
     use crate::KnystError;
+    use crate::Sample;
     use crate::{graph::Graph, Resources};
     use assert_no_alloc::*;
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-    use knyst_core::Sample;
 
     #[allow(missing_docs)]
     pub struct CpalBackendOptions {

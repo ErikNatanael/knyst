@@ -8,7 +8,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use knyst_core::resources::{ResourcesCommand, ResourcesResponse};
+use crate::resources::{ResourcesCommand, ResourcesResponse};
 use rtrb::RingBuffer;
 
 use crate::{scheduling::MusicalTimeMap, Resources};

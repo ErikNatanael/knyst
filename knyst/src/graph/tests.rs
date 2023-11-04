@@ -2,8 +2,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use knyst_core::resources::{IdOrKey, ResourcesSettings};
-use knyst_core::Resources;
+use knyst::resources::{IdOrKey, ResourcesSettings};
+use knyst::Resources;
 
 use super::{Gen, RunGraph};
 use crate as knyst;

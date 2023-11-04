@@ -6,7 +6,7 @@
 //! synthesizer Gen or signalling that it is time for a new value.
 //!
 use crate as knyst;
-use knyst_core::{
+use knyst::{
     gen::{Gen, GenContext, GenState},
     resources::Resources,
     Sample, SampleRate,
@@ -115,7 +115,7 @@ impl IntervalTrig {
 mod tests {
     use std::time::Duration;
 
-    use knyst_core::resources::{Resources, ResourcesSettings};
+    use crate::resources::{Resources, ResourcesSettings};
 
     use crate::prelude::*;
     use crate::time::Superseconds;

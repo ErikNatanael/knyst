@@ -21,7 +21,7 @@ default = ["cpal", "jack"]
 unstable = []
 
 [dependencies]
-knyst_core = { path = "../knyst_core" }
+# knyst_core = { path = "../knyst_core" }
 knyst_macro = { path = "../knyst_macro" }
 slotmap = "1.0"
 # For ergonomic error handling
@@ -37,8 +37,12 @@ downcast-rs = "1.2.0"
 jack = { version = "0.11", optional = true }
 # CPAL audio backend
 cpal = { version = "0.15", optional = true }
-# Only for non real time use
+# Only for non real time use channels
 crossbeam-channel = "0.5.6"
+# Loading audio buffers
+symphonia = { version = "0.5.1", features = ["mp3"] }
+# Saving to wav
+hound = "3.5.1"
 serde = { version = "1.0", features = ["derive"], optional = true }
 assert_no_alloc = { version = "1.1.2" }
 

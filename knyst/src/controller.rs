@@ -15,6 +15,11 @@ use std::{
 };
 
 use crate::{
+    buffer::Buffer,
+    resources::{BufferId, ResourcesCommand, ResourcesResponse, WavetableId},
+    wavetable::Wavetable,
+};
+use crate::{
     graph::{
         connection::{ConnectionBundle, ConnectionError, InputBundle},
         gen, Connection, FreeError, GenOrGraph, GenOrGraphEnum, Graph, GraphId, GraphSettings,
@@ -27,11 +32,6 @@ use crate::{
     KnystError,
 };
 use crossbeam_channel::{unbounded, Receiver, Sender};
-use knyst_core::{
-    buffer::Buffer,
-    resources::{BufferId, ResourcesCommand, ResourcesResponse, WavetableId},
-    wavetable::Wavetable,
-};
 
 /// Encodes commands sent from a [`KnystCommands`]
 enum Command {

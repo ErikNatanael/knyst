@@ -3,7 +3,7 @@ use std::{
     ops::{Add, Deref, Mul},
 };
 
-use knyst_core::Sample;
+use crate::Sample;
 
 use crate::{
     graph::{connection::NodeChannel, GenOrGraph, NodeId},

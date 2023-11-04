@@ -1,5 +1,5 @@
 use crate as knyst;
-use knyst_core::{gen::GenState, BlockSize, Sample, SampleRate};
+use crate::{gen::GenState, BlockSize, Sample, SampleRate};
 use knyst_macro::impl_gen;
 
 /// Move to the target value exponentially by -60db attenuation over the specified time.

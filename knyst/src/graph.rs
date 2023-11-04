@@ -5,7 +5,7 @@
 //!
 //! ```
 //! # use knyst::prelude::*;
-//! # use knyst_core::wavetable::*;
+//! # use knyst::wavetable::*;
 //! let graph_settings = GraphSettings {
 //!     block_size: 64,
 //!     sample_rate: 44100.,
@@ -26,8 +26,8 @@
 //! backend. Have a look at [`RunGraph`] if you want to do non-realtime
 //! synthesis or implement your own backend.
 
-use knyst_core::gen::{Gen, GenContext, GenState};
-use knyst_core::{BlockSize, Sample, SampleRate};
+use crate::gen::{Gen, GenContext, GenState};
+use crate::{BlockSize, Sample, SampleRate};
 use knyst_macro::impl_gen;
 // For using impl_gen inside the knyst crate
 use crate as knyst;
@@ -41,9 +41,9 @@ pub mod connection;
 mod graph_gen;
 mod node;
 pub mod run_graph;
+pub use crate::node_buffer::NodeBufferRef;
 pub use connection::Connection;
 use connection::ConnectionError;
-pub use knyst_core::node_buffer::NodeBufferRef;
 use node::Node;
 pub use run_graph::{RunGraph, RunGraphSettings};
 
@@ -64,7 +64,7 @@ use std::time::{Duration, Instant};
 
 use self::connection::{ConnectionBundle, NodeChannel, NodeOutput};
 
-use knyst_core::resources::Resources;
+use crate::resources::Resources;
 /// The graph consists of (simplified)
 /// 1. a list of nodes
 /// 2. lists of edges that are inputs per node, outputs of the graph and inputs from the graph input to a node
@@ -961,7 +961,7 @@ impl Drop for OwnedRawBuffer {
 /// # Example
 /// ```
 /// use knyst::prelude::*;
-/// use knyst_core::wavetable::*;
+/// use knyst::wavetable::*;
 /// use knyst::graph::RunGraph;
 /// let graph_settings = GraphSettings {
 ///     block_size: 64,
@@ -3878,7 +3878,7 @@ struct FeedbackEdge {
 /// # Example
 /// ```
 /// use knyst::prelude::*;
-/// use knyst_core::wavetable::*;
+/// use knyst::wavetable::*;
 /// use knyst::graph::RunGraph;
 /// let graph_settings = GraphSettings {
 ///     block_size: 64,

@@ -1,6 +1,6 @@
 //! Contains some commonly used oscillators
 
-use knyst_core::{
+use crate::{
     buffer::BufferKey,
     gen::{Gen, GenContext, GenState, StopAction},
     resources::{BufferId, IdOrKey, WavetableId, WavetableKey},
@@ -67,10 +67,10 @@ impl Oscillator {
         };
         if let Some(wt) = resources.wavetable(wt_key) {
             for (&f, o) in freq.iter().zip(sig.iter_mut()) {
+                *o = wt.get_linear_interp(self.phase);
                 self.set_freq(f);
                 self.phase.increase(self.step);
                 // TODO: Set a buffer of phase values and request them all from the wavetable all at the same time. Should enable SIMD in the wavetable lookup.
-                *o = wt.get_linear_interp(self.phase);
             }
         } else {
             sig.fill(0.0);

@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use knyst_core::{resources::ResourcesSettings, Resources, Sample};
+use crate::{resources::ResourcesSettings, Resources, Sample};
 
 use crate::{
     controller::print_error_handler,

@@ -1,4 +1,4 @@
-use knyst_core::{node_buffer::NodeBufferRef, Resources, Sample};
+use crate::{node_buffer::NodeBufferRef, Resources, Sample};
 
 use super::{Gen, GenContext, GenState, NodeKey, Task};
 

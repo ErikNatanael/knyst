@@ -51,12 +51,12 @@
 #![cfg_attr(feature = "unstable", feature(portable_simd))]
 
 use core::fmt::Debug;
-use knyst_core::resources::ResourcesError;
+use resources::ResourcesError;
+use std::ops::{Deref, DerefMut};
 // Import these for docs
 #[allow(unused_imports)]
 use graph::{Connection, Graph, RunGraph};
-pub use knyst_core::Resources;
-pub use knyst_core::Sample;
+pub use resources::Resources;
 
 // assert_no_alloc to make sure we are not allocating on the audio thread. The
 // assertion is put in AudioBackend.
@@ -68,6 +68,7 @@ use assert_no_alloc::*;
 static A: AllocDisabler = AllocDisabler;
 
 pub mod audio_backend;
+pub mod buffer;
 pub mod controller;
 pub mod delay;
 pub mod envelope;
@@ -77,12 +78,15 @@ pub mod graph;
 pub mod handles;
 pub mod inspection;
 pub mod modal_interface;
+pub mod node_buffer;
 pub mod prelude;
+pub mod resources;
 pub mod scheduling;
 pub mod sphere;
 pub mod time;
 pub mod trig;
-pub use knyst_core::xorrng;
+pub mod wavetable;
+pub mod xorrng;
 
 /// Combined error type for Knyst, containing any other error in the library.
 #[derive(thiserror::Error, Debug)]
@@ -118,4 +122,81 @@ pub fn db_to_amplitude(db: Sample) -> Sample {
 #[must_use]
 pub fn amplitude_to_db(amplitude: Sample) -> Sample {
     20.0 * amplitude.log10()
+}
+
+/// The current sample type used throughout Knyst
+pub type Sample = f32;
+
+/// Newtype for a sample rate to identify it in function signatures. Derefs to a `Sample` for easy use on the audio thread.
+#[derive(Copy, Clone, Debug)]
+pub struct SampleRate(Sample);
+
+impl SampleRate {
+    #[inline(always)]
+    pub fn to_f64(self) -> f64 {
+        self.0 as f64
+    }
+}
+
+impl Deref for SampleRate {
+    type Target = Sample;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for SampleRate {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl From<SampleRate> for f64 {
+    fn from(value: SampleRate) -> Self {
+        value.0 as f64
+    }
+}
+
+impl From<f32> for SampleRate {
+    fn from(value: f32) -> Self {
+        Self(value as Sample)
+    }
+}
+impl From<f64> for SampleRate {
+    fn from(value: f64) -> Self {
+        Self(value as Sample)
+    }
+}
+
+#[derive(Copy, Clone, Debug)]
+/// BlockSize.
+///
+/// Can be an unorthodox block size value in the event of a partial block at the beginning of a node's existence in the graph.
+pub struct BlockSize(usize);
+
+impl From<BlockSize> for usize {
+    #[inline(always)]
+    fn from(value: BlockSize) -> Self {
+        value.0
+    }
+}
+impl From<usize> for BlockSize {
+    fn from(value: usize) -> Self {
+        Self(value)
+    }
+}
+
+impl Deref for BlockSize {
+    type Target = usize;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for BlockSize {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
 }

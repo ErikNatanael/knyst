@@ -1,6 +1,6 @@
 //! Includes basic `Gen`s such as `Mul` and `Range`
 
-use knyst_core::{
+use crate::{
     gen::{Gen, GenContext, GenState},
     Resources,
 };
