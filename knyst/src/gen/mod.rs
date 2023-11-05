@@ -5,6 +5,7 @@ pub use smoothing::*;
 mod osc;
 use crate::{node_buffer::NodeBufferRef, resources::Resources, Sample};
 pub use osc::*;
+pub mod delay;
 
 /// If it implements Gen, it can be a `Node` in a [`Graph`].
 pub trait Gen {
