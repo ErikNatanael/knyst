@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::sync::{atomic::AtomicU16, Mutex};
 use std::time::Instant;
 
+use crate::audio_backend::AudioBackendError;
 use crate::resources::{BufferId, WavetableId};
 
 use crate::controller::KnystCommands;
@@ -301,8 +302,11 @@ thread_local! {
     static ACTIVE_KNYST_SPHERE_COMMANDS: RefCell<Option<Rc<RefCell<SelectedKnystCommands>>>> = RefCell::new(None);
 }
 
-pub(crate) fn register_sphere(sphere: KnystSphere) -> Result<SphereId, Box<dyn std::error::Error>> {
-    let mut spheres = ALL_KNYST_SPHERES.lock()?;
+pub(crate) fn register_sphere(sphere: KnystSphere) -> Result<SphereId, SphereError> {
+    let mut spheres = match ALL_KNYST_SPHERES.lock() {
+        Ok(s) => s,
+        Err(poison) => poison.into_inner(),
+    };
     // Get first unused sphereid
     let mut new_id = None;
     for i in 0..u16::MAX {
@@ -322,22 +326,24 @@ pub(crate) fn register_sphere(sphere: KnystSphere) -> Result<SphereId, Box<dyn s
         spheres.push((sphere, id));
         Ok(id)
     } else {
-        Err("No available SphereId found".into())
+        Err(SphereError::NoMoreSphereIds)
     }
 }
 
-fn get_sphere_commands(
-    sphere_id: SphereId,
-) -> Result<MultiThreadedKnystCommands, Box<dyn std::error::Error>> {
-    let spheres = ALL_KNYST_SPHERES.lock()?;
+fn get_sphere_commands(sphere_id: SphereId) -> Result<MultiThreadedKnystCommands, SphereError> {
+    // If one thread panics while holding a lock to the spheres (which is highly unlikely) it should be fine to just go on accessing the spheres anyway.
+    let spheres = match ALL_KNYST_SPHERES.lock() {
+        Ok(spheres) => spheres,
+        Err(poison_lock) => poison_lock.into_inner(),
+    };
     if let Some((sphere, id)) = spheres.iter().find(|(_s, id)| *id == sphere_id) {
         Ok(sphere.commands())
     } else {
-        Err("KnystCommands not found".into())
+        Err(SphereError::SphereNotFound)
     }
 }
 
-pub fn set_active_sphere(id: SphereId) -> Result<(), Box<dyn std::error::Error>> {
+pub fn set_active_sphere(id: SphereId) -> Result<(), SphereError> {
     ACTIVE_KNYST_SPHERE.with(|aks| *aks.borrow_mut() = id);
     ACTIVE_KNYST_SPHERE_COMMANDS.with(|aksc| {
         let kc = get_sphere_commands(id)?;
@@ -361,6 +367,20 @@ pub fn commands() -> impl KnystCommands {
             UnifiedKnystCommands::Dummy(DummyKnystCommands)
         }
     }
+}
+
+/// Error type for errors having to do with the modal commands system
+#[derive(thiserror::Error, Debug)]
+pub enum SphereError {
+    /// The requested KnystSphere could not be found.
+    #[error("The requested KnystSphere could not be found.")]
+    SphereNotFound,
+    /// You are out of sphere ids so you are unable to register a new sphere. I cannot think of a workload that requires this. If you are sure you need this many spheres, please file a bug report.
+    #[error("There are no sphere ids to register a new sphere. If you are sure you need this many spheres, please file a bug report.")]
+    NoMoreSphereIds,
+    /// There was an error in the audio backend
+    #[error("Audio backend error: {0}")]
+    AudioBackendError(#[from] AudioBackendError),
 }
 
 // pub fn test_using() {

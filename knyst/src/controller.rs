@@ -216,14 +216,49 @@ impl KnystCommands for MultiThreadedKnystCommands {
         gen_or_graph: impl GenOrGraph,
         graph_id: GraphId,
     ) -> NodeId {
-        let new_node_address = NodeId::new();
-        let command = Command::Push {
-            gen_or_graph: gen_or_graph.into_gen_or_graph_enum(),
-            node_address: new_node_address.clone(),
-            graph_id,
+        let gen_or_graph = gen_or_graph.into_gen_or_graph_enum();
+        let found_in_local = match self.selected_graph {
+            SelectedGraph::Local {
+                previous_selected_graph_id,
+            } => LOCAL_GRAPH.with_borrow_mut(|g| {
+                if let Some(g) = g {
+                    if g.id() == graph_id {
+                        let mut node_id = NodeId::new();
+                        if let Err(e) = g.push_with_existing_address_to_graph(
+                            gen_or_graph,
+                            &mut node_id,
+                            g.id(),
+                        ) {
+                            // TODO: report error
+                            // TODO: recover the gen_or_graph from the PushError
+                            eprintln!("{e:?}");
+                        }
+                        Ok(node_id)
+                    } else {
+                        eprintln!("Local graph does not match requested graph");
+                        Err(gen_or_graph)
+                    }
+                } else {
+                    // There is no local graph
+                    self.selected_graph = SelectedGraph::Remote(previous_selected_graph_id);
+                    Err(gen_or_graph)
+                }
+            }),
+            _ => Err(gen_or_graph),
         };
-        self.sender.send(command).unwrap();
-        new_node_address
+        match found_in_local {
+            Ok(node_id) => node_id,
+            Err(gen_or_graph) => {
+                let new_node_address = NodeId::new();
+                let command = Command::Push {
+                    gen_or_graph,
+                    node_address: new_node_address,
+                    graph_id,
+                };
+                self.sender.send(command).unwrap();
+                new_node_address
+            }
+        }
     }
     /// Push a Gen or Graph to the Graph with the specified id.
     fn push_to_graph(

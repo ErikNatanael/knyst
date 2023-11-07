@@ -6,6 +6,7 @@ use knyst_macro::impl_gen;
 /// *Inputs*
 /// 0. "value"
 /// 1. "time" in seconds
+///
 /// *Outputs*
 /// 0. "smoothed_value"
 #[derive(Default)]

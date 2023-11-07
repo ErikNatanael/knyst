@@ -29,6 +29,15 @@ impl<H: Copy> Deref for Handle<H> {
 //         value.handle.into()
 //     }
 // }
+impl Handle<GenericHandle> {
+    pub fn void() -> Handle<GenericHandle> {
+        Self::new(GenericHandle {
+            node_id: NodeId::new(),
+            num_inputs: 0,
+            num_outputs: 0,
+        })
+    }
+}
 impl<A: Copy + HandleData> Handle<A> {
     pub fn new(handle: A) -> Self {
         Self { handle }
@@ -37,6 +46,19 @@ impl<A: Copy + HandleData> Handle<A> {
         Handle::new(RepeatOutputs {
             handle: self.handle,
             repeats: n,
+        })
+    }
+    pub fn free(self) {
+        for id in self.node_ids() {
+            commands().free_node(id);
+        }
+    }
+    /// Returns a handle to a single channel from this Handle (not type checked)
+    pub fn out(self, channel: impl Into<NodeChannel>) -> Handle<OutputChannelHandle> {
+        let channel = channel.into();
+        Handle::new(OutputChannelHandle {
+            node_id: self.node_ids().next().unwrap(),
+            channel,
         })
     }
 }
@@ -51,6 +73,24 @@ impl<H: HandleData + Copy> HandleData for Handle<H> {
 
     fn node_ids(&self) -> NodeIdIter {
         self.handle.node_ids()
+    }
+}
+#[derive(Copy, Clone, Debug)]
+pub struct OutputChannelHandle {
+    node_id: NodeId,
+    channel: NodeChannel,
+}
+impl HandleData for OutputChannelHandle {
+    fn out_channels(&self) -> ChannelIter {
+        ChannelIter::single_channel(self.node_id, self.channel)
+    }
+
+    fn in_channels(&self) -> ChannelIter {
+        ChannelIter::single_node_id(self.node_id, 0)
+    }
+
+    fn node_ids(&self) -> NodeIdIter {
+        NodeIdIter::Single(self.node_id)
     }
 }
 #[derive(Copy, Clone, Debug)]
@@ -137,6 +177,7 @@ pub trait HandleData {
     /// All `NodeIds` referenced by this `Handle` in any order
     fn node_ids(&self) -> NodeIdIter;
 }
+#[derive(Clone)]
 pub enum NodeIdIter {
     Single(NodeId),
     Vec(std::vec::IntoIter<NodeId>),
@@ -157,7 +198,7 @@ impl Iterator for NodeIdIter {
         }
     }
 }
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum ChannelIter {
     SingleNodeId {
         node_id: NodeId,
@@ -167,6 +208,11 @@ pub enum ChannelIter {
     Vec {
         channels: Vec<(NodeId, NodeChannel)>,
         current_index: usize,
+    },
+    SingleChannel {
+        node_id: NodeId,
+        channel: NodeChannel,
+        returned: bool,
     },
 }
 impl ChannelIter {
@@ -181,6 +227,13 @@ impl ChannelIter {
             node_id,
             num_channels,
             current_iter_index: 0,
+        }
+    }
+    pub fn single_channel(node_id: NodeId, channel: NodeChannel) -> Self {
+        Self::SingleChannel {
+            node_id,
+            channel,
+            returned: false,
         }
     }
 }
@@ -209,6 +262,18 @@ impl Iterator for ChannelIter {
                 *current_index += 1;
                 item
             }
+            ChannelIter::SingleChannel {
+                node_id,
+                channel,
+                returned,
+            } => {
+                if *returned {
+                    None
+                } else {
+                    *returned = true;
+                    Some((*node_id, *channel))
+                }
+            }
         }
     }
     fn size_hint(&self) -> (usize, Option<usize>) {
@@ -227,6 +292,13 @@ impl Iterator for ChannelIter {
             } => {
                 let num_left = channels.len() - current_index;
                 (num_left, Some(num_left))
+            }
+            ChannelIter::SingleChannel { returned, .. } => {
+                if *returned {
+                    (0, Some(0))
+                } else {
+                    (1, Some(1))
+                }
             }
         }
     }
@@ -280,6 +352,75 @@ impl<B: Copy + HandleData> Mul<Sample> for Handle<B> {
         rhs * self
     }
 }
+
+// Mull AnyNodeHandle * Handle
+impl<B> Mul<AnyNodeHandle> for Handle<B>
+where
+    B: Copy + HandleData,
+{
+    type Output = Handle<MulHandle>;
+
+    fn mul(self, rhs: AnyNodeHandle) -> Self::Output {
+        let num_out_channels = self.out_channels().collect::<Vec<_>>().len();
+        let mul_id = commands().push_without_inputs(MulGen(num_out_channels));
+        for (i, (out0, out1)) in self.out_channels().zip(rhs.out_channels()).enumerate() {
+            commands().connect(out0.0.to(mul_id).from_channel(out0.1).to_channel(i * 2));
+            commands().connect(out1.0.to(mul_id).from_channel(out1.1).to_channel(i * 2 + 1));
+        }
+        Handle::new(MulHandle {
+            node_id: mul_id,
+            num_out_channels,
+        })
+    }
+}
+impl<B> Mul<Handle<B>> for AnyNodeHandle
+where
+    B: Copy + HandleData,
+{
+    type Output = Handle<MulHandle>;
+
+    fn mul(self, rhs: Handle<B>) -> Self::Output {
+        let num_out_channels = self.out_channels().collect::<Vec<_>>().len();
+        let mul_id = commands().push_without_inputs(MulGen(num_out_channels));
+        for (i, (out0, out1)) in self.out_channels().zip(rhs.out_channels()).enumerate() {
+            commands().connect(out0.0.to(mul_id).from_channel(out0.1).to_channel(i * 2));
+            commands().connect(out1.0.to(mul_id).from_channel(out1.1).to_channel(i * 2 + 1));
+        }
+        Handle::new(MulHandle {
+            node_id: mul_id,
+            num_out_channels,
+        })
+    }
+}
+
+impl Mul<AnyNodeHandle> for Sample {
+    type Output = Handle<MulHandle>;
+
+    fn mul(self, rhs: AnyNodeHandle) -> Self::Output {
+        let num_out_channels = rhs.out_channels().collect::<Vec<_>>().len();
+        let mul_id = commands().push_without_inputs(MulGen(num_out_channels));
+        for (i, (out0, out1)) in std::iter::repeat(self).zip(rhs.out_channels()).enumerate() {
+            commands().connect(
+                crate::graph::connection::constant(out0)
+                    .to(mul_id)
+                    .to_channel(i * 2),
+            );
+            commands().connect(out1.0.to(mul_id).from_channel(out1.1).to_channel(i * 2 + 1));
+        }
+        Handle::new(MulHandle {
+            node_id: mul_id,
+            num_out_channels,
+        })
+    }
+}
+impl Mul<Sample> for AnyNodeHandle {
+    type Output = Handle<MulHandle>;
+
+    fn mul(self, rhs: Sample) -> Self::Output {
+        rhs * self
+    }
+}
+
 // Add
 impl<A, B> Add<Handle<A>> for Handle<B>
 where
@@ -347,6 +488,19 @@ impl<H: Copy + HandleData + 'static> From<Handle<H>> for AnyNodeHandle {
         }
     }
 }
+impl HandleData for AnyNodeHandle {
+    fn out_channels(&self) -> ChannelIter {
+        self.out_channel_iter.clone()
+    }
+
+    fn in_channels(&self) -> ChannelIter {
+        self.in_channel_iter.clone()
+    }
+
+    fn node_ids(&self) -> NodeIdIter {
+        self.node_ids.clone()
+    }
+}
 /// Gathering all kinds of inputs into one
 pub enum Input {
     Constant(Sample),
@@ -366,7 +520,9 @@ impl<H: Copy + HandleData> From<Handle<H>> for Input {
 }
 impl From<&AnyNodeHandle> for Input {
     fn from(value: &AnyNodeHandle) -> Self {
-        todo!()
+        Input::Handle {
+            output_channels: value.out_channel_iter.clone(),
+        }
     }
 }
 
@@ -458,6 +614,7 @@ impl<H: HandleData + Copy + HandleNormalRange> Handle<H> {
     }
 }
 
+/// Connects all the output channels of input to the graph outputs of its graph, starting at `index`
 pub fn graph_output(index: usize, input: impl Into<Input>) {
     let inp = input.into();
     match inp {
@@ -487,6 +644,37 @@ pub struct GenericHandle {
     node_id: NodeId,
     num_inputs: usize,
     num_outputs: usize,
+}
+impl GenericHandle {
+    /// The non-typed way to set an input channel's value
+    pub fn set(
+        self,
+        channel: impl Into<NodeChannel>,
+        input: impl Into<Input>,
+    ) -> Handle<GenericHandle> {
+        let inp = input.into();
+        let channel = channel.into();
+        match inp {
+            Input::Constant(v) => {
+                commands().connect(
+                    crate::graph::connection::constant(v)
+                        .to(self.node_id)
+                        .to_channel(channel),
+                );
+            }
+            Input::Handle { output_channels } => {
+                for (i, (node_id, chan)) in output_channels.enumerate() {
+                    commands().connect(
+                        node_id
+                            .to(self.node_id)
+                            .from_channel(chan)
+                            .to_channel(channel),
+                    );
+                }
+            }
+        }
+        Handle::new(self)
+    }
 }
 impl HandleData for GenericHandle {
     fn out_channels(&self) -> ChannelIter {

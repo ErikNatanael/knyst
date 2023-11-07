@@ -1,11 +1,12 @@
 use std::time::Duration;
 
+use crate::KnystError;
 use crate::{resources::ResourcesSettings, Resources, Sample};
 
 use crate::{
     controller::print_error_handler,
     graph::{Graph, GraphSettings, RunGraphSettings},
-    modal_interface::{register_sphere, set_active_sphere, SphereId},
+    modal_interface::{register_sphere, set_active_sphere, SphereError, SphereId},
     prelude::{AudioBackend, MultiThreadedKnystCommands},
 };
 
@@ -19,7 +20,8 @@ impl KnystSphere {
     pub fn start<B: AudioBackend>(
         mut backend: &mut B,
         settings: SphereSettings,
-    ) -> Result<SphereId, Box<dyn std::error::Error>> {
+        error_handler: impl FnMut(KnystError) + Send + 'static,
+    ) -> Result<SphereId, SphereError> {
         let resources = Resources::new(settings.resources_settings);
         let graph_settings = GraphSettings {
             name: settings.name.clone(),
@@ -34,16 +36,14 @@ impl KnystSphere {
             ..Default::default()
         };
         let graph: Graph = Graph::new(graph_settings);
-        let mut k = backend
-            .start_processing(
-                graph,
-                resources,
-                RunGraphSettings {
-                    scheduling_latency: settings.scheduling_latency,
-                },
-                Box::new(print_error_handler),
-            )
-            .unwrap();
+        let k = backend.start_processing(
+            graph,
+            resources,
+            RunGraphSettings {
+                scheduling_latency: settings.scheduling_latency,
+            },
+            Box::new(error_handler),
+        )?;
         let s = Self {
             name: settings.name,
             knyst_commands: k,

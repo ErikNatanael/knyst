@@ -3,6 +3,7 @@ use std::default;
 use anyhow::Result;
 use knyst::{
     audio_backend::{CpalBackend, CpalBackendOptions, JackBackend},
+    controller::print_error_handler,
     envelope::Envelope,
     graph,
     handles::{graph_output, handle, Handle},
@@ -21,6 +22,7 @@ fn main() -> Result<()> {
             num_outputs: 2,
             ..Default::default()
         },
+        print_error_handler,
     );
     let sin_wt = Wavetable::sine();
     let wt = commands().insert_wavetable(sin_wt);
@@ -65,13 +67,14 @@ fn main() -> Result<()> {
     for &freq in [400, 600, 500].iter().cycle() {
         // new graph
         commands().init_local_graph(commands().default_graph_settings());
-        let sig = sine().freq(freq as f32) * 0.25;
+        let sig = sine().freq(freq as f32).out("sig") * 0.25;
         let env = Envelope {
             points: vec![(1.0, 0.005), (0.0, 0.5)],
             stop_action: StopAction::FreeGraph,
             ..Default::default()
         };
         let sig = sig * handle(env.to_gen());
+        // let sig = sig * handle(env.to_gen());
 
         graph_output(0, sig.repeat_outputs(1));
         // push graph to sphere

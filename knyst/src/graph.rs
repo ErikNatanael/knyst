@@ -27,6 +27,7 @@
 //! synthesis or implement your own backend.
 
 use crate::gen::{Gen, GenContext, GenState};
+use crate::handles::AnyNodeHandle;
 use crate::{BlockSize, Sample, SampleRate};
 use knyst_macro::impl_gen;
 // For using impl_gen inside the knyst crate
@@ -2456,8 +2457,7 @@ impl Graph {
                     }
                 } else if from_label.is_some() {
                     if let Some(label) = from_label {
-                        // unwrap() is okay because the hashmap is generated for every node when it is inserted
-                        if let Some(index) = self.output_index_from_label(sink_key, label) {
+                        if let Some(index) = self.output_index_from_label(source_key, label) {
                             index
                         } else {
                             return Err(ConnectionError::InvalidOutputLabel(label));
@@ -3990,88 +3990,6 @@ impl Mult {
                 in1 = &value1[simd_width..];
                 out_buf = &mut out_buf[simd_width..];
             }
-        }
-        GenState::Continue
-    }
-}
-
-/// Pan a mono signal to stereo using the cos/sine pan law. Pan value should be
-/// between -1 and 1, 0 being in the center.
-///
-/// ```rust
-/// use knyst::prelude::*;
-/// use knyst::graph::RunGraph;
-/// fn main() -> Result<(), Box<dyn std::error::Error>> {
-///     let sample_rate = 44100.;
-///     let block_size = 8;
-///     let resources = Resources::new(ResourcesSettings::default());
-///     let graph_settings = GraphSettings {
-///         block_size,
-///         sample_rate,
-///         num_outputs: 2,
-///         ..Default::default()
-///     };
-///     let mut graph: Graph = Graph::new(graph_settings);
-///     let pan = graph.push(PanMonoToStereo);
-///     // The signal is a constant 1.0
-///     graph.connect(constant(1.).to(pan).to_label("signal"))?;
-///     // Pan to the left
-///     graph.connect(constant(-1.).to(pan).to_label("pan"))?;
-///     graph.connect(pan.to_graph_out().channels(2))?;
-///     graph.commit_changes();
-///     graph.update();
-///     let (mut run_graph, _, _) = RunGraph::new(&mut graph, resources, RunGraphSettings::default())?;
-///     run_graph.process_block();
-///     assert!(run_graph.graph_output_buffers().read(0, 0) > 0.9999);
-///     assert!(run_graph.graph_output_buffers().read(1, 0) < 0.0001);
-///     // Pan to the right
-///     graph.connect(constant(1.).to(pan).to_label("pan"))?;
-///     graph.commit_changes();
-///     graph.update();
-///     run_graph.process_block();
-///     assert!(run_graph.graph_output_buffers().read(0, 0) < 0.0001);
-///     assert!(run_graph.graph_output_buffers().read(1, 0) > 0.9999);
-///     // Pan to center
-///     graph.connect(constant(0.).to(pan).to_label("pan"))?;
-///     graph.commit_changes();
-///     graph.update();
-///     run_graph.process_block();
-///     assert_eq!(run_graph.graph_output_buffers().read(0, 0), 0.7070929);
-///     assert_eq!(run_graph.graph_output_buffers().read(1, 0), 0.7070929);
-///     assert_eq!(
-///         run_graph.graph_output_buffers().read(0, 0),
-///         run_graph.graph_output_buffers().read(1, 0)
-///     );
-///     Ok(())
-/// }
-/// ```
-// TODO: Implement multiple different pan laws, maybe as a generic.
-pub struct PanMonoToStereo;
-#[impl_gen]
-impl PanMonoToStereo {
-    #[new]
-    #[must_use]
-    pub fn new() -> Self {
-        Self
-    }
-    #[process]
-    fn process(
-        #[allow(unused)] &mut self,
-        signal: &[Sample],
-        pan: &[Sample],
-        left: &mut [Sample],
-        right: &mut [Sample],
-        block_size: BlockSize,
-    ) -> GenState {
-        for i in 0..*block_size {
-            let signal = signal[i];
-            // The equation needs pan to be in the range [0, 1]
-            let pan = pan[i] * 0.5 + 0.5;
-            let pan_pos_radians = pan * std::f64::consts::FRAC_PI_2 as Sample;
-            let left_gain = fastapprox::fast::cos(pan_pos_radians as f32) as Sample;
-            let right_gain = fastapprox::fast::sin(pan_pos_radians as f32) as Sample;
-            left[i] = signal * left_gain;
-            right[i] = signal * right_gain;
         }
         GenState::Continue
     }

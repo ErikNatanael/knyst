@@ -8,9 +8,10 @@ pub use crate::gen::{Gen, GenContext, GenState, StopAction};
 pub use crate::graph::{
     connection::constant,
     connection::{ConnectionBundle, InputBundle},
-    gen, Connection, Graph, GraphInput, GraphSettings, Mult, NodeId, PanMonoToStereo,
-    ParameterChange, RunGraphSettings,
+    gen, Connection, Graph, GraphInput, GraphSettings, Mult, NodeId, ParameterChange,
+    RunGraphSettings,
 };
+pub use crate::handles::graph_output;
 pub use crate::inputs;
 pub use crate::resources::{IdOrKey, WavetableId, WavetableKey};
 pub use crate::resources::{Resources, ResourcesSettings};

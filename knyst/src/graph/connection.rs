@@ -11,7 +11,7 @@ use super::{FreeError, NodeId, Sample};
 ///
 /// A node can have any number of connections to/from other nodes or outputs.
 /// Multiple constant values will result in the sum of all the constants.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum Connection {
     /// node to node
     Node {
@@ -508,6 +508,14 @@ impl From<Sample> for Constant {
 pub struct NodeOutput {
     pub(super) from_node: NodeId,
     pub(super) from_channel: NodeChannel,
+}
+impl From<(NodeId, NodeChannel)> for NodeOutput {
+    fn from(value: (NodeId, NodeChannel)) -> Self {
+        Self {
+            from_node: value.0,
+            from_channel: value.1,
+        }
+    }
 }
 impl NodeOutput {
     /// Create a connection from self to the specified node.

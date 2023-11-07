@@ -50,7 +50,9 @@
 #![warn(clippy::pedantic)]
 #![cfg_attr(feature = "unstable", feature(portable_simd))]
 
+use audio_backend::AudioBackendError;
 use core::fmt::Debug;
+use modal_interface::SphereError;
 use resources::ResourcesError;
 use std::ops::{Deref, DerefMut};
 // Import these for docs
@@ -109,6 +111,12 @@ pub enum KnystError {
     /// Error from interacting with [`Resources`]
     #[error("Resources error : {0}")]
     ResourcesError(#[from] ResourcesError),
+    /// Error from interacting with [`KnystSphere`] or any of the modal command functions
+    #[error("Sphere error : {0}")]
+    SphereError(#[from] SphereError),
+    /// Error from interacting with an [`AudioBackend`].
+    #[error("Audio backend error : {0}")]
+    AudioBackendError(#[from] AudioBackendError),
 }
 
 /// Convert db to amplitude
