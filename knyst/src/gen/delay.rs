@@ -188,3 +188,27 @@ impl AllpassFeedbackDelay {
         delayed_sig - self.feedback * delay_write
     }
 }
+
+pub struct StaticSampleDelay {
+    buffer: Vec<Sample>,
+    write_position: usize,
+    read_position: usize,
+}
+impl StaticSampleDelay {
+    pub fn new(delay_length_in_samples: usize) -> Self {
+        Self {
+            buffer: vec![0.0; delay_length_in_samples],
+            write_position: 0,
+            read_position: delay_length_in_samples,
+        }
+    }
+    pub fn read(&mut self) -> Sample {
+        let out = self.buffer[self.read_position];
+        self.read_position = (self.read_position+1) % self.buffer.len();
+        out
+    }
+    pub fn write(&mut self, input: Sample) { 
+        self.buffer[self.write_position] = input;
+        self.write_position = (self.write_position+1) % self.buffer.len();
+    }
+}
