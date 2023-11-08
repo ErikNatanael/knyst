@@ -29,9 +29,10 @@ type Point = (Sample, Sample);
 // - can introduce new interpolation methods
 // - because of relative time, complex behaviour of jumping around inside the envelope can be implemented (e.g. looping envelope or random/markov chain envelop movement)
 
-use crate as knyst;
 use crate::trig::is_trigger;
+use crate::{self as knyst, Trig};
 use crate::{
+    controller::KnystCommands,
     gen::{GenState, StopAction},
     Sample, SampleRate,
 };
@@ -450,12 +451,12 @@ impl EnvelopeGen {
     #[process]
     fn process(
         &mut self,
-        release_trig: &[Sample],
-        restart_trig: &[Sample],
+        release: &[Trig],
+        restart: &[Trig],
         amplitude: &mut [Sample],
     ) -> GenState {
-        let release_trigger_in = release_trig;
-        let restart_trigger_in = restart_trig;
+        let release_trigger_in = release;
+        let restart_trigger_in = restart;
         let mut stop_sample = None;
         for (((i, out), &release_trig), &restart_trig) in amplitude
             .iter_mut()
