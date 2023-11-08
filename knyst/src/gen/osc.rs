@@ -138,15 +138,16 @@ impl BufferReader {
     pub fn new(
         buffer: impl Into<IdOrKey<BufferId, BufferKey>>,
         rate: f64,
+        looping: bool,
         stop_action: StopAction,
     ) -> Self {
         BufferReader {
             buffer_key: buffer.into(),
             read_pointer: 0.0,
-            base_rate: 0.0, // initialise to the correct value the first time next() is called
+            base_rate: 0.0, // initialise to the correct value the first time process() is called
             rate,
             finished: false,
-            looping: false,
+            looping,
             stop_action,
         }
     }
@@ -354,9 +355,10 @@ impl Gen for BufferReaderMulti {
 pub fn buffer_reader_multi(
     buffer: BufferId,
     rate: f64,
+    looping: bool,
     stop_action: StopAction,
 ) -> knyst::handles::Handle<BufferReaderMultiHandle> {
-    let gen = BufferReaderMulti::new(buffer, rate, stop_action);
+    let gen = BufferReaderMulti::new(buffer, rate, stop_action).looping(looping);
     let num_channels = buffer.num_channels();
     let id = knyst::prelude::KnystCommands::push_without_inputs(&mut commands(), gen);
     knyst::handles::Handle::new(BufferReaderMultiHandle {

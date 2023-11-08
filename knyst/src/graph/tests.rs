@@ -742,8 +742,7 @@ fn sending_buffer_to_resources() {
     let buffer = Buffer::from_vec(buffer_vec.clone(), 44100.);
     let buffer_id = k.insert_buffer(buffer);
     // Push a buffer reader that can read the Buffer
-    let mut buffer_reader = BufferReader::new(IdOrKey::Id(buffer_id), 1.0, StopAction::FreeSelf);
-    buffer_reader.looping = true;
+    let buffer_reader = BufferReader::new(IdOrKey::Id(buffer_id), 1.0, true, StopAction::FreeSelf);
     let br = k.push(buffer_reader, inputs!());
     k.connect(br.to_graph_out());
     // Process the Controller and RunGraph in order
