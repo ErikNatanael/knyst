@@ -189,26 +189,83 @@ impl AllpassFeedbackDelay {
     }
 }
 
+/// A sample delay with a static number of samples of delay
+///
+/// # Examples
+/// ```
+/// # use knyst::prelude::*;
+/// use knyst::gen::delay::StaticSampleDelay;
+/// let mut delay = StaticSampleDelay::new(4);
+/// delay.write(1.0);
+/// delay.write(2.0);
+/// delay.write(3.0);
+/// delay.write(4.0);
+/// assert_eq!(delay.read(), 1.0);
+/// delay.write(0.0);
+/// assert_eq!(delay.read(), 2.0);
+/// delay.write(0.0);
+/// assert_eq!(delay.read(), 3.0);
+/// delay.write(0.0);
+/// assert_eq!(delay.read(), 4.0);
+/// delay.write(0.0);
+/// assert_eq!(delay.read(), 0.0);
+/// ```
 pub struct StaticSampleDelay {
     buffer: Vec<Sample>,
-    write_position: usize,
-    read_position: usize,
+    position: usize,
 }
+#[impl_gen]
 impl StaticSampleDelay {
     pub fn new(delay_length_in_samples: usize) -> Self {
+        assert!(delay_length_in_samples != 0);
         Self {
             buffer: vec![0.0; delay_length_in_samples],
-            write_position: 0,
-            read_position: delay_length_in_samples,
+            position: 0,
         }
     }
     pub fn read(&mut self) -> Sample {
-        let out = self.buffer[self.read_position];
-        self.read_position = (self.read_position+1) % self.buffer.len();
-        out
+        self.buffer[self.position]
     }
-    pub fn write(&mut self, input: Sample) { 
-        self.buffer[self.write_position] = input;
-        self.write_position = (self.write_position+1) % self.buffer.len();
+
+    /// Read a whole block at a time. Only use this if the delay time is longer than 1 block.
+    pub fn read_block(&mut self, output: &mut [Sample]) {
+        let block_size = output.len();
+        assert!(self.buffer.len() >= block_size);
+        let read_end = self.position + block_size;
+        if read_end <= self.buffer.len() {
+            output.copy_from_slice(&self.buffer[self.position..read_end]);
+        } else {
+            // block wraps around
+            let read_end = read_end % self.buffer.len();
+            output[0..(block_size - read_end)].copy_from_slice(&self.buffer[self.position..]);
+            output[(block_size - read_end)..].copy_from_slice(&self.buffer[0..read_end]);
+        }
+    }
+    /// Write a whole block at a time. Only use this if the delay time is longer than 1 block.
+    pub fn write_block(&mut self, input: &[Sample]) {
+        let block_size = input.len();
+        assert!(self.buffer.len() >= block_size);
+        let write_end = self.position + block_size;
+        if write_end <= self.buffer.len() {
+            self.buffer[self.position..write_end].copy_from_slice(&input);
+        } else {
+            // block wraps around
+            let write_end = write_end % self.buffer.len();
+            self.buffer[self.position..].copy_from_slice(&input[0..block_size - write_end]);
+            self.buffer[0..write_end].copy_from_slice(&input[block_size - write_end..]);
+        }
+        self.position = (self.position + block_size) % self.buffer.len();
+    }
+    pub fn write(&mut self, input: Sample) {
+        self.buffer[self.position] = input;
+        self.position = (self.position + 1) % self.buffer.len();
+    }
+    pub fn process(&mut self, input: &[Sample], output: &mut [Sample]) -> GenState {
+        // TODO: Use the block method automatically if delay time is larger than 1 block
+        for (i, o) in input.iter().zip(output.iter_mut()) {
+            *o = self.read();
+            self.write(*i);
+        }
+        GenState::Continue
     }
 }
