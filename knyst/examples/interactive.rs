@@ -337,7 +337,8 @@ fn handle_special_keys(c: char, mut k: MultiThreadedKnystCommands, state: &mut S
                 match Buffer::from_sound_file(file_path) {
                     Ok(buffer) => {
                         let id = k.insert_buffer(buffer);
-                        let reader = BufferReader::new(IdOrKey::Id(id), 1.0, StopAction::FreeSelf);
+                        let reader =
+                            BufferReader::new(IdOrKey::Id(id), 1.0, false, StopAction::FreeSelf);
                         let reader = k.push(reader, inputs!());
                         k.connect(reader.to_graph_out());
                         k.connect(reader.to_graph_out().to_index(1));
