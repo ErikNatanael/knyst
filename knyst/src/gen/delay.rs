@@ -5,6 +5,7 @@ use crate as knyst;
 use crate::gen::Gen;
 use crate::gen::GenContext;
 use crate::gen::GenState;
+use crate::BlockSize;
 use crate::SampleRate;
 use knyst_macro::impl_gen;
 
@@ -107,6 +108,8 @@ pub struct AllpassDelay {
 }
 
 impl AllpassDelay {
+    #[allow(missing_docs)]
+    #[must_use]
     pub fn new(buffer_size: usize) -> Self {
         let buffer = vec![0.0; buffer_size];
         Self {
@@ -122,11 +125,12 @@ impl AllpassDelay {
         let index = self.frame % self.buffer.len();
         self.allpass.process_sample(self.buffer[index])
     }
+    /// Set the delay time in number of frames/samples
     pub fn set_delay_in_frames(&mut self, num_frames: f64) {
         self.num_frames = num_frames.floor() as usize;
-        self.allpass
-            .set_delta((num_frames - self.num_frames as f64) as f64);
+        self.allpass.set_delta(num_frames - self.num_frames as f64);
     }
+    /// Clear the internal sample buffer
     pub fn clear(&mut self) {
         for sample in &mut self.buffer {
             *sample = 0.0;
@@ -153,12 +157,17 @@ impl AllpassDelay {
     }
 }
 
+/// A Schroeder allpass delay with feedback. Wraps the `AllpassDelay`
 #[derive(Clone, Debug)]
 pub struct AllpassFeedbackDelay {
+    /// The feedback value of the delay. Can be set directly.
     pub feedback: f64,
     allpass_delay: AllpassDelay,
 }
+#[impl_gen]
 impl AllpassFeedbackDelay {
+    #[allow(missing_docs)]
+    #[must_use]
     pub fn new(max_delay_samples: usize) -> Self {
         let allpass_delay = AllpassDelay::new(max_delay_samples);
         let s = Self {
@@ -167,6 +176,7 @@ impl AllpassFeedbackDelay {
         };
         s
     }
+    /// Set the delay length counted in frames/samples
     pub fn set_delay_in_frames(&mut self, delay_length: f64) {
         self.allpass_delay.set_delay_in_frames(delay_length);
     }
@@ -180,12 +190,26 @@ impl AllpassFeedbackDelay {
     //     let delay_samples = self.delay_time * self.sample_rate;
     //     self.allpass_delay.set_num_frames(delay_samples as f64);
     // }
+    /// Process on sample
     pub fn process_sample(&mut self, input: f64) -> f64 {
         let delayed_sig = self.allpass_delay.read();
         let delay_write = delayed_sig * self.feedback + input;
         self.allpass_delay.write_and_advance(delay_write);
 
         delayed_sig - self.feedback * delay_write
+    }
+    /// Process a block. This will still run sample by sample inside.
+    pub fn process(
+        &mut self,
+        input: &[Sample],
+        feedback: &[Sample],
+        output: &mut [Sample],
+    ) -> GenState {
+        for ((&input, &feedback), output) in input.iter().zip(feedback).zip(output.iter_mut()) {
+            self.feedback = f64::from(feedback);
+            *output = self.process_sample(f64::from(input)) as Sample;
+        }
+        GenState::Continue
     }
 }
 
@@ -196,9 +220,13 @@ impl AllpassFeedbackDelay {
 /// # use knyst::prelude::*;
 /// use knyst::gen::delay::StaticSampleDelay;
 /// let mut delay = StaticSampleDelay::new(4);
+/// assert_eq!(delay.read(), 0.0);
 /// delay.write(1.0);
+/// assert_eq!(delay.read(), 0.0);
 /// delay.write(2.0);
+/// assert_eq!(delay.read(), 0.0);
 /// delay.write(3.0);
+/// assert_eq!(delay.read(), 0.0);
 /// delay.write(4.0);
 /// assert_eq!(delay.read(), 1.0);
 /// delay.write(0.0);
@@ -209,6 +237,19 @@ impl AllpassFeedbackDelay {
 /// assert_eq!(delay.read(), 4.0);
 /// delay.write(0.0);
 /// assert_eq!(delay.read(), 0.0);
+/// delay.write(0.0);
+/// delay.write_block(&[1.0, 2.0]);
+/// let mut block = [0.0; 2];
+/// delay.read_block(&mut block);
+/// delay.write_block(&[3.0, 4.0]);
+/// delay.read_block(&mut block);
+/// assert_eq!(block, [1.0, 2.0]);
+/// delay.write_block(&[5.0, 6.0]);
+/// delay.read_block(&mut block);
+/// assert_eq!(block, [3.0, 4.0]);
+/// delay.write_block(&[0.0, 0.0]);
+/// delay.read_block(&mut block);
+/// assert_eq!(block, [5.0, 6.0]);
 /// ```
 pub struct StaticSampleDelay {
     buffer: Vec<Sample>,
@@ -216,15 +257,17 @@ pub struct StaticSampleDelay {
 }
 #[impl_gen]
 impl StaticSampleDelay {
+    #[must_use]
+    /// Create a new Self. delay_length_in_samples must be more than 0
+    ///
+    /// # Panics
+    /// If delay_length_in_samples is 0
     pub fn new(delay_length_in_samples: usize) -> Self {
         assert!(delay_length_in_samples != 0);
         Self {
             buffer: vec![0.0; delay_length_in_samples],
             position: 0,
         }
-    }
-    pub fn read(&mut self) -> Sample {
-        self.buffer[self.position]
     }
 
     /// Read a whole block at a time. Only use this if the delay time is longer than 1 block.
@@ -241,8 +284,8 @@ impl StaticSampleDelay {
             output[(block_size - read_end)..].copy_from_slice(&self.buffer[0..read_end]);
         }
     }
-    /// Write a whole block at a time. Only use this if the delay time is longer than 1 block.
-    pub fn write_block(&mut self, input: &[Sample]) {
+    /// Write a whole block at a time. Only use this if the delay time is longer than 1 block. Advances the frame pointer.
+    pub fn write_block_and_advance(&mut self, input: &[Sample]) {
         let block_size = input.len();
         assert!(self.buffer.len() >= block_size);
         let write_end = self.position + block_size;
@@ -256,15 +299,30 @@ impl StaticSampleDelay {
         }
         self.position = (self.position + block_size) % self.buffer.len();
     }
-    pub fn write(&mut self, input: Sample) {
+    /// Read a sample from the buffer. Does not advance the frame pointer. Read first, then write.
+    pub fn read(&mut self) -> Sample {
+        self.buffer[self.position]
+    }
+    /// Write a sample to the buffer. Advances the frame pointer.
+    pub fn write_and_advance(&mut self, input: Sample) {
         self.buffer[self.position] = input;
         self.position = (self.position + 1) % self.buffer.len();
     }
-    pub fn process(&mut self, input: &[Sample], output: &mut [Sample]) -> GenState {
-        // TODO: Use the block method automatically if delay time is larger than 1 block
-        for (i, o) in input.iter().zip(output.iter_mut()) {
-            *o = self.read();
-            self.write(*i);
+    /// Process one block of the delay. Will choose block based processing at runtime if the delay time is larger than the block size.
+    pub fn process(
+        &mut self,
+        input: &[Sample],
+        output: &mut [Sample],
+        block_size: BlockSize,
+    ) -> GenState {
+        if self.buffer.len() > *block_size {
+            self.read_block(output);
+            self.write_block_and_advance(input);
+        } else {
+            for (i, o) in input.iter().zip(output.iter_mut()) {
+                *o = self.read();
+                self.write_and_advance(*i);
+            }
         }
         GenState::Continue
     }
