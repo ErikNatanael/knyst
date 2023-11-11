@@ -3,18 +3,23 @@
 ## Current changes
 
 Large breaking changes in this version
+
+- New Handle system for ergonomically building and interacting with the graph!
+- NodeAddress was replaced by NodeId which is Copy.
+- Enabled routing a graph's inputs to its outputs directly, mostly for completeness of the API.
+- Fixed bug where input from graph inputs would overwrite other inputs to a node.
 - Updated all dependencies to the latest version.
-- New `impl_gen` macro for implementing the Gen trait and adding a Handle with much less error prone boilerplate.
+- New `impl_gen` macro for implementing the Gen trait and adding a Handle with input dependent methods and with much less error prone boilerplate.
 - Fixed bug in the `Wavetable` which produced artefacts.
 - Refactored the codebase to something more logical. Many paths have changed, but importing the prelude should give you most of what you need.
 
-## v0.4.3 
+## v0.4.3
 
 - Allow clearing all connections for a specific channel by calling `to_channel`, `from_channel` and similar on a `Connection::Clear`.
 - Allow scheduling multiple changes at the same time using `SimultaneousChanges`.
 - Allow scheduling triggers the same way input constant changes are scheduled.
 - Fix a bug in sustaining envelopes.
-- Add the *unstable* feature, providing some SIMD support in nightly.
+- Add the _unstable_ feature, providing some SIMD support in nightly.
 
 ## v0.4.2
 
