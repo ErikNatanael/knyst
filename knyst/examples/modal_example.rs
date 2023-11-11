@@ -1,5 +1,3 @@
-use std::default;
-
 use anyhow::Result;
 use knyst::{
     audio_backend::{CpalBackend, CpalBackendOptions, JackBackend},
@@ -8,7 +6,7 @@ use knyst::{
     graph,
     handles::{graph_output, handle, Handle},
     modal_interface::commands,
-    prelude::*,
+    prelude::{delay::static_sample_delay, *},
     sphere::{KnystSphere, SphereSettings},
 };
 use rand::{thread_rng, Rng};
@@ -79,9 +77,10 @@ fn main() -> Result<()> {
         graph_output(0, sig.repeat_outputs(1));
         // push graph to sphere
         let graph = commands().upload_local_graph();
+        let sig = graph + static_sample_delay(48 * 500).input(graph);
 
-        graph_output(0, graph);
-        std::thread::sleep(std::time::Duration::from_millis(250));
+        graph_output(0, sig.repeat_outputs(1));
+        std::thread::sleep(std::time::Duration::from_millis(2500));
     }
 
     // graph_output(0, (sine(wt).freq(200.)).repeat_outputs(1));
