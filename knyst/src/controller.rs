@@ -16,6 +16,7 @@ use std::{
 
 use crate::{
     buffer::Buffer,
+    inspection::GraphInspection,
     resources::{BufferId, ResourcesCommand, ResourcesResponse, WavetableId},
     wavetable::Wavetable,
 };
@@ -50,6 +51,7 @@ enum Command {
     ResourcesCommand(ResourcesCommand),
     ChangeMusicalTimeMap(Box<dyn FnOnce(&mut MusicalTimeMap) + Send>),
     ScheduleBeatCallback(BeatCallback, StartBeat),
+    RequestInspection(std::sync::mpsc::SyncSender<GraphInspection>),
 }
 
 /// [`KnystCommands`] sends commands to the [`Controller`] which should hold the
@@ -135,6 +137,8 @@ pub trait KnystCommands {
         &mut self,
         change_fn: impl FnOnce(&mut MusicalTimeMap) + Send + 'static,
     );
+    fn request_inspection(&mut self) -> std::sync::mpsc::Receiver<GraphInspection>;
+
     /// Return the [`GraphSettings`] of the top level graph. This means you
     /// don't have to manually keep track of matching sample rate and block size
     /// for example.
@@ -465,6 +469,14 @@ impl KnystCommands for MultiThreadedKnystCommands {
             }
         })
     }
+
+    fn request_inspection(&mut self) -> std::sync::mpsc::Receiver<GraphInspection> {
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        self.sender
+            .send(Command::RequestInspection(sender))
+            .unwrap();
+        receiver
+    }
     // /// Create a new Self which pushes to the selected GraphId by default
     // fn to_graph(&self, graph_id: GraphId) -> Self {
     //     let mut k = self.clone();
@@ -735,6 +747,13 @@ impl Controller {
                 );
                 callback.next_timestamp = start_timestamp;
                 self.beat_callbacks.push(callback);
+                Ok(())
+            }
+            Command::RequestInspection(sender) => {
+                // TODO: Proper error handling
+                sender
+                    .send(self.top_level_graph.generate_inspection())
+                    .unwrap();
                 Ok(())
             }
         };

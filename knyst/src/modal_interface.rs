@@ -272,6 +272,18 @@ impl KnystCommands for UnifiedKnystCommands {
         }
     }
 
+    fn request_inspection(
+        &mut self,
+    ) -> std::sync::mpsc::Receiver<crate::inspection::GraphInspection> {
+        match self {
+            UnifiedKnystCommands::Real(kc) => kc.borrow_mut().request_inspection(),
+            UnifiedKnystCommands::Dummy(kc) => {
+                kc.report_dummy();
+                std::sync::mpsc::sync_channel(0).1
+            }
+        }
+    }
+
     // fn to_graph(&self, graph_id: crate::graph::GraphId) -> Self {
     //     match self {
     //         UnifiedKnystCommands::Real(kc) => kc.borrow_mut().to_graph(),

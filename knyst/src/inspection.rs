@@ -6,6 +6,8 @@ use crate::graph::NodeId;
 
 /// The metadata of a Graph
 // TODO: Feedback edges
+
+#[derive(Debug, Clone)]
 pub struct GraphInspection {
     /// All the nodes currently in the Graph (including those pending removal)
     pub nodes: Vec<NodeInspection>,
@@ -23,6 +25,7 @@ pub struct GraphInspection {
     pub graph_id: crate::graph::GraphId,
 }
 
+#[derive(Debug, Clone)]
 /// Metadata about a node in a graph
 pub struct NodeInspection {
     /// The name of the node (usually the name of the Gen inside it)
@@ -39,6 +42,7 @@ pub struct NodeInspection {
     pub graph_inspection: Option<GraphInspection>,
 }
 
+#[derive(Debug, Clone)]
 /// Metadata for an edge.
 #[allow(missing_docs)]
 pub struct EdgeInspection {
@@ -47,6 +51,7 @@ pub struct EdgeInspection {
     pub to_index: usize,
 }
 
+#[derive(Debug, Clone)]
 /// Edge source type used for inspection. The index of a node is only valid for that specific GraphInspection.
 #[allow(missing_docs)]
 pub enum EdgeSource {
