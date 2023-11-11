@@ -571,6 +571,7 @@ impl Gen for GraphGen {
                     tasks,
                     output_tasks,
                     new_inputs_buffers_ptr,
+                    input_to_output_tasks,
                 } = task_data;
 
                 if let Some(inputs_buffers_ptr) = new_inputs_buffers_ptr.take() {
@@ -661,6 +662,45 @@ impl Gen for GraphGen {
                     let input_values = output_task
                         .input_buffers
                         .get_channel(output_task.input_index);
+                    // Safety: We always drop the&mut refernce before requesting
+                    // another one so we cannot hold mutliple references to the
+                    // same channnel.
+                    let output =
+                        unsafe { ctx.outputs.get_channel_mut(output_task.graph_output_index) };
+                    for i in 0..self.block_size {
+                        let value = input_values[i];
+                        // Since many nodes may write to the same output we
+                        // need to add the outputs together. The Node makes no promise as to the content of
+                        // the output buffer provided.
+                        output[i] += value;
+                    }
+                }
+                if let Some(from_relative_sample_nr) = do_empty_buffer {
+                    for channel in ctx.outputs.iter_mut() {
+                        for sample in &mut channel[from_relative_sample_nr..] {
+                            *sample = 0.0;
+                        }
+                    }
+                }
+                if let Some(from_relative_sample_nr) = do_mend_connections {
+                    let channels = ctx.inputs.channels().min(ctx.outputs.channels());
+                    for channel in 0..channels {
+                        let input = ctx.inputs.get_channel(channel);
+                        // Safety: We are only holding one &mut to a channel at a time.
+                        let output = unsafe { ctx.outputs.get_channel_mut(channel) };
+                        // TODO: Check if the input is constant or not first. Only non-constant inputs should be passed through (because it's "mending" the connection)
+                        for (i, o) in input[from_relative_sample_nr..]
+                            .iter()
+                            .zip(output[from_relative_sample_nr..].iter_mut())
+                        {
+                            *o = *i;
+                        }
+                    }
+                }
+                // Copy from inputs to outputs of the graph
+
+                for output_task in input_to_output_tasks.iter() {
+                    let input_values = ctx.inputs.get_channel(output_task.graph_input_index);
                     // Safety: We always drop the&mut refernce before requesting
                     // another one so we cannot hold mutliple references to the
                     // same channnel.

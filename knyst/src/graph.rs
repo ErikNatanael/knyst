@@ -477,12 +477,6 @@ impl Task {
         sample_rate: Sample,
         sample_time_at_block_start: u64,
     ) -> GenState {
-        // Copy all inputs
-        for (from, to) in &self.inputs_to_copy {
-            unsafe {
-                **to += **from;
-            }
-        }
         // Copy all graph inputs
         for (graph_input_index, node_input_index) in &self.graph_inputs_to_copy {
             for i in 0..self.input_buffers.block_size() {
@@ -491,6 +485,12 @@ impl Task {
                     *node_input_index,
                     i,
                 );
+            }
+        }
+        // Copy all inputs
+        for (from, to) in &self.inputs_to_copy {
+            unsafe {
+                **to += **from;
             }
         }
         if self.start_node_at_sample <= sample_time_at_block_start {
@@ -538,6 +538,11 @@ impl Task {
 }
 
 unsafe impl Send for Task {}
+
+struct InputToOutputTask {
+    graph_input_index: usize,
+    graph_output_index: usize,
+}
 
 /// Copy the entire channel from `input_index` from `input_buffers` to the
 /// `graph_output_index` channel of the outputs buffer. Used to copy from a node
@@ -1021,6 +1026,8 @@ pub struct Graph {
     output_edges: Vec<Edge>,
     /// The edges from the graph inputs to nodes, one Vec per node. `source` in the edge is really the sink here.
     graph_input_edges: SecondaryMap<NodeKey, Vec<Edge>>,
+    /// Edges going straight from a graph input to a graph output
+    graph_input_to_output_edges: Vec<InterGraphEdge>,
     /// If changes have been made that require recalculating the graph this will be set to true.
     recalculation_required: bool,
     num_inputs: usize,
@@ -1070,6 +1077,7 @@ impl Graph {
         let node_input_edges = SecondaryMap::with_capacity(num_nodes);
         let node_feedback_edges = SecondaryMap::with_capacity(num_nodes);
         let graph_input_edges = SecondaryMap::with_capacity(num_nodes);
+        let graph_input_to_output_edges = Vec::new();
         Self {
             id,
             name,
@@ -1103,6 +1111,7 @@ impl Graph {
             recalculation_required: false,
             buffers_to_free_when_safe: vec![],
             new_inputs_buffers_ptr: false,
+            graph_input_to_output_edges,
         }
     }
     /// Create a node that will run this graph. This will fail if a Node or Gen has already been created from the Graph since only one Gen is allowed to exist per Graph.
@@ -2335,6 +2344,24 @@ impl Graph {
             Connection::Clear { .. } => {
                 return self.connect(connection);
             }
+            Connection::GraphInputToOutput {
+                from_input_channel,
+                to_output_channel,
+                channels,
+            } => {
+                // input/output are confusing here, use from and to for guidance
+                for i in (self.graph_input_to_output_edges.len() - 1)..=0 {
+                    let edge = self.graph_input_to_output_edges[i];
+                    if edge.from_output_index >= from_input_channel
+                        && edge.from_output_index < (from_input_channel + channels)
+                        && edge.to_input_index >= to_output_channel
+                        && edge.to_input_index < (to_output_channel + channels)
+                    {
+                        self.graph_input_to_output_edges.remove(i);
+                        self.recalculation_required = true;
+                    }
+                }
+            }
         }
         // If no error was encountered we end up here and a recalculation is required.
         self.recalculation_required = true;
@@ -2871,6 +2898,19 @@ impl Graph {
                     }
                 }
             }
+            Connection::GraphInputToOutput {
+                from_input_channel,
+                to_output_channel,
+                channels,
+            } => {
+                // TODO Check for duplicates
+                for i in 0..channels {
+                    self.graph_input_to_output_edges.push(InterGraphEdge {
+                        from_output_index: from_input_channel + i,
+                        to_input_index: to_output_channel + i,
+                    })
+                }
+            }
         }
         self.recalculation_required = true;
         Ok(())
@@ -3095,6 +3135,7 @@ impl Graph {
             for input_edge in graph_input_edges {
                 graph_inputs_to_copy
                     .push((input_edge.from_output_index, input_edge.to_input_index));
+                eprintln!("Added graph input copy to node key {node_key:?}");
             }
             for feedback_edge in feedback_input_edges {
                 let source = &nodes[feedback_edge.source];
@@ -3129,6 +3170,16 @@ impl Graph {
         }
         output_tasks
     }
+    fn generate_input_to_output_tasks(&mut self) -> Vec<InputToOutputTask> {
+        let mut output_tasks = vec![];
+        for output_edge in &self.graph_input_to_output_edges {
+            output_tasks.push(InputToOutputTask {
+                graph_input_index: output_edge.from_output_index,
+                graph_output_index: output_edge.to_input_index,
+            });
+        }
+        output_tasks
+    }
     /// Only one `GraphGen` can be created from a Graph, since otherwise nodes in
     /// the graph could be run multiple times.
     fn create_graph_gen(
@@ -3150,6 +3201,7 @@ impl Graph {
             tasks,
             output_tasks,
             new_inputs_buffers_ptr: Some(self.inputs_buffers_ptr.clone()),
+            input_to_output_tasks: self.generate_input_to_output_tasks().into_boxed_slice(),
         };
         // let task_data = Box::into_raw(Box::new(task_data));
         // let task_data_ptr = Arc::new(AtomicPtr::new(task_data));
@@ -3225,6 +3277,8 @@ impl Graph {
             if self.recalculation_required {
                 self.calculate_node_order();
                 let output_tasks = self.generate_output_tasks().into_boxed_slice();
+                let intput_to_output_tasks =
+                    self.generate_input_to_output_tasks().into_boxed_slice();
                 let tasks = self.generate_tasks().into_boxed_slice();
                 if let Some(ggc) = &mut self.graph_gen_communicator {
                     let new_inputs_buffers_ptr = if self.new_inputs_buffers_ptr {
@@ -3232,7 +3286,12 @@ impl Graph {
                     } else {
                         None
                     };
-                    ggc.send_updated_tasks(tasks, output_tasks, new_inputs_buffers_ptr);
+                    ggc.send_updated_tasks(
+                        tasks,
+                        output_tasks,
+                        intput_to_output_tasks,
+                        new_inputs_buffers_ptr,
+                    );
                 }
                 self.recalculation_required = false;
             }
@@ -3776,6 +3835,7 @@ struct TaskData {
     applied: Arc<AtomicBool>,
     tasks: Box<[Task]>,
     output_tasks: Box<[OutputTask]>,
+    input_to_output_tasks: Box<[InputToOutputTask]>,
     // if the inputs buffers have been replaced, replace the Arc to them in the GraphGen as well. This avoids the scenario of the buffers being dropped if the Graph is dropped, but the GraphGen is still running.
     new_inputs_buffers_ptr: Option<Arc<OwnedRawBuffer>>,
 }
@@ -3831,6 +3891,7 @@ impl GraphGenCommunicator {
         &mut self,
         tasks: Box<[Task]>,
         output_tasks: Box<[OutputTask]>,
+        input_to_output_tasks: Box<[InputToOutputTask]>,
         new_inputs_buffers_ptr: Option<Arc<OwnedRawBuffer>>,
     ) {
         self.free_old();
@@ -3843,6 +3904,7 @@ impl GraphGenCommunicator {
             tasks,
             output_tasks,
             new_inputs_buffers_ptr,
+            input_to_output_tasks,
         };
         if let Err(e) = self.new_task_data_producer.push(td) {
             eprintln!(
@@ -3913,6 +3975,14 @@ struct Edge {
     to_input_index: usize,
 }
 impl Edge {}
+
+#[derive(Clone, Debug, Copy)]
+struct InterGraphEdge {
+    /// the output index on the destination node
+    from_output_index: usize,
+    /// the input index on the origin node where the input from the node is placed
+    to_input_index: usize,
+}
 
 /// Edge containing all metadata for a feedback connection since a feedback
 /// connection includes several things that may need to be freed together:

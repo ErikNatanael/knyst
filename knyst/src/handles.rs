@@ -3,7 +3,7 @@ use std::{
     ops::{Add, Deref, Mul},
 };
 
-use crate::Sample;
+use crate::{graph::Connection, Sample};
 
 use crate::{
     graph::{connection::NodeChannel, GenOrGraph, NodeId},
@@ -206,7 +206,7 @@ pub enum ChannelIter {
         current_iter_index: usize,
     },
     Vec {
-        channels: Vec<(NodeId, NodeChannel)>,
+        channels: Vec<(Node, NodeChannel)>,
         current_index: usize,
     },
     SingleChannel {
@@ -214,9 +214,15 @@ pub enum ChannelIter {
         channel: NodeChannel,
         returned: bool,
     },
+    GraphInput {
+        start_index: usize,
+        num_channels: usize,
+        current_channel: usize,
+    },
+    None,
 }
 impl ChannelIter {
-    pub fn from_vec(channels: Vec<(NodeId, NodeChannel)>) -> Self {
+    pub fn from_vec(channels: Vec<(Node, NodeChannel)>) -> Self {
         Self::Vec {
             channels,
             current_index: 0,
@@ -237,8 +243,46 @@ impl ChannelIter {
         }
     }
 }
+#[derive(Copy, Clone, Debug)]
+pub enum Node {
+    GraphInput,
+    Gen(NodeId),
+}
+impl Node {
+    pub fn to(self, other: NodeId) -> Connection {
+        match self {
+            Node::GraphInput => Connection::graph_input(other),
+            Node::Gen(node) => node.to(other),
+        }
+    }
+    pub fn to_graph_out(self) -> Connection {
+        match self {
+            Node::GraphInput => Connection::GraphInputToOutput {
+                from_input_channel: 0,
+                to_output_channel: 0,
+                channels: 1,
+            },
+            Node::Gen(node) => node.to_graph_out(),
+        }
+    }
+}
+impl From<NodeId> for Node {
+    fn from(value: NodeId) -> Self {
+        Self::Gen(value)
+    }
+}
+impl From<&mut NodeId> for Node {
+    fn from(value: &mut NodeId) -> Self {
+        Self::Gen(*value)
+    }
+}
+impl From<&NodeId> for Node {
+    fn from(value: &NodeId) -> Self {
+        Self::Gen(*value)
+    }
+}
 impl Iterator for ChannelIter {
-    type Item = (NodeId, NodeChannel);
+    type Item = (Node, NodeChannel);
 
     fn next(&mut self) -> Option<Self::Item> {
         match self {
@@ -249,7 +293,7 @@ impl Iterator for ChannelIter {
             } => {
                 if *current_iter_index < *num_channels {
                     *current_iter_index += 1;
-                    Some((*node_id, NodeChannel::Index(*current_iter_index - 1)))
+                    Some((node_id.into(), NodeChannel::Index(*current_iter_index - 1)))
                 } else {
                     None
                 }
@@ -271,7 +315,23 @@ impl Iterator for ChannelIter {
                     None
                 } else {
                     *returned = true;
-                    Some((*node_id, *channel))
+                    Some((node_id.into(), *channel))
+                }
+            }
+            ChannelIter::None => None,
+            ChannelIter::GraphInput {
+                start_index,
+                num_channels,
+                current_channel,
+            } => {
+                if current_channel == num_channels {
+                    None
+                } else {
+                    *current_channel += 1;
+                    Some((
+                        Node::GraphInput,
+                        NodeChannel::Index(*start_index + *current_channel - 1),
+                    ))
                 }
             }
         }
@@ -299,6 +359,15 @@ impl Iterator for ChannelIter {
                 } else {
                     (1, Some(1))
                 }
+            }
+            ChannelIter::None => (0, Some(0)),
+            ChannelIter::GraphInput {
+                start_index,
+                num_channels,
+                current_channel,
+            } => {
+                let num_left = num_channels - *current_channel;
+                (num_left, Some(num_left))
             }
         }
     }
@@ -612,6 +681,38 @@ impl<H: HandleData + Copy + HandleNormalRange> Handle<H> {
             num_out_channels,
         })
     }
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct GraphInputHandle {
+    start_index: usize,
+    num_channels: usize,
+}
+
+impl HandleData for GraphInputHandle {
+    fn out_channels(&self) -> ChannelIter {
+        ChannelIter::GraphInput {
+            start_index: self.start_index,
+            num_channels: self.num_channels,
+            current_channel: 0,
+        }
+    }
+
+    fn in_channels(&self) -> ChannelIter {
+        ChannelIter::None
+    }
+
+    fn node_ids(&self) -> NodeIdIter {
+        NodeIdIter::None
+    }
+}
+
+/// Creates a handle to numer of consecutive graph_input channels.
+pub fn graph_input(index: usize, num_channels: usize) -> Handle<GraphInputHandle> {
+    Handle::new(GraphInputHandle {
+        start_index: index,
+        num_channels,
+    })
 }
 
 /// Connects all the output channels of input to the graph outputs of its graph, starting at `index`

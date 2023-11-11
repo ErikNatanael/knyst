@@ -117,6 +117,15 @@ pub enum Connection {
         /// Specifies a specific channel to clear. If None (default), clear all.
         channel: Option<NodeChannel>,
     },
+    /// Connect between a graph input and its output directly
+    GraphInputToOutput {
+        /// The index of the first input channel to connect from
+        from_input_channel: usize,
+        /// The index of the first output channel to connect to
+        to_output_channel: usize,
+        /// How many channels to connect
+        channels: usize,
+    },
 }
 
 /// Convenience function to create a constant input value change connection
@@ -222,6 +231,7 @@ impl Connection {
                 *source = source_node.clone();
             }
             Connection::Clear { .. } => {}
+            Connection::GraphInputToOutput { .. } => {}
         }
         self
     }
@@ -240,6 +250,7 @@ impl Connection {
             }
             Connection::GraphOutput { .. } => {}
             Connection::Clear { .. } => {}
+            Connection::GraphInputToOutput { .. } => {}
         }
         self
     }
@@ -261,6 +272,7 @@ impl Connection {
                 *input_label = Some(label);
             }
             Connection::GraphOutput { .. } => {}
+            Connection::GraphInputToOutput { .. } => {}
             Connection::GraphInput {
                 to_label: input_label,
                 to_index,
@@ -288,6 +300,9 @@ impl Connection {
                 *input_index = Some(index);
                 *to_label = None;
             }
+            Connection::GraphInputToOutput {
+                to_output_channel, ..
+            } => *to_output_channel = index,
             Connection::Constant {
                 to_index: input_index,
                 ..
@@ -315,6 +330,9 @@ impl Connection {
             Connection::Clear { .. } => None,
             Connection::Constant { .. } => None,
             Connection::GraphInput { from_index, .. } => Some(*from_index),
+            Connection::GraphInputToOutput {
+                from_input_channel, ..
+            } => Some(*from_input_channel),
         }
     }
     /// Get the sink channel index of the [`Connection`] if one is set
@@ -329,6 +347,9 @@ impl Connection {
                 ..
             } => *input_index,
             Connection::GraphOutput { to_index, .. } => Some(*to_index),
+            Connection::GraphInputToOutput {
+                to_output_channel, ..
+            } => Some(*to_output_channel),
             Connection::Clear { .. } => None,
             Connection::GraphInput { to_index, .. } => *to_index,
         }
@@ -375,6 +396,9 @@ impl Connection {
                 *from_index = index;
             }
             Connection::Clear { channel, .. } => *channel = Some(NodeChannel::Index(index)),
+            Connection::GraphInputToOutput {
+                from_input_channel, ..
+            } => *from_input_channel = index,
         }
         self
     }
@@ -399,6 +423,7 @@ impl Connection {
                 *from_index = None;
             }
             Connection::GraphInput { .. } => {}
+            Connection::GraphInputToOutput { .. } => {}
             Connection::Clear { channel, .. } => *channel = Some(NodeChannel::Label(label)),
         }
         self
@@ -419,6 +444,9 @@ impl Connection {
             Connection::GraphInput { channels, .. } => {
                 *channels = num_channels;
             }
+            Connection::GraphInputToOutput { channels, .. } => {
+                *channels = num_channels;
+            }
             Connection::Clear { .. } => {}
         }
         self
@@ -432,6 +460,7 @@ impl Connection {
             Connection::Constant { .. } => {}
             Connection::GraphOutput { .. } => {}
             Connection::GraphInput { .. } => {}
+            Connection::GraphInputToOutput { .. } => {}
             Connection::Clear { .. } => {}
         }
         self
@@ -443,7 +472,8 @@ impl Connection {
             Connection::GraphOutput { source, .. } => Some(source.clone()),
             Connection::GraphInput { .. }
             | Connection::Constant { .. }
-            | Connection::Clear { .. } => None,
+            | Connection::Clear { .. }
+            | Connection::GraphInputToOutput { .. } => None,
         }
     }
 }
