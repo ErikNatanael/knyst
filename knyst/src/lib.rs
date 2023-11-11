@@ -74,7 +74,7 @@ pub mod audio_backend;
 pub mod buffer;
 pub mod controller;
 pub mod envelope;
-mod filter;
+pub mod filter;
 pub mod gen;
 pub mod graph;
 pub mod handles;

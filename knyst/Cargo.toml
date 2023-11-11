@@ -44,6 +44,7 @@ symphonia = { version = "0.5.1", features = ["mp3"] }
 hound = "3.5.1"
 serde = { version = "1.0", features = ["derive"], optional = true }
 assert_no_alloc = { version = "1.1.2" }
+num-traits = "0.2.17"
 
 # For concurrency testing
 [target.'cfg(loom)'.dependencies]
