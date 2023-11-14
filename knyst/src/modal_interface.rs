@@ -284,19 +284,19 @@ impl KnystCommands for UnifiedKnystCommands {
         }
     }
 
-    // fn to_graph(&self, graph_id: crate::graph::GraphId) -> Self {
-    //     match self {
-    //         UnifiedKnystCommands::Real(kc) => kc.borrow_mut().to_graph(),
-    //         UnifiedKnystCommands::Dummy(kc) => kc.report_dummy(),
-    //     }
-    // }
+    fn to_graph(&mut self, graph_id: crate::graph::GraphId) {
+        match self {
+            UnifiedKnystCommands::Real(kc) => kc.borrow_mut().to_graph(graph_id),
+            UnifiedKnystCommands::Dummy(kc) => kc.report_dummy(),
+        }
+    }
 
-    // fn to_top_level_graph(&self) -> Self {
-    //     match self {
-    //         UnifiedKnystCommands::Real(kc) => kc.borrow_mut().to_top_level_graph(),
-    //         UnifiedKnystCommands::Dummy(kc) => kc.report_dummy(),
-    //     }
-    // }
+    fn to_top_level_graph(&mut self) {
+        match self {
+            UnifiedKnystCommands::Real(kc) => kc.borrow_mut().to_top_level_graph(),
+            UnifiedKnystCommands::Dummy(kc) => kc.report_dummy(),
+        }
+    }
     // fn push(&mut self) {
     //     match self {
     //         UnifiedKnystCommands::Real(kc) => kc.borrow_mut().push(),

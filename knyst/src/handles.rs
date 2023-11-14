@@ -3,7 +3,10 @@ use std::{
     ops::{Add, Deref, Mul},
 };
 
-use crate::{graph::Connection, Sample};
+use crate::{
+    graph::{Change, Connection, ParameterChange, SimultaneousChanges},
+    Sample,
+};
 
 use crate::{
     graph::{connection::NodeChannel, GenOrGraph, NodeId},
@@ -774,6 +777,13 @@ impl GenericHandle {
                 }
             }
         }
+        Handle::new(self)
+    }
+    /// The non-typed way to send a trigger to an input channel
+    pub fn trig(self, channel: impl Into<NodeChannel>) -> Handle<GenericHandle> {
+        // TODO: better way to send a trigger
+        let change = ParameterChange::now(self.node_id.input(channel), Change::Trigger);
+        commands().schedule_change(change);
         Handle::new(self)
     }
 }

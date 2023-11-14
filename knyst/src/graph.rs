@@ -63,7 +63,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
-use self::connection::{ConnectionBundle, NodeChannel, NodeOutput};
+use self::connection::{ConnectionBundle, NodeChannel, NodeInput, NodeOutput};
 
 use crate::resources::Resources;
 /// The graph consists of (simplified)
@@ -139,6 +139,13 @@ impl NodeId {
         NodeOutput {
             from_node: self.clone(),
             from_channel: channel.into(),
+        }
+    }
+    /// Create a [`NodeOutput`] based on `self` and a specific channel.
+    pub fn input(&self, channel: impl Into<connection::NodeChannel>) -> NodeInput {
+        NodeInput {
+            node: self.clone(),
+            channel: channel.into(),
         }
     }
 }
@@ -311,75 +318,51 @@ pub struct ParameterChange {
     /// When to apply the parameter change
     pub time: Time,
     /// What node to change
-    pub node: NodeId,
-    /// Channel index
-    pub input_index: Option<usize>,
-    /// Channel label, index takes precedence if both are set
-    pub input_label: Option<&'static str>,
+    pub input: NodeInput,
     /// New value of the input constant
-    pub value: Sample,
+    pub value: Change,
 }
 
 impl ParameterChange {
     /// Schedule a change at a specific time in [`Superbeats`]
-    pub fn beats(node: NodeId, value: Sample, beats: Superbeats) -> Self {
+    pub fn beats(channel: NodeInput, value: impl Into<Change>, beats: Superbeats) -> Self {
         Self {
-            node,
-            value,
+            input: channel,
+            value: value.into(),
             time: Time::Beats(beats),
-            input_index: None,
-            input_label: None,
         }
     }
     /// Schedule a change at a specific time in [`Superseconds`]
-    pub fn superseconds(node: NodeId, value: Sample, superseconds: Superseconds) -> Self {
+    pub fn superseconds(
+        channel: NodeInput,
+        value: impl Into<Change>,
+        superseconds: Superseconds,
+    ) -> Self {
         Self {
-            node,
-            value,
+            input: channel,
+            value: value.into(),
             time: Time::Superseconds(superseconds),
-            input_index: None,
-            input_label: None,
         }
     }
     /// Schedule a change at a duration from right now.
-    pub fn duration_from_now(node: NodeId, value: Sample, from_now: Duration) -> Self {
+    pub fn duration_from_now(
+        channel: NodeInput,
+        value: impl Into<Change>,
+        from_now: Duration,
+    ) -> Self {
         Self {
-            node,
-            value,
+            input: channel,
+            value: value.into(),
             time: Time::DurationFromNow(from_now),
-            input_index: None,
-            input_label: None,
         }
     }
     /// Schedule a change as soon as possible.
-    pub fn now(node: NodeId, value: Sample) -> Self {
+    pub fn now(channel: NodeInput, value: impl Into<Change>) -> Self {
         Self {
-            node,
-            value,
+            input: channel,
+            value: value.into(),
             time: Time::Immediately,
-            input_index: None,
-            input_label: None,
         }
-    }
-    /// Set the index of the input channel to change
-    pub fn index(self, index: usize) -> Self {
-        self.i(index)
-    }
-    /// Set the index of the input channel to change
-    pub fn i(mut self, index: usize) -> Self {
-        self.input_index = Some(index);
-        self.input_label = None;
-        self
-    }
-    /// Set the label of the input channel to change
-    pub fn label(self, label: &'static str) -> Self {
-        self.l(label)
-    }
-    /// Set the label of the input channel to change
-    pub fn l(mut self, label: &'static str) -> Self {
-        self.input_label = Some(label);
-        self.input_index = None;
-        self
     }
 }
 
@@ -558,8 +541,11 @@ unsafe impl Send for OutputTask {}
 #[allow(missing_docs)]
 #[derive(thiserror::Error, Debug)]
 pub enum PushError {
-    #[error("The target graph was not found. The GenOrGraph that was pushed is returned.")]
-    GraphNotFound(GenOrGraphEnum),
+    #[error("The target graph (`{target_graph}`) was not found. The GenOrGraph that was pushed is returned.")]
+    GraphNotFound {
+        g: GenOrGraphEnum,
+        target_graph: GraphId,
+    },
 }
 
 /// Error freeing a node in a Graph
@@ -1296,13 +1282,19 @@ impl Graph {
                     }
                     // Return the error unless it's a GraphNotFound in which case we continue trying
                     Err(e) => match e {
-                        PushError::GraphNotFound(returned_to_node) => {
+                        PushError::GraphNotFound {
+                            g: returned_to_node,
+                            target_graph: graph_id,
+                        } => {
                             to_node = returned_to_node;
                         }
                     },
                 }
             }
-            Err(PushError::GraphNotFound(to_node))
+            Err(PushError::GraphNotFound {
+                g: to_node,
+                target_graph: graph_id,
+            })
         }
     }
     /// Increase the maximum number of inputs a node can have. This means reallocating the inputs buffer and marking the old for deletion.
@@ -1932,33 +1924,35 @@ impl Graph {
     /// updated.
     pub fn schedule_change(&mut self, change: ParameterChange) -> Result<(), ScheduleError> {
         let mut node_might_be_in_this_graph = true;
-        if let Some(node_graph) = change.node.graph_id() {
+        if let Some(node_graph) = change.input.node.graph_id() {
             if node_graph != self.id {
                 node_might_be_in_this_graph = false;
             }
         }
         if node_might_be_in_this_graph {
-            if let Some((key, id)) = self.node_ids.iter().find(|(key, &id)| id == change.node) {
+            if let Some((key, id)) = self
+                .node_ids
+                .iter()
+                .find(|(key, &id)| id == change.input.node)
+            {
                 // Does the Node exist?
                 if !self.get_nodes_mut().contains_key(key) {
                     return Err(ScheduleError::NodeNotFound);
                 }
-                let index = if let Some(label) = change.input_label {
-                    if let Some(label_index) = self.node_input_name_to_index[key].get(label) {
-                        *label_index
-                    } else {
-                        return Err(ScheduleError::InputLabelNotFound(label));
+                let index = match change.input.channel {
+                    NodeChannel::Label(label) => {
+                        if let Some(label_index) = self.node_input_name_to_index[key].get(label) {
+                            *label_index
+                        } else {
+                            return Err(ScheduleError::InputLabelNotFound(label));
+                        }
                     }
-                } else if let Some(index) = change.input_index {
-                    index
-                } else {
-                    0
+                    NodeChannel::Index(i) => i,
                 };
                 if let Some(ggc) = &mut self.graph_gen_communicator {
-                    // The GraphGen has been created so we have to be more careful
-                    let change_kind = ScheduledChangeKind::Constant {
-                        index,
-                        value: change.value,
+                    let change_kind = match change.value {
+                        Change::Constant(c) => ScheduledChangeKind::Constant { index, value: c },
+                        Change::Trigger => ScheduledChangeKind::Trigger { index },
                     };
                     ggc.scheduler
                         .schedule(vec![(key, change_kind, None)], change.time);
@@ -2002,14 +1996,14 @@ impl Graph {
                             return Err(ConnectionError::NodeNotFound);
                         }
                         // We continue trying other graphs
-                        ConnectionError::GraphNotFound => (),
+                        ConnectionError::GraphNotFound(connection) => (),
                         _ => {
                             return Err(e);
                         }
                     },
                 }
             }
-            Err(ConnectionError::GraphNotFound)
+            Err(ConnectionError::GraphNotFound(connection))
         };
 
         match connection {
@@ -2400,14 +2394,14 @@ impl Graph {
                             return Err(ConnectionError::NodeNotFound);
                         }
                         // We continue trying other graphs
-                        ConnectionError::GraphNotFound => (),
+                        ConnectionError::GraphNotFound(connection) => (),
                         _ => {
                             return Err(e);
                         }
                     },
                 }
             }
-            Err(ConnectionError::GraphNotFound)
+            Err(ConnectionError::GraphNotFound(connection))
         };
         match connection {
             Connection::Node {

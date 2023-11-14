@@ -32,7 +32,7 @@ use crate::{
     time::Superbeats,
     KnystError,
 };
-use crossbeam_channel::{unbounded, Receiver, Sender};
+use crossbeam_channel::{unbounded, Receiver, Select, Sender};
 
 /// Encodes commands sent from a [`KnystCommands`]
 enum Command {
@@ -143,12 +143,10 @@ pub trait KnystCommands {
     /// don't have to manually keep track of matching sample rate and block size
     /// for example.
     fn default_graph_settings(&self) -> GraphSettings;
-    // /// Create a new Self which pushes to the selected GraphId by default
-    // /// TODO: modal way to set the current graph instead
-    // fn to_graph(&self, graph_id: GraphId) -> Self;
-    // /// Create a new Self which pushes to the top level GraphId by default
-    // /// TODO: modal way to set the current graph instead
-    // fn to_top_level_graph(&self) -> Self;
+    /// Set knyst commands on the current thread to use the selected GraphId by default
+    fn to_graph(&mut self, graph_id: GraphId);
+    /// Set knyst commands on the current thread to use the top level GraphId by default
+    fn to_top_level_graph(&mut self);
 
     /// Creates a new local graph and sets it as the default graph
     fn init_local_graph(&mut self, settings: GraphSettings) -> GraphId;
@@ -476,6 +474,14 @@ impl KnystCommands for MultiThreadedKnystCommands {
             .send(Command::RequestInspection(sender))
             .unwrap();
         receiver
+    }
+
+    fn to_graph(&mut self, graph_id: GraphId) {
+        self.selected_graph = SelectedGraph::Remote(graph_id);
+    }
+
+    fn to_top_level_graph(&mut self) {
+        self.selected_graph = SelectedGraph::Remote(self.top_level_graph_id);
     }
     // /// Create a new Self which pushes to the selected GraphId by default
     // fn to_graph(&self, graph_id: GraphId) -> Self {

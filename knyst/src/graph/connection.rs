@@ -2,7 +2,9 @@
 //! [`Connection`]. Additionally, a [`NodeAddress`] has convenience functions to
 //! generate [`Connection`]s and the [`ConnectionBundle`] API is often more
 //! convenient and ergonomic.
-use super::{FreeError, NodeId, Sample};
+use std::fmt::Display;
+
+use super::{FreeError, GraphId, NodeId, Sample};
 
 /// Connection provides a convenient API for creating connections between nodes in a
 /// graph. When used for nodes in a running graph, the shadow engine will translate the
@@ -11,7 +13,7 @@ use super::{FreeError, NodeId, Sample};
 ///
 /// A node can have any number of connections to/from other nodes or outputs.
 /// Multiple constant values will result in the sum of all the constants.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Connection {
     /// node to node
     Node {
@@ -126,6 +128,56 @@ pub enum Connection {
         /// How many channels to connect
         channels: usize,
     },
+}
+impl Display for Connection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Connection::Node {
+                source,
+                from_index,
+                from_label,
+                sink,
+                to_index,
+                to_label,
+                channels,
+                feedback,
+            } => write!(f, "Connection::Node {:?}:{from_index:?}/{from_label:?} -> {:?}:{to_index:?}/{to_label:?}", source, sink),
+            Connection::Constant {
+                value,
+                sink,
+                to_index,
+                to_label,
+            } => write!(f, "Connection::Constant {} -> {:?}:{to_index:?}/{to_label:?}", value, sink),
+            Connection::GraphOutput {
+                source,
+                from_index,
+                from_label,
+                to_index,
+                channels,
+            } => write!(f, "Connection::GraphOutput {:?}:{from_index:?}/{from_label:?} -> GraphOutput", source),
+            Connection::GraphInput {
+                sink,
+                from_index,
+                to_index,
+                to_label,
+                channels,
+            } => write!(f, "Connection::GraphInput  {from_index:?} -> {:?}:{to_index:?}/{to_label:?}", sink),
+            Connection::Clear {
+                node,
+                input_nodes,
+                input_constants,
+                output_nodes,
+                graph_outputs,
+                graph_inputs,
+                channel,
+            } => write!(f, "Connection::Clear {:?}", node),
+            Connection::GraphInputToOutput {
+                from_input_channel,
+                to_output_channel,
+                channels,
+            } => write!(f, "Connection::GraphInputToOutput {from_input_channel} -> {to_output_channel}"),
+        }
+    }
 }
 
 /// Convenience function to create a constant input value change connection
@@ -484,8 +536,8 @@ impl Connection {
 pub enum ConnectionError {
     #[error("The nodes that you are trying to connect are in different graphs. Nodes can only be connected within a graph.")]
     DifferentGraphs,
-    #[error("The graph containing the NodeAdress provided was not found. The node itself may or may not exist.")]
-    GraphNotFound,
+    #[error("The graph containing the NodeAdress provided was not found. The node itself may or may not exist. Connection: {0}")]
+    GraphNotFound(Connection),
     #[error("The NodeAddress does not exist. The Node may have been freed already.")]
     NodeNotFound,
     #[error("The given input label (`{0}`) is not available for the given node.")]
@@ -508,7 +560,7 @@ pub enum ConnectionError {
 
 /// Describe a node's input or output channel by index or label
 #[allow(missing_docs)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum NodeChannel {
     Label(&'static str),
     Index(usize),
@@ -530,6 +582,21 @@ pub struct Constant(Sample);
 impl From<Sample> for Constant {
     fn from(value: Sample) -> Self {
         Self(value)
+    }
+}
+
+/// A specific output from a specific node.
+#[derive(Clone, Debug)]
+pub struct NodeInput {
+    pub(super) node: NodeId,
+    pub(super) channel: NodeChannel,
+}
+impl From<(NodeId, NodeChannel)> for NodeInput {
+    fn from(value: (NodeId, NodeChannel)) -> Self {
+        Self {
+            node: value.0,
+            channel: value.1,
+        }
     }
 }
 
