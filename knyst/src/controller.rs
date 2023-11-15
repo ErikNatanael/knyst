@@ -9,7 +9,6 @@
 use std::{
     borrow::BorrowMut,
     cell::RefCell,
-    os::unix::thread,
     sync::{atomic::AtomicBool, Arc},
     time::{Duration, Instant},
 };
