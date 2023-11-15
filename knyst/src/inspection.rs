@@ -25,6 +25,21 @@ pub struct GraphInspection {
     pub graph_id: crate::graph::GraphId,
 }
 
+impl GraphInspection {
+    /// Create an empty GraphInspection
+    pub fn empty() -> Self {
+        Self {
+            nodes: vec![],
+            unconnected_nodes: vec![],
+            nodes_pending_removal: vec![],
+            graph_output_input_edges: vec![],
+            num_inputs: 0,
+            num_outputs: 0,
+            graph_id: 0,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 /// Metadata about a node in a graph
 pub struct NodeInspection {
