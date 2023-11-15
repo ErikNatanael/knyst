@@ -11,7 +11,7 @@ pub use crate::graph::{
     gen, Connection, Graph, GraphInput, GraphSettings, Mult, NodeId, ParameterChange,
     RunGraphSettings,
 };
-pub use crate::handles::{graph_input, graph_output};
+pub use crate::handles::{graph_input, graph_output, handle, Handle};
 pub use crate::inputs;
 pub use crate::resources::{IdOrKey, WavetableId, WavetableKey};
 pub use crate::resources::{Resources, ResourcesSettings};
