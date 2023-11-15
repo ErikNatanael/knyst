@@ -922,3 +922,14 @@ impl HandleData for GraphHandle {
         NodeIdIter::Single(self.node_id)
     }
 }
+
+#[must_use]
+/// Create a Bus Gen with the selected number of channels. One use case is as a single node for setting values later. Another is as a passthrough node for gathering multiple variable sources.
+pub fn bus(num_channels: usize) -> Handle<GenericHandle> {
+    let node_id = commands().push_without_inputs(Bus(num_channels));
+    Handle::new(GenericHandle {
+        node_id,
+        num_inputs: num_channels,
+        num_outputs: num_channels,
+    })
+}
