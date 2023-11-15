@@ -171,13 +171,10 @@ fn main() -> Result<()> {
             loop {
                 let new_chord = chords.choose(&mut rng).unwrap();
                 for (i, node) in harmony_nodes.iter().enumerate() {
-                    k.schedule_change(
-                        ParameterChange::now(
-                            node.clone(),
-                            degree_53_to_hz(new_chord[i] as Sample, ROOT_FREQ * 2.0),
-                        )
-                        .label("freq"),
-                    );
+                    k.schedule_change(ParameterChange::now(
+                        node.input("freq"),
+                        degree_53_to_hz(new_chord[i] as Sample, ROOT_FREQ * 2.0),
+                    ));
                     std::thread::sleep(Duration::from_millis(rng.gen::<u64>() % 1500 + 500));
                 }
 
@@ -260,13 +257,12 @@ fn main() -> Result<()> {
                     if !handle_special_keys(c, k.clone(), &mut state) {
                         // Change the frequency of the nodes based on what key was pressed
                         let new_freq = character_to_hz(c);
-                        k.schedule_change(ParameterChange::now(node0.clone(), new_freq).l("freq"));
-                        k.schedule_change(
-                            ParameterChange::now(modulator.clone(), new_freq * 5.).l("freq"),
-                        );
-                        k.schedule_change(
-                            ParameterChange::now(mod_amp.clone(), new_freq * 0.1).i(1),
-                        );
+                        k.schedule_change(ParameterChange::now(node0.input("freq"), new_freq));
+                        k.schedule_change(ParameterChange::now(
+                            modulator.input("freq"),
+                            new_freq * 5.,
+                        ));
+                        k.schedule_change(ParameterChange::now(mod_amp.input(1), new_freq * 0.1));
                         // Trigger the envelope to restart
                         let trig = k.push(OnceTrig::new(), inputs!());
                         k.connect(trig.to(state.lead_env_address).to_label("restart_trig"));

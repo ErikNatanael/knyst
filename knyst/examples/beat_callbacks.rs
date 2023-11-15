@@ -62,18 +62,17 @@ fn main() -> Result<()> {
             println!("Callback called {i} for time {time:?}");
             let mut rng = thread_rng();
             let freq = rng.gen_range(200..600);
-            k.schedule_change(
-                ParameterChange::beats(node0.clone(), freq as Sample, time).l("freq"),
-            );
+            k.schedule_change(ParameterChange::beats(
+                node0.input("freq"),
+                freq as Sample,
+                time,
+            ));
             let freq = rng.gen_range(200..600);
-            k.schedule_change(
-                ParameterChange::beats(
-                    node0.clone(),
-                    freq as Sample,
-                    time + Superbeats::from_beats_f32(0.5),
-                )
-                .l("freq"),
-            );
+            k.schedule_change(ParameterChange::beats(
+                node0.input("freq"),
+                freq as Sample,
+                time + Superbeats::from_beats_f32(0.5),
+            ));
             i += 1;
             if time > Superbeats::from_beats(32) {
                 None

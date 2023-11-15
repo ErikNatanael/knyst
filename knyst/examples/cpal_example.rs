@@ -55,9 +55,7 @@ fn main() -> Result<()> {
                 println!("{}", input.trim());
                 let input = input.trim();
                 if let Ok(freq) = input.parse::<usize>() {
-                    k.schedule_change(
-                        ParameterChange::now(node0.clone(), freq as Sample).l("freq"),
-                    );
+                    k.schedule_change(ParameterChange::now(node0.input("freq"), freq as Sample));
                 } else if input == "q" {
                     break;
                 }

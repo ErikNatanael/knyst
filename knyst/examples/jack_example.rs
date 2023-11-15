@@ -59,7 +59,7 @@ fn main() -> Result<()> {
             Ok(_n) => {
                 let input = input.trim();
                 if let Ok(freq) = input.parse::<usize>() {
-                    k.schedule_change(ParameterChange::now(node0.clone(), freq as f32).l("freq"));
+                    k.schedule_change(ParameterChange::now(node0.input("freq"), freq as f32));
                     println!("Setting freq to {freq}");
                 } else if input == "q" {
                     break;

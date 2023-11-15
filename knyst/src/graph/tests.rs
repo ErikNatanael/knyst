@@ -475,29 +475,33 @@ fn scheduling() {
     graph.connect(constant(2.).to(node1)).unwrap();
     graph.update();
     graph
-        .schedule_change(
-            ParameterChange::superseconds(node0.clone(), 1.0, Superseconds::from_samples(3, SR))
-                .i(0),
-        )
+        .schedule_change(ParameterChange::superseconds(
+            node0.input(0),
+            1.0,
+            Superseconds::from_samples(3, SR),
+        ))
         .unwrap();
     graph
-        .schedule_change(
-            ParameterChange::superseconds(node0.clone(), 2.0, Superseconds::from_samples(2, SR))
-                .l("passthrough"),
-        )
+        .schedule_change(ParameterChange::superseconds(
+            node0.input("passthrough"),
+            2.0,
+            Superseconds::from_samples(2, SR),
+        ))
         .unwrap();
     graph
-        .schedule_change(
-            ParameterChange::superseconds(node1.clone(), 10.0, Superseconds::from_samples(7, SR))
-                .i(0),
-        )
+        .schedule_change(ParameterChange::superseconds(
+            node1.input(0),
+            10.0,
+            Superseconds::from_samples(7, SR),
+        ))
         .unwrap();
     // Schedule far into the future, this should not show up in the test output
     graph
-        .schedule_change(
-            ParameterChange::duration_from_now(node1.clone(), 3000.0, Duration::from_secs(100))
-                .i(0),
-        )
+        .schedule_change(ParameterChange::duration_from_now(
+            node1.input(0),
+            3000.0,
+            Duration::from_secs(100),
+        ))
         .unwrap();
     graph.update();
     run_graph.process_block();
@@ -506,21 +510,25 @@ fn scheduling() {
     assert_eq!(run_graph.graph_output_buffers().read(0, 2), 6.0);
     assert_eq!(run_graph.graph_output_buffers().read(0, 3), 5.0);
     graph
-        .schedule_change(
-            ParameterChange::superseconds(node0, 0.0, Superseconds::from_samples(5, SR)).i(0),
-        )
+        .schedule_change(ParameterChange::superseconds(
+            node0.input(0),
+            0.0,
+            Superseconds::from_samples(5, SR),
+        ))
         .unwrap();
     graph
-        .schedule_change(
-            ParameterChange::superseconds(node1.clone(), 0.0, Superseconds::from_samples(6, SR))
-                .l("passthrough"),
-        )
+        .schedule_change(ParameterChange::superseconds(
+            node1.input(0),
+            0.0,
+            Superseconds::from_samples(6, SR),
+        ))
         .unwrap();
     assert_eq!(
-        graph.schedule_change(
-            ParameterChange::superseconds(node1.clone(), 100.0, Superseconds::from_samples(6, SR))
-                .l("pasta")
-        ),
+        graph.schedule_change(ParameterChange::superseconds(
+            node1.input("pasta"),
+            100.0,
+            Superseconds::from_samples(6, SR)
+        )),
         Err(ScheduleError::InputLabelNotFound("pasta"))
     );
     graph.update();
@@ -532,7 +540,7 @@ fn scheduling() {
     // Schedule "now", but this will be a few samples into the
     // future depending on the time it takes to run this test.
     graph
-        .schedule_change(ParameterChange::now(node1, 1000.0).i(0))
+        .schedule_change(ParameterChange::now(node1.input(0), 1000.0))
         .unwrap();
     graph.update();
     // Move a few hundred samples into the future
@@ -870,28 +878,28 @@ fn beat_scheduling() {
         .unwrap();
     graph
         .schedule_change(ParameterChange::beats(
-            node.clone(),
+            node.input(0),
             1.0,
             Superbeats::from_fractional_beats::<4>(0, 1),
         ))
         .unwrap();
     graph
         .schedule_change(ParameterChange::beats(
-            node.clone(),
+            node.input(0),
             2.0,
             Superbeats::from_fractional_beats::<4>(0, 2),
         ))
         .unwrap();
     graph
         .schedule_change(ParameterChange::beats(
-            node.clone(),
+            node.input(0),
             3.0,
             Superbeats::from_fractional_beats::<4>(1, 0),
         ))
         .unwrap();
     graph
         .schedule_change(ParameterChange::beats(
-            node.clone(),
+            node.input(0),
             4.0,
             Superbeats::from_fractional_beats::<2>(1, 1),
         ))

@@ -312,6 +312,17 @@ pub enum Change {
     Trigger,
 }
 
+impl From<f32> for Change {
+    fn from(value: f32) -> Self {
+        Self::Constant(value as Sample)
+    }
+}
+impl From<f64> for Change {
+    fn from(value: f64) -> Self {
+        Self::Constant(value as Sample)
+    }
+}
+
 /// A parameter (input constant) change to be scheduled on a [`Graph`].
 #[derive(Clone)]
 pub struct ParameterChange {
