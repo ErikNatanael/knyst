@@ -542,6 +542,74 @@ impl<B: Copy + HandleData> Add<Sample> for Handle<B> {
         rhs + self
     }
 }
+
+// Add Node + AnyNodeHandle
+impl<A> Add<Handle<A>> for AnyNodeHandle
+where
+    A: Copy + HandleData,
+{
+    type Output = Handle<AddHandle>;
+
+    fn add(self, rhs: Handle<A>) -> Self::Output {
+        let num_out_channels = self.out_channels().collect::<Vec<_>>().len();
+        let node_id = commands().push_without_inputs(Bus(num_out_channels));
+        for (i, (out0, out1)) in self.out_channels().zip(rhs.out_channels()).enumerate() {
+            commands().connect(out0.0.to(node_id).from_channel(out0.1).to_channel(i));
+            commands().connect(out1.0.to(node_id).from_channel(out1.1).to_channel(i));
+        }
+        Handle::new(AddHandle {
+            node_id,
+            num_out_channels,
+        })
+    }
+}
+impl<A> Add<AnyNodeHandle> for Handle<A>
+where
+    A: Copy + HandleData,
+{
+    type Output = Handle<AddHandle>;
+
+    fn add(self, rhs: AnyNodeHandle) -> Self::Output {
+        let num_out_channels = self.out_channels().collect::<Vec<_>>().len();
+        let node_id = commands().push_without_inputs(Bus(num_out_channels));
+        for (i, (out0, out1)) in self.out_channels().zip(rhs.out_channels()).enumerate() {
+            commands().connect(out0.0.to(node_id).from_channel(out0.1).to_channel(i));
+            commands().connect(out1.0.to(node_id).from_channel(out1.1).to_channel(i));
+        }
+        Handle::new(AddHandle {
+            node_id,
+            num_out_channels,
+        })
+    }
+}
+
+impl Add<AnyNodeHandle> for Sample {
+    type Output = Handle<AddHandle>;
+
+    fn add(self, rhs: AnyNodeHandle) -> Self::Output {
+        let num_out_channels = rhs.out_channels().collect::<Vec<_>>().len();
+        let node_id = commands().push_without_inputs(Bus(num_out_channels));
+        for (i, (out0, out1)) in std::iter::repeat(self).zip(rhs.out_channels()).enumerate() {
+            commands().connect(
+                crate::graph::connection::constant(out0)
+                    .to(node_id)
+                    .to_channel(i),
+            );
+            commands().connect(out1.0.to(node_id).from_channel(out1.1).to_channel(i));
+        }
+        Handle::new(AddHandle {
+            node_id,
+            num_out_channels,
+        })
+    }
+}
+impl Add<Sample> for AnyNodeHandle {
+    type Output = Handle<AddHandle>;
+
+    fn add(self, rhs: Sample) -> Self::Output {
+        rhs + self
+    }
+}
 /// A safe way to store a Handle without the generic parameter, but keep being able to use it
 pub struct AnyNodeHandle {
     org_handle: Box<dyn Any>,
