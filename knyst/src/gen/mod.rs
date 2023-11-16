@@ -1,4 +1,5 @@
 mod basic_gens;
+pub mod random;
 pub use basic_gens::*;
 mod smoothing;
 pub use smoothing::*;
