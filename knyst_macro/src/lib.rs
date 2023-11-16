@@ -115,9 +115,10 @@ impl NewData {
             let ident = *p.pat.clone();
             quote! {#ident}
         });
+        let doc_str = format!("Upload a {type_ident} and return a handle to it.");
         quote! {
                     // Init handle fn
-                    // TODO: Take parameters to new() to be able to call it
+                    #[doc = #doc_str]
                     pub fn #create_fn_name(#(#param_types_in_sig),*) -> knyst::handles::Handle<#handle_name> {
                         use knyst::controller::KnystCommands;
                         let node_id =
@@ -300,6 +301,8 @@ impl GenImplData {
                 _ => unreachable!()
             }
         });
+
+        let handle_struct_doc_str = format!("Handle to a {type_ident}.");
         Ok(quote! {
                     #org_item_impl
 
@@ -340,6 +343,7 @@ impl GenImplData {
                     }
 
                     // Handle
+                    #[doc = #handle_struct_doc_str]
                     #[derive(Copy, Clone, Debug)]
                     pub struct #handle_name {
                         node_id: knyst::prelude::NodeId,
