@@ -4,7 +4,9 @@ use std::{
 };
 
 use crate::{
+    controller::CallbackHandle,
     graph::{Change, Connection, GraphId, ParameterChange},
+    prelude::PowfGen,
     Sample,
 };
 
@@ -54,6 +56,20 @@ impl<A: Copy + HandleData> Handle<A> {
             repeats: n,
         })
     }
+    /// Take all the output channels to the power of the given exponent
+    pub fn powf(self, exponent: impl Into<Input>) -> Handle<PowfHandle> {
+        let connecting_channels: Vec<_> = self.out_channels().collect();
+        let num_channels = connecting_channels.len();
+        let node_id = commands().push_without_inputs(PowfGen(connecting_channels.len()));
+        for (i, (source, chan)) in connecting_channels.into_iter().enumerate() {
+            commands().connect(source.to(node_id).from_channel(chan).to_channel(i + 1));
+        }
+        Handle::new(PowfHandle {
+            node_id,
+            num_channels,
+        })
+        .exponent(exponent)
+    }
     /// Free the node(s) this handle is pointing to
     pub fn free(self) {
         for id in self.node_ids() {
@@ -80,6 +96,47 @@ impl<H: HandleData + Copy> HandleData for Handle<H> {
 
     fn node_ids(&self) -> NodeIdIter {
         self.handle.node_ids()
+    }
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct PowfHandle {
+    node_id: NodeId,
+    num_channels: usize,
+}
+impl PowfHandle {
+    /// Set the exponent
+    pub fn exponent(self, exponent: impl Into<Input>) -> Handle<Self> {
+        let inp = exponent.into();
+        match inp {
+            Input::Constant(v) => {
+                commands().connect(
+                    crate::graph::connection::constant(v)
+                        .to(self.node_id)
+                        .to_channel(0),
+                );
+            }
+            Input::Handle { output_channels } => {
+                for (node_id, chan) in output_channels {
+                    crate::modal_interface::commands()
+                        .connect(node_id.to(self.node_id).from_channel(chan).to_channel(0));
+                }
+            }
+        }
+        Handle::new(self)
+    }
+}
+impl HandleData for PowfHandle {
+    fn out_channels(&self) -> ChannelIter {
+        ChannelIter::single_node_id(self.node_id, self.num_channels)
+    }
+
+    fn in_channels(&self) -> ChannelIter {
+        ChannelIter::single_node_id(self.node_id, self.num_channels + 1)
+    }
+
+    fn node_ids(&self) -> NodeIdIter {
+        NodeIdIter::Single(self.node_id)
     }
 }
 

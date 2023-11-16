@@ -8,6 +8,58 @@ use crate::{
     BlockSize, Resources, Sample,
 };
 
+/// PowGen(num out channels)
+///
+/// Variable number of channels at creation. The first input is the exponent, remaining inputs are taken
+pub struct PowfGen(pub usize);
+impl Gen for PowfGen {
+    fn process(&mut self, ctx: GenContext, _resources: &mut Resources) -> GenState {
+        let block_size = ctx.block_size();
+        let mut out_bufs = ctx.outputs.iter_mut();
+        let exponent = ctx.inputs.get_channel(0);
+
+        for i in 0..self.0 {
+            let out = out_bufs.next().unwrap();
+            let value = ctx.inputs.get_channel(i + 1);
+
+            // fallback
+            // #[cfg(not(feature = "unstable"))]
+            {
+                for i in 0..block_size {
+                    out[i] = fastapprox::fast::pow(value[i], exponent[i]);
+                }
+            }
+            // #[cfg(feature = "unstable")]
+            // {
+            //     use std::simd::f32x2;
+            //     let simd_width = 2;
+            //     for _ in 0..block_size / simd_width {
+            //         let s_in0 = f32x2::from_slice(&value0[..simd_width]);
+            //         let s_in1 = f32x2::from_slice(&value1[..simd_width]);
+            //         let product = s_in0 * s_in1;
+            //         product.copy_to_slice(out_buf);
+            //         in0 = &value0[simd_width..];
+            //         in1 = &value1[simd_width..];
+            //         out_buf = &mut out_buf[simd_width..];
+            //     }
+            // }
+        }
+        GenState::Continue
+    }
+
+    fn num_inputs(&self) -> usize {
+        self.0 + 1
+    }
+
+    fn num_outputs(&self) -> usize {
+        self.0
+    }
+
+    fn name(&self) -> &'static str {
+        "PowfGen"
+    }
+}
+
 /// Mul(num out channels)
 ///
 /// Variable number channel Mul Gen. Every pair of inputs are multiplied together into one output.
