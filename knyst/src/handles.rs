@@ -818,6 +818,13 @@ pub struct GenericHandle {
     num_outputs: usize,
 }
 impl GenericHandle {
+    pub fn new(node_id: NodeId, num_inputs: usize, num_outputs: usize) -> Self {
+        Self {
+            node_id,
+            num_inputs,
+            num_outputs,
+        }
+    }
     /// The non-typed way to set an input channel's value
     pub fn set(
         self,
