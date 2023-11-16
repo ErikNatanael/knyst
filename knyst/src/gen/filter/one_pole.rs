@@ -10,6 +10,7 @@ use crate::{prelude::GenState, Sample, SampleRate};
 // `OnePole *dcBlockerLp = new OnePole(10.0 / sampleRate);`
 // for each sample:
 // `sample -= dcBlockerLp->process(sample);`
+/// Internal functionality for the `OnePoleLpf` and `OnePoleHpf` Gens.
 #[derive(Debug, Clone, Copy)]
 pub struct OnePole<T> {
     last_output: T,

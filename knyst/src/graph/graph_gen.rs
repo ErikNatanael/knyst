@@ -9,7 +9,7 @@ use std::{
 use rtrb::Producer;
 use slotmap::SlotMap;
 
-use crate::{filter::hiir::StandardDownsampler2X, Resources};
+use crate::{internal_filter::hiir::StandardDownsampler2X, Resources};
 
 use super::{
     node::Node, Gen, GenContext, GenState, NodeBufferRef, NodeKey, Oversampling, OwnedRawBuffer,

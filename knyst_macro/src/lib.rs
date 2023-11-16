@@ -117,14 +117,14 @@ impl NewData {
         });
         let doc_str = format!("Upload a {type_ident} and return a handle to it.");
         quote! {
-                    // Init handle fn
-                    #[doc = #doc_str]
-                    pub fn #create_fn_name(#(#param_types_in_sig),*) -> knyst::handles::Handle<#handle_name> {
-                        use knyst::controller::KnystCommands;
-                        let node_id =
-                            knyst::modal_interface::commands().push_without_inputs(#type_ident::#fn_name(#(#param_names_in_call),*));
-                        knyst::handles::Handle::new(#handle_name{node_id})
-                    }
+            // Init handle fn
+            #[doc = #doc_str]
+            pub fn #create_fn_name(#(#param_types_in_sig),*) -> knyst::handles::Handle<#handle_name> {
+                use knyst::controller::KnystCommands;
+                let node_id =
+                    knyst::modal_interface::commands().push_without_inputs(#type_ident::#fn_name(#(#param_names_in_call),*));
+                knyst::handles::Handle::new(#handle_name{node_id})
+            }
         }
     }
 }

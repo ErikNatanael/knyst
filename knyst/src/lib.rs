@@ -47,7 +47,7 @@
 //!
 #![deny(rustdoc::broken_intra_doc_links)] // error if there are broken intra-doc links
 #![warn(missing_docs)]
-#![warn(clippy::pedantic)]
+// #![warn(clippy::pedantic)]
 #![cfg_attr(feature = "unstable", feature(portable_simd))]
 
 use audio_backend::AudioBackendError;
@@ -74,11 +74,11 @@ pub mod audio_backend;
 pub mod buffer;
 pub mod controller;
 pub mod envelope;
-pub mod filter;
 pub mod gen;
 pub mod graph;
 pub mod handles;
 pub mod inspection;
+mod internal_filter;
 pub mod modal_interface;
 pub mod node_buffer;
 pub mod prelude;
