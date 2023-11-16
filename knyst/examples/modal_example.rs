@@ -22,8 +22,6 @@ fn main() -> Result<()> {
         },
         print_error_handler,
     );
-    let sin_wt = Wavetable::sine();
-    let wt = commands().insert_wavetable(sin_wt);
 
     // let root_freq = var(440.); // todo: add nodes which are a constant value, could be a Bus(1) or a special Gen // todo: add nodes which are a constant value, could be a Bus(1) or a special Gen
     // let mut rng = thread_rng();
@@ -105,9 +103,6 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-// fn sine() -> NodeHandle<WavetableOscillatorOwnedHandle> {
-//     wavetable_oscillator_owned(Wavetable::sine())
-// }
 fn sine() -> Handle<OscillatorHandle> {
     oscillator(WavetableId::cos())
 }
