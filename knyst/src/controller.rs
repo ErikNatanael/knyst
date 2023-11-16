@@ -453,16 +453,16 @@ impl KnystCommands for MultiThreadedKnystCommands {
             SelectedGraph::Remote(id) => id,
         };
         self.selected_graph = SelectedGraph::Remote(previous_graph_id);
-        LOCAL_GRAPH.with_borrow_mut(|g| match g.take() {
-            Some(g) => {
+        LOCAL_GRAPH.with_borrow_mut(|g| {
+            if let Some(g) = g.take() {
                 let num_inputs = g.num_inputs();
                 let num_outputs = g.num_outputs();
+                let graph_id = g.id();
                 let id = self.push_to_graph_without_inputs(g, previous_graph_id);
-                Handle::new(GraphHandle::new(id, num_inputs, num_outputs))
-            }
-            None => {
+                Handle::new(GraphHandle::new(id, graph_id, num_inputs, num_outputs))
+            } else {
                 eprintln!("No local graph found");
-                Handle::new(GraphHandle::new(NodeId::new(), 0, 0))
+                Handle::new(GraphHandle::new(NodeId::new(), 0, 0, 0))
             }
         })
     }

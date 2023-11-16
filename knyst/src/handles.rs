@@ -4,7 +4,7 @@ use std::{
 };
 
 use crate::{
-    graph::{Change, Connection, ParameterChange, SimultaneousChanges},
+    graph::{Change, Connection, GraphId, ParameterChange},
     Sample,
 };
 
@@ -33,6 +33,7 @@ impl<H: Copy> Deref for Handle<H> {
 //     }
 // }
 impl Handle<GenericHandle> {
+    /// Create a dummy handle pointing to nothing.
     pub fn void() -> Handle<GenericHandle> {
         Self::new(GenericHandle {
             node_id: NodeId::new(),
@@ -42,15 +43,18 @@ impl Handle<GenericHandle> {
     }
 }
 impl<A: Copy + HandleData> Handle<A> {
+    /// Create a new `Handle` wrapping a specific handle type
     pub fn new(handle: A) -> Self {
         Self { handle }
     }
+    /// Repeat all the outputs such that [1, 2, 3] -> [1, 1, 2, 2, 3, 3]
     pub fn repeat_outputs(self, n: usize) -> Handle<RepeatOutputs<A>> {
         Handle::new(RepeatOutputs {
             handle: self.handle,
             repeats: n,
         })
     }
+    /// Free the node(s) this handle is pointing to
     pub fn free(self) {
         for id in self.node_ids() {
             commands().free_node(id);
@@ -78,6 +82,8 @@ impl<H: HandleData + Copy> HandleData for Handle<H> {
         self.handle.node_ids()
     }
 }
+
+/// Handle to a single output channel from a node.
 #[derive(Copy, Clone, Debug)]
 pub struct OutputChannelHandle {
     node_id: NodeId,
@@ -96,6 +102,8 @@ impl HandleData for OutputChannelHandle {
         NodeIdIter::Single(self.node_id)
     }
 }
+
+/// Handle for a `repeat_outputs`
 #[derive(Copy, Clone, Debug)]
 pub struct RepeatOutputs<H: Copy + HandleData> {
     handle: H,
@@ -119,6 +127,8 @@ impl<H: Copy + HandleData> HandleData for RepeatOutputs<H> {
         self.handle.node_ids()
     }
 }
+
+/// Handle for a * operation
 #[derive(Copy, Clone, Debug)]
 pub struct MulHandle {
     node_id: NodeId,
@@ -145,6 +155,8 @@ impl HandleData for MulHandle {
         NodeIdIter::Single(self.node_id)
     }
 }
+
+/// Handle for a + operation
 #[derive(Copy, Clone, Debug)]
 pub struct AddHandle {
     node_id: NodeId,
@@ -172,6 +184,7 @@ impl HandleData for AddHandle {
     }
 }
 
+/// Implemented by all handle types to allow routing between handles.
 pub trait HandleData {
     /// All output channels of this `Handle` in order
     fn out_channels(&self) -> ChannelIter;
@@ -180,7 +193,9 @@ pub trait HandleData {
     /// All `NodeIds` referenced by this `Handle` in any order
     fn node_ids(&self) -> NodeIdIter;
 }
+/// Iterator of `NodeId`s, e.g. for freeing a handle.
 #[derive(Clone)]
+#[allow(missing_docs)]
 pub enum NodeIdIter {
     Single(NodeId),
     Vec(std::vec::IntoIter<NodeId>),
@@ -201,36 +216,58 @@ impl Iterator for NodeIdIter {
         }
     }
 }
+
+/// An iterator over channels to connect to/from. Use internally by handles. You won't need to interact with it directly unless you are implementing a handle.
 #[derive(Clone, Debug)]
 pub enum ChannelIter {
+    /// All the channels from a single node
     SingleNodeId {
+        #[allow(missing_docs)]
         node_id: NodeId,
+        #[allow(missing_docs)]
         num_channels: usize,
+        #[allow(missing_docs)]
         current_iter_index: usize,
     },
+    /// Any number of channels from potentially different source nodes.
     Vec {
-        channels: Vec<(Node, NodeChannel)>,
+        #[allow(missing_docs)]
+        channels: Vec<(Source, NodeChannel)>,
+        #[allow(missing_docs)]
         current_index: usize,
     },
+    /// A single channel
     SingleChannel {
+        #[allow(missing_docs)]
         node_id: NodeId,
+        #[allow(missing_docs)]
         channel: NodeChannel,
+        #[allow(missing_docs)]
         returned: bool,
     },
+    /// Channels from a graph input
     GraphInput {
+        #[allow(missing_docs)]
         start_index: usize,
+        #[allow(missing_docs)]
         num_channels: usize,
+        #[allow(missing_docs)]
         current_channel: usize,
     },
+    /// No channels
     None,
 }
 impl ChannelIter {
-    pub fn from_vec(channels: Vec<(Node, NodeChannel)>) -> Self {
+    /// Create a `ChannelIter` from a Vec of sources and channels. This is the most flexible option.  
+    #[must_use]
+    pub fn from_vec(channels: Vec<(Source, NodeChannel)>) -> Self {
         Self::Vec {
             channels,
             current_index: 0,
         }
     }
+    /// Create a `ChannelIter` from a single node id and a number of channels and no offset
+    #[must_use]
     pub fn single_node_id(node_id: NodeId, num_channels: usize) -> Self {
         Self::SingleNodeId {
             node_id,
@@ -238,6 +275,8 @@ impl ChannelIter {
             current_iter_index: 0,
         }
     }
+    /// Create a `ChannelIter` with a single channel
+    #[must_use]
     pub fn single_channel(node_id: NodeId, channel: NodeChannel) -> Self {
         Self::SingleChannel {
             node_id,
@@ -246,46 +285,54 @@ impl ChannelIter {
         }
     }
 }
+
+/// Represents a source within a Graph, either an input to the graph or a node within the graph.
 #[derive(Copy, Clone, Debug)]
-pub enum Node {
+pub enum Source {
+    #[allow(missing_docs)]
     GraphInput,
+    #[allow(missing_docs)]
     Gen(NodeId),
 }
-impl Node {
+impl Source {
+    /// Create a connection to another node
+    #[must_use]
     pub fn to(self, other: NodeId) -> Connection {
         match self {
-            Node::GraphInput => Connection::graph_input(other),
-            Node::Gen(node) => node.to(other),
+            Source::GraphInput => Connection::graph_input(other),
+            Source::Gen(node) => node.to(other),
         }
     }
+    /// Create a connection to the graph output
+    #[must_use]
     pub fn to_graph_out(self) -> Connection {
         match self {
-            Node::GraphInput => Connection::GraphInputToOutput {
+            Source::GraphInput => Connection::GraphInputToOutput {
                 from_input_channel: 0,
                 to_output_channel: 0,
                 channels: 1,
             },
-            Node::Gen(node) => node.to_graph_out(),
+            Source::Gen(node) => node.to_graph_out(),
         }
     }
 }
-impl From<NodeId> for Node {
+impl From<NodeId> for Source {
     fn from(value: NodeId) -> Self {
         Self::Gen(value)
     }
 }
-impl From<&mut NodeId> for Node {
+impl From<&mut NodeId> for Source {
     fn from(value: &mut NodeId) -> Self {
         Self::Gen(*value)
     }
 }
-impl From<&NodeId> for Node {
+impl From<&NodeId> for Source {
     fn from(value: &NodeId) -> Self {
         Self::Gen(*value)
     }
 }
 impl Iterator for ChannelIter {
-    type Item = (Node, NodeChannel);
+    type Item = (Source, NodeChannel);
 
     fn next(&mut self) -> Option<Self::Item> {
         match self {
@@ -332,7 +379,7 @@ impl Iterator for ChannelIter {
                 } else {
                     *current_channel += 1;
                     Some((
-                        Node::GraphInput,
+                        Source::GraphInput,
                         NodeChannel::Index(*start_index + *current_channel - 1),
                     ))
                 }
@@ -365,9 +412,9 @@ impl Iterator for ChannelIter {
             }
             ChannelIter::None => (0, Some(0)),
             ChannelIter::GraphInput {
-                start_index,
                 num_channels,
                 current_channel,
+                ..
             } => {
                 let num_left = num_channels - *current_channel;
                 (num_left, Some(num_left))
@@ -612,7 +659,7 @@ impl Add<Sample> for AnyNodeHandle {
 }
 /// A safe way to store a Handle without the generic parameter, but keep being able to use it
 pub struct AnyNodeHandle {
-    org_handle: Box<dyn Any>,
+    _org_handle: Box<dyn Any>,
     in_channel_iter: ChannelIter,
     out_channel_iter: ChannelIter,
     node_ids: NodeIdIter,
@@ -621,7 +668,7 @@ pub struct AnyNodeHandle {
 impl<H: Copy + HandleData + 'static> From<Handle<H>> for AnyNodeHandle {
     fn from(value: Handle<H>) -> Self {
         AnyNodeHandle {
-            org_handle: Box::new(value),
+            _org_handle: Box::new(value),
             in_channel_iter: value.in_channels(),
             out_channel_iter: value.out_channels(),
             node_ids: value.node_ids(),
@@ -643,7 +690,10 @@ impl HandleData for AnyNodeHandle {
 }
 /// Gathering all kinds of inputs into one
 pub enum Input {
+    /// Constant value input
     Constant(Sample),
+    /// Input from another handle
+    #[allow(missing_docs)]
     Handle { output_channels: ChannelIter },
 }
 impl From<Sample> for Input {
@@ -669,6 +719,7 @@ impl From<&AnyNodeHandle> for Input {
 /// Marker trait to mark that the output of the Gen will be between -1 and 1 inclusive
 pub trait HandleNormalRange {}
 
+/// Handle to a range converter, usually acquired by calling the `.range` method on a supported handle.
 #[derive(Clone, Copy, Debug)]
 pub struct RangeHandle {
     node_id: NodeId,
@@ -697,7 +748,8 @@ impl HandleData for RangeHandle {
 }
 
 impl<H: HandleData + Copy + HandleNormalRange> Handle<H> {
-    pub fn range(mut self, min: impl Into<Input>, max: impl Into<Input>) -> Handle<RangeHandle> {
+    /// Convert the output range from [-1, 1] to [min, max]
+    pub fn range(self, min: impl Into<Input>, max: impl Into<Input>) -> Handle<RangeHandle> {
         // Convert to the correct range for the RangeGen
         let input = self * 0.5 + 0.5;
         let num_out_channels = input.out_channels().collect::<Vec<_>>().len();
@@ -754,6 +806,7 @@ impl<H: HandleData + Copy + HandleNormalRange> Handle<H> {
     }
 }
 
+/// Handle for a Graph input, usually acquired through the `graph_input` function.
 #[derive(Copy, Clone, Debug)]
 pub struct GraphInputHandle {
     start_index: usize,
@@ -778,7 +831,8 @@ impl HandleData for GraphInputHandle {
     }
 }
 
-/// Creates a handle to numer of consecutive graph_input channels.
+/// Creates a handle to numer of consecutive graph input channels.
+#[must_use]
 pub fn graph_input(index: usize, num_channels: usize) -> Handle<GraphInputHandle> {
     Handle::new(GraphInputHandle {
         start_index: index,
@@ -790,7 +844,7 @@ pub fn graph_input(index: usize, num_channels: usize) -> Handle<GraphInputHandle
 pub fn graph_output(index: usize, input: impl Into<Input>) {
     let inp = input.into();
     match inp {
-        Input::Constant(v) => {
+        Input::Constant(_v) => {
             // commands().connect(
             //     crate::graph::connection::constant(v)
             //         .to_graph_out()
@@ -811,6 +865,7 @@ pub fn graph_output(index: usize, input: impl Into<Input>) {
     }
 }
 
+/// A handle type that can refer to any Gen and still be Copy. It knows only how many output/input channels the Gen has, not their labels. You can still use labels via the `set` method.
 #[derive(Copy, Clone)]
 pub struct GenericHandle {
     node_id: NodeId,
@@ -842,7 +897,7 @@ impl GenericHandle {
                 );
             }
             Input::Handle { output_channels } => {
-                for (i, (node_id, chan)) in output_channels.enumerate() {
+                for (node_id, chan) in output_channels {
                     commands().connect(
                         node_id
                             .to(self.node_id)
@@ -879,6 +934,9 @@ impl HandleData for GenericHandle {
         NodeIdIter::Single(self.node_id)
     }
 }
+/// Upload the Gen to the Graph and return a `GenericHandle` for routing and setting inputs.
+///
+/// This is useful when the Gen you want to add doesn't have it's own handle function for some reason.
 pub fn handle(gen: impl GenOrGraph) -> Handle<GenericHandle> {
     let num_inputs = gen.num_inputs();
     let num_outputs = gen.num_outputs();
@@ -890,19 +948,32 @@ pub fn handle(gen: impl GenOrGraph) -> Handle<GenericHandle> {
     })
 }
 
+/// A `Handle` to a `Graph`
 #[derive(Copy, Clone)]
 pub struct GraphHandle {
     node_id: NodeId,
+    graph_id: GraphId,
     num_inputs: usize,
     num_outputs: usize,
 }
 impl GraphHandle {
-    pub(crate) fn new(id: NodeId, num_inputs: usize, num_outputs: usize) -> Self {
+    pub(crate) fn new(
+        id: NodeId,
+        graph_id: GraphId,
+        num_inputs: usize,
+        num_outputs: usize,
+    ) -> Self {
         Self {
             node_id: id,
+            graph_id,
             num_inputs,
             num_outputs,
         }
+    }
+    /// Return the `GraphId` of the Graph this handle points to.
+    #[must_use]
+    pub fn graph_id(&self) -> GraphId {
+        self.graph_id
     }
 }
 impl HandleData for GraphHandle {

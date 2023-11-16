@@ -267,7 +267,7 @@ impl KnystCommands for UnifiedKnystCommands {
             UnifiedKnystCommands::Real(kc) => kc.borrow_mut().upload_local_graph(),
             UnifiedKnystCommands::Dummy(kc) => {
                 kc.report_dummy();
-                Handle::new(GraphHandle::new(NodeId::new(), 0, 0))
+                Handle::new(GraphHandle::new(NodeId::new(), 0, 0, 0))
             }
         }
     }
