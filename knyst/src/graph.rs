@@ -3140,7 +3140,6 @@ impl Graph {
             for input_edge in graph_input_edges {
                 graph_inputs_to_copy
                     .push((input_edge.from_output_index, input_edge.to_input_index));
-                eprintln!("Added graph input copy to node key {node_key:?}");
             }
             for feedback_edge in feedback_input_edges {
                 let source = &nodes[feedback_edge.source];

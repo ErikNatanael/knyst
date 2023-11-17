@@ -1032,6 +1032,35 @@ impl GraphHandle {
     pub fn graph_id(&self) -> GraphId {
         self.graph_id
     }
+    /// The non-typed way to set an input channel's value
+    pub fn set(
+        self,
+        channel: impl Into<NodeChannel>,
+        input: impl Into<Input>,
+    ) -> Handle<GraphHandle> {
+        let inp = input.into();
+        let channel = channel.into();
+        match inp {
+            Input::Constant(v) => {
+                commands().connect(
+                    crate::graph::connection::constant(v)
+                        .to(self.node_id)
+                        .to_channel(channel),
+                );
+            }
+            Input::Handle { output_channels } => {
+                for (node_id, chan) in output_channels {
+                    commands().connect(
+                        node_id
+                            .to(self.node_id)
+                            .from_channel(chan)
+                            .to_channel(channel),
+                    );
+                }
+            }
+        }
+        Handle::new(self)
+    }
 }
 impl HandleData for GraphHandle {
     fn out_channels(&self) -> ChannelIter {
