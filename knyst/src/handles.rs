@@ -968,6 +968,9 @@ impl GenericHandle {
     }
     /// The non-typed way to send a trigger to an input channel
     pub fn trig(self, channel: impl Into<NodeChannel>) -> Handle<GenericHandle> {
+        todo!(
+            "Sending trigs this way doesn't work and I don't have time to troubleshoot right now"
+        );
         // TODO: better way to send a trigger
         let change = ParameterChange::now(self.node_id.input(channel), Change::Trigger);
         commands().schedule_change(change);

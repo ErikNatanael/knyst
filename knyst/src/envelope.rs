@@ -53,10 +53,6 @@ use knyst_macro::impl_gen;
 pub struct Envelope {
     /// The start value of the envelope. Default: 0.0
     pub start_value: Sample,
-
-    // TODO: remove sample rate here, it should be set in init or iter_mut
-    #[allow(missing_docs)]
-    pub sample_rate: Sample,
     /// Points after the start value in the format (next_value, time_to_reach_it_in_seconds)
     pub points: Vec<Point>,
     /// Curves per point
@@ -69,10 +65,13 @@ pub struct Envelope {
 impl Envelope {
     /// Converts an [`Envelope`] to an [`EnvelopeGen`] and starts it.
     pub fn to_gen(&self) -> EnvelopeGen {
-        let mut e = EnvelopeGen::new(self.start_value, self.points.clone(), self.sample_rate)
-            .curves(self.curves.clone())
-            .sustain(self.sustain)
-            .stop_action(self.stop_action);
+        let mut e = EnvelopeGen::new(
+            self.start_value,
+            self.points.clone(),
+            self.sustain,
+            self.stop_action,
+        )
+        .curves(self.curves.clone());
         e.start();
         e
     }
@@ -81,7 +80,6 @@ impl Default for Envelope {
     fn default() -> Self {
         Self {
             start_value: 0.0,
-            sample_rate: 44100.0,
             points: vec![(1.0, 0.5), (0., 0.5)],
             curves: vec![Curve::Linear],
             sustain: SustainMode::NoSustain,
@@ -155,56 +153,24 @@ pub struct EnvelopeGen {
 }
 
 impl EnvelopeGen {
-    /// Create a new Envelope. points are in the format (level, duration) where the duration is given in seconds, and later converted to samples internally.
-    pub fn new(start_value: Sample, mut points: Vec<Point>, sample_rate: Sample) -> Self {
-        let points_secs = points.clone();
-        // Convert durations from seconds to samples
-        for point in &mut points {
-            point.1 *= sample_rate;
-        }
-        let target_value = points[0].0;
-        let segment_duration = points[0].1;
-        let curves = vec![Curve::Linear; points.len()];
-        Self {
-            points_secs,
-            points,
-            curves,
-            start_value,
-            source_value: start_value,
-            target_value,
-            source_target_diff: target_value - start_value,
-            current_curve: Curve::Linear,
-            current_timestep: 0.0,
-            fade_out_duration: 0.5,
-            segment_duration,
-            duration_passed: 0.,
-            stop_action: StopAction::Continue,
-            next_index: 1,
-            playing: true,
-            sample_rate,
-            sustain: SustainMode::NoSustain,
-            // sustaining: false,
-            // sustaining_point: 0,
-            // release_point: None,
-            // looping: false,
-            waiting_for_release: false,
-        }
-    }
-
     /// Convenience method for an ADSR envelope
     pub fn adsr(
         attack_time: Sample,
         decay_time: Sample,
         sustain_level: Sample,
         release_time: Sample,
-        sample_rate: Sample,
     ) -> Self {
         let points = vec![
             (1.0, attack_time),
             (sustain_level, decay_time),
             (0.0, release_time),
         ];
-        Self::new(0.0, points, sample_rate).sustain(SustainMode::SustainAtPoint(1))
+        Self::new(
+            0.0,
+            points,
+            SustainMode::SustainAtPoint(1),
+            StopAction::Continue,
+        )
     }
     /// Set the [`SustainMode`]
     pub fn sustain(mut self, sustain: SustainMode) -> Self {
@@ -447,9 +413,52 @@ impl EnvelopeGen {
 
 #[impl_gen]
 impl EnvelopeGen {
+    /// Create a new Envelope. points are in the format (level, duration) where the duration is given in seconds, and later converted to samples internally.
+    pub fn new(
+        start_value: Sample,
+        points: Vec<Point>,
+        sustain: SustainMode,
+        stop_action: StopAction,
+    ) -> Self {
+        let mut points = points;
+        let sample_rate = 41000.;
+        let points_secs = points.clone();
+        // Convert durations from seconds to samples
+        for point in &mut points {
+            point.1 *= sample_rate;
+        }
+        let target_value = points[0].0;
+        let segment_duration = points[0].1;
+        let curves = vec![Curve::Linear; points.len()];
+        let mut s = Self {
+            points_secs,
+            points,
+            curves,
+            start_value,
+            source_value: start_value,
+            target_value,
+            source_target_diff: target_value - start_value,
+            current_curve: Curve::Linear,
+            current_timestep: 0.0,
+            fade_out_duration: 0.5,
+            segment_duration,
+            duration_passed: 0.,
+            stop_action,
+            next_index: 1,
+            playing: true,
+            sample_rate,
+            sustain,
+            // sustaining: false,
+            // sustaining_point: 0,
+            // release_point: None,
+            // looping: false,
+            waiting_for_release: false,
+        };
+        s.start();
+        s
+    }
     // TODO: Add more input options for runtime changes e.g. the values and durations of points
-    #[process]
-    fn process(
+    pub fn process(
         &mut self,
         release: &[Trig],
         restart: &[Trig],
@@ -465,6 +474,7 @@ impl EnvelopeGen {
             .zip(restart_trigger_in.iter())
         {
             if is_trigger(release_trig) {
+                eprintln!("Released env");
                 self.release();
             }
             if is_trigger(restart_trig) {
@@ -481,7 +491,6 @@ impl EnvelopeGen {
             self.stop_action.to_gen_state(stop_sample.unwrap())
         }
     }
-    #[init]
     fn init(&mut self, sample_rate: SampleRate) {
         if self.sample_rate != *sample_rate {
             self.points = self
@@ -518,7 +527,13 @@ mod tests {
     #[test]
     fn test_simple_envelope() {
         let sample_rate = 44100.;
-        let mut env = EnvelopeGen::new(0.0, vec![(1.0, 1.0), (0.75, 0.5), (0.1, 3.0)], sample_rate);
+        let mut env = EnvelopeGen::new(
+            0.0,
+            vec![(1.0, 1.0), (0.75, 0.5), (0.1, 3.0)],
+            SustainMode::NoSustain,
+            StopAction::Continue,
+        );
+        env.init(sample_rate);
         env.start();
         assert_eq!(env.next_sample(), 0.);
         assert!(env.next_sample() > 0.);
