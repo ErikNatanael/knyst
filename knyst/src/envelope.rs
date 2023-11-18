@@ -533,7 +533,7 @@ mod tests {
             SustainMode::NoSustain,
             StopAction::Continue,
         );
-        env.init(sample_rate);
+        env.init(SampleRate(sample_rate));
         env.start();
         assert_eq!(env.next_sample(), 0.);
         assert!(env.next_sample() > 0.);
