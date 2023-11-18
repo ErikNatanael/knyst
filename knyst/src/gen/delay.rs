@@ -254,6 +254,7 @@ impl AllpassFeedbackDelay {
 pub struct StaticSampleDelay {
     buffer: Vec<Sample>,
     position: usize,
+    delay_length: usize,
 }
 #[impl_gen]
 impl StaticSampleDelay {
@@ -267,7 +268,13 @@ impl StaticSampleDelay {
         Self {
             buffer: vec![0.0; delay_length_in_samples],
             position: 0,
+            delay_length: delay_length_in_samples,
         }
+    }
+
+    /// Set a new delay length for the delay. Real time safe. If the given length is longer than the max delay length it will be set to the max delay length.
+    pub fn set_delay_length(&mut self, delay_length_in_samples: usize) {
+        self.delay_length = delay_length_in_samples.min(self.buffer.len());
     }
 
     /// Read a whole block at a time. Only use this if the delay time is longer than 1 block.
@@ -279,7 +286,7 @@ impl StaticSampleDelay {
             output.copy_from_slice(&self.buffer[self.position..read_end]);
         } else {
             // block wraps around
-            let read_end = read_end % self.buffer.len();
+            let read_end = read_end % self.delay_length;
             output[0..(block_size - read_end)].copy_from_slice(&self.buffer[self.position..]);
             output[(block_size - read_end)..].copy_from_slice(&self.buffer[0..read_end]);
         }
@@ -293,7 +300,7 @@ impl StaticSampleDelay {
             self.buffer[self.position..write_end].copy_from_slice(&input);
         } else {
             // block wraps around
-            let write_end = write_end % self.buffer.len();
+            let write_end = write_end % self.delay_length;
             self.buffer[self.position..].copy_from_slice(&input[0..block_size - write_end]);
             self.buffer[0..write_end].copy_from_slice(&input[block_size - write_end..]);
         }
@@ -306,7 +313,7 @@ impl StaticSampleDelay {
     /// Write a sample to the buffer. Advances the frame pointer.
     pub fn write_and_advance(&mut self, input: Sample) {
         self.buffer[self.position] = input;
-        self.position = (self.position + 1) % self.buffer.len();
+        self.position = (self.position + 1) % self.delay_length;
     }
     /// Process one block of the delay. Will choose block based processing at runtime if the delay time is larger than the block size.
     pub fn process(
