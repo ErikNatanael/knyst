@@ -5,6 +5,7 @@
 use std::time::Duration;
 
 use crate::KnystError;
+use crate::controller::Controller;
 use crate::{resources::ResourcesSettings, Resources, Sample};
 
 use crate::{
@@ -58,6 +59,45 @@ impl KnystSphere {
         // Set the sphere to be active
         set_active_sphere(sphere_id)?;
         Ok(sphere_id)
+    }
+    /// Start the sphere and upload it, but return the Controller and make it the user's responsibility.
+    /// Unless you are implementing a custom backend solution, you probably want the [`KnystSphere::start`] method.
+    pub fn start_return_controller<B: AudioBackend>(
+        backend: &mut B,
+        settings: SphereSettings,
+        error_handler: impl FnMut(KnystError) + Send + 'static,
+    ) -> Result<(SphereId, Controller), SphereError>{
+        let resources = Resources::new(settings.resources_settings);
+        let graph_settings = GraphSettings {
+            name: settings.name.clone(),
+            num_inputs: backend
+                .native_input_channels()
+                .unwrap_or(settings.num_inputs),
+            num_outputs: backend
+                .native_output_channels()
+                .unwrap_or(settings.num_outputs),
+            block_size: backend.block_size().unwrap_or(64),
+            sample_rate: backend.sample_rate() as Sample,
+            ..Default::default()
+        };
+        let graph: Graph = Graph::new(graph_settings);
+        let controller = backend.start_processing_return_controller(
+            graph,
+            resources,
+            RunGraphSettings {
+                scheduling_latency: settings.scheduling_latency,
+            },
+            Box::new(error_handler),
+        )?;
+        let s = Self {
+            name: settings.name,
+            knyst_commands: controller.get_knyst_commands(),
+        };
+        // Add the sphere to the global list of spheres
+        let sphere_id = register_sphere(s)?;
+        // Set the sphere to be active
+        set_active_sphere(sphere_id)?;
+        Ok((sphere_id, controller))
     }
     /// Return an object implementing [`KnystCommands`]
     #[must_use]
