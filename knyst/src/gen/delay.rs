@@ -2,15 +2,12 @@
 //! This module contains some basic delay Gens
 
 use crate as knyst;
-use crate::gen::Gen;
-use crate::gen::GenContext;
 use crate::gen::GenState;
 use crate::BlockSize;
 use crate::SampleRate;
 use knyst_macro::impl_gen;
 
 use crate::time::Superseconds;
-use crate::Resources;
 use crate::Sample;
 
 /// Delay by an integer number of samples, no interpolation. This is good for e.g. triggers.
@@ -67,6 +64,7 @@ impl SampleDelay {
     }
 }
 
+/// Schroeder (?) allpass interpolation 
 #[derive(Clone, Copy, Debug)]
 pub struct AllpassInterpolator {
     coeff: f64,
@@ -75,6 +73,7 @@ pub struct AllpassInterpolator {
 }
 
 impl AllpassInterpolator {
+    /// Create a new and reset AllpassInterpolator
     pub fn new() -> Self {
         Self {
             coeff: 0.0,
@@ -87,9 +86,11 @@ impl AllpassInterpolator {
         self.prev_input = 0.0;
         self.prev_output = 0.0;
     }
+    /// Set the fractional number of frames in the delay time that we want to interpolate over
     pub fn set_delta(&mut self, delta: f64) {
         self.coeff = (1.0 - delta) / (1.0 + delta);
     }
+    /// Interpolate between the input sample and the previous value using the last set delta.
     pub fn process_sample(&mut self, input: f64) -> f64 {
         let output = self.coeff * (input - self.prev_output) + self.prev_input;
         self.prev_output = output;
@@ -98,6 +99,7 @@ impl AllpassInterpolator {
     }
 }
 
+/// Delay with allpass interpolation between adjacent samples, no feedback.
 #[derive(Clone, Debug)]
 pub struct AllpassDelay {
     buffer: Vec<f64>,

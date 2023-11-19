@@ -1,10 +1,49 @@
+//! Handles are the preferred and most ergonomic way of interacting with Knyst, and may 
+//! become the only way in the future. 
+//! 
+//! ## With your own types 
+//! For your own [`Gen`]s, the [`impl_gen`] macro will automatically
+//! create a handle type for you if you include a `new` function in the impl_gen block. You can also create
+//! a handle type yourself by implementing [`HandleData`].
+//! 
+//! If a Gen you want to use does not have a handle type, you can use the [`handle`] function to upload
+//! it to the current graph and get a [`GenericHandle`] to it. This handle type can be used in routing, but doesn't
+//! have all the type safety features that a custom handle type has, e.g. setting inputs on specifucally named methods.
+//! 
+//! 
+//! # Example
+//! ```
+//! use knyst::prelude::*;
+//! 
+//! let mut backend = CpalBackend::new(CpalBackendOptions::default())?;
+//! let _sphere = KnystSphere::start(
+//!    &mut backend,
+//!    SphereSettings::default(),
+//!    print_error_handler,
+//! );
+//! // Upload a wavetable oscillator to the current graph and set its inputs.
+//! let sig = wavetable_oscillator(WavetableId::cos()).freq(440.);
+//! // Create another one
+//! let modulator = wavetable_oscillator(WavetableId::cos()).freq(440.);
+//! // Change the input of the first oscillator. You can do basic arithmetic on handles and 
+//! // the necessary Gens will be added automatically.
+//! sig.freq(modulator * 440.);
+//! // Lower the amplitude by half. The result of an arithmetic operation is a new
+//! // handle representing the outermost operation in the chain, in this case the multiplication.
+//! // To still have access to the settings on the inner handles those handles have to be stored.
+//! let sig = sig * 0.5;
+//! // Output the signal to the graph output. Since we are working on the outermost graph, this is the 
+//! // output of all of Knyst. The first argument determines what channel index to start outputting to. All
+//! // output channels in the `sig` will be output, in this case only 1.
+//! graph_output(0, sig); 
+//! ```
+
 use std::{
     any::Any,
     ops::{Add, Deref, Mul},
 };
 
 use crate::{
-    controller::CallbackHandle,
     graph::{Change, Connection, GraphId, ParameterChange},
     prelude::PowfGen,
     Sample,
@@ -99,6 +138,7 @@ impl<H: HandleData + Copy> HandleData for Handle<H> {
     }
 }
 
+/// Handle to a PowfGen
 #[derive(Copy, Clone, Debug)]
 pub struct PowfHandle {
     node_id: NodeId,
@@ -930,6 +970,7 @@ pub struct GenericHandle {
     num_outputs: usize,
 }
 impl GenericHandle {
+    /// Create a [`GenericHandle`] for the given node
     pub fn new(node_id: NodeId, num_inputs: usize, num_outputs: usize) -> Self {
         Self {
             node_id,
@@ -968,13 +1009,14 @@ impl GenericHandle {
     }
     /// The non-typed way to send a trigger to an input channel
     pub fn trig(self, channel: impl Into<NodeChannel>) -> Handle<GenericHandle> {
-        todo!(
-            "Sending trigs this way doesn't work and I don't have time to troubleshoot right now"
-        );
+        let _ = channel;
         // TODO: better way to send a trigger
         let change = ParameterChange::now(self.node_id.input(channel), Change::Trigger);
         commands().schedule_change(change);
-        Handle::new(self)
+        todo!(
+            "Sending trigs this way doesn't work and I don't have time to troubleshoot right now"
+        );
+        // Handle::new(self)
     }
 }
 impl HandleData for GenericHandle {
@@ -994,9 +1036,10 @@ impl HandleData for GenericHandle {
         NodeIdIter::Single(self.node_id)
     }
 }
-/// Upload the Gen to the Graph and return a `GenericHandle` for routing and setting inputs.
+/// Upload the [`Gen`] or graph to the active graph and return a [`GenericHandle`] for routing and setting inputs.
 ///
-/// This is useful when the Gen you want to add doesn't have it's own handle function for some reason.
+/// This is useful when the Gen you want to add doesn't have it's own handle function for some reason. Prefer the
+/// type specific handle init function for the type you want.
 pub fn handle(gen: impl GenOrGraph) -> Handle<GenericHandle> {
     let num_inputs = gen.num_inputs();
     let num_outputs = gen.num_outputs();

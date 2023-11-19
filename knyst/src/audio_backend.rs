@@ -13,9 +13,8 @@
 //! may take longer to perform since they involve the audio thread.
 
 use crate::{
-    controller::{Controller, KnystCommands},
+    controller::Controller,
     graph::RunGraphSettings,
-    modal_interface::UnifiedKnystCommands,
     prelude::MultiThreadedKnystCommands,
     KnystError,
 };

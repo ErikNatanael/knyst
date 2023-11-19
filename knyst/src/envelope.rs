@@ -458,6 +458,7 @@ impl EnvelopeGen {
         s
     }
     // TODO: Add more input options for runtime changes e.g. the values and durations of points
+    /// Process block
     pub fn process(
         &mut self,
         release: &[Trig],

@@ -1,3 +1,6 @@
+//! A [`Gen`] is anything that implements the [`Gen`] trait and is the code of Knyst. Gen is short for Generator, often called unit generators in other contexts, a term that dates back to [Max Mathews' program MUSIC from 1957](https://en.wikipedia.org/wiki/MUSIC-N)
+//! 
+//! The best way of implementing [`Gen`] on your own type is using the [`impl_gen`] macro.
 mod basic_gens;
 pub mod random;
 pub use basic_gens::*;
@@ -26,13 +29,16 @@ pub trait Gen {
     fn num_outputs(&self) -> usize;
     /// Initialize buffers etc.
     /// Default: noop
-    fn init(&mut self, _block_size: usize, _sample_rate: Sample) {}
+    #[allow(unused)]
+    fn init(&mut self, block_size: usize, sample_rate: Sample) {}
     /// Return a label for a given input channel index. This sets the label in the [`Connection`] API.
-    fn input_desc(&self, _input: usize) -> &'static str {
+    #[allow(unused)]
+    fn input_desc(&self, input: usize) -> &'static str {
         ""
     }
     /// Return a label for a given output channel index. This sets the label in the [`Connection`] API.
-    fn output_desc(&self, _output: usize) -> &'static str {
+    #[allow(unused)]
+    fn output_desc(&self, output: usize) -> &'static str {
         ""
     }
     /// A name identifying this `Gen`.

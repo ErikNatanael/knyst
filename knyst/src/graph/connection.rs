@@ -4,7 +4,7 @@
 //! convenient and ergonomic.
 use std::fmt::Display;
 
-use super::{FreeError, GraphId, NodeId, Sample};
+use super::{FreeError, NodeId, Sample};
 
 /// Connection provides a convenient API for creating connections between nodes in a
 /// graph. When used for nodes in a running graph, the shadow engine will translate the
@@ -141,7 +141,10 @@ impl Display for Connection {
                 to_label,
                 channels,
                 feedback,
-            } => write!(f, "Connection::Node {:?}:{from_index:?}/{from_label:?} -> {:?}:{to_index:?}/{to_label:?}", source, sink),
+            } => {
+                let feedback = if *feedback { "feedback"} else {""};
+                write!(f, "Connection::Node {feedback} {:?}:{from_index:?}/{from_label:?} -> {:?}:{to_index:?}/{to_label:?} {channels} channels", source, sink)
+            },
             Connection::Constant {
                 value,
                 sink,
@@ -154,14 +157,14 @@ impl Display for Connection {
                 from_label,
                 to_index,
                 channels,
-            } => write!(f, "Connection::GraphOutput {:?}:{from_index:?}/{from_label:?} -> GraphOutput", source),
+            } => write!(f, "Connection::GraphOutput {:?}:{from_index:?}/{from_label:?} -> GraphOutput:{to_index} {channels} channels", source),
             Connection::GraphInput {
                 sink,
                 from_index,
                 to_index,
                 to_label,
                 channels,
-            } => write!(f, "Connection::GraphInput  {from_index:?} -> {:?}:{to_index:?}/{to_label:?}", sink),
+            } => write!(f, "Connection::GraphInput  {from_index:?} -> {:?}:{to_index:?}/{to_label:?} {channels} channels", sink),
             Connection::Clear {
                 node,
                 input_nodes,
@@ -170,12 +173,19 @@ impl Display for Connection {
                 graph_outputs,
                 graph_inputs,
                 channel,
-            } => write!(f, "Connection::Clear {:?}", node),
+            } => {
+                let input_nodes = if *input_nodes {"input(s) from nodes, "} else {""};
+                let input_constants= if *input_constants{"input constants, "} else {""};
+                let output_nodes = if *output_nodes {"output(s) to nodes, "} else {""};
+                let graph_outputs= if *graph_outputs{"output(s) to graph, "} else {""};
+                let graph_inputs= if *graph_inputs{"input(s) from graph, "} else {""};
+                write!(f, "Connection::Clear {:?} {input_nodes}{input_constants}{output_nodes}{graph_outputs}{graph_inputs}{channel:?}", node)
+            },
             Connection::GraphInputToOutput {
                 from_input_channel,
                 to_output_channel,
                 channels,
-            } => write!(f, "Connection::GraphInputToOutput {from_input_channel} -> {to_output_channel}"),
+            } => write!(f, "Connection::GraphInputToOutput {from_input_channel} -> {to_output_channel} {channels} channels"),
         }
     }
 }

@@ -64,6 +64,8 @@ tokio = { version = "1.26.0", features = [
   "rt-multi-thread",
 ] }
 
+[target.'cfg(unix)'.dev-dependencies]
+termion = "2.0.3"
 
 # [[bench]]
 # name = "micro_benchmarks"

@@ -160,6 +160,7 @@ impl BufferReader {
         self.read_pointer = new_pointer_pos;
         self.finished = false;
     }
+    /// Process block
     pub fn process(
         &mut self,
         out: &mut [Sample],
@@ -352,6 +353,7 @@ impl Gen for BufferReaderMulti {
     }
 }
 
+/// Upload a [`BufferReadedMulti`] to the current graph and return a handle to it.
 pub fn buffer_reader_multi(
     buffer: BufferId,
     rate: f64,
@@ -366,6 +368,7 @@ pub fn buffer_reader_multi(
         num_channels,
     })
 }
+/// Handle to a [`BufferReaderMulti`]
 #[derive(Clone, Copy, Debug)]
 pub struct BufferReaderMultiHandle {
     node_id: knyst::graph::NodeId,

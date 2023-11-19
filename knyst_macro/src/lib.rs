@@ -48,6 +48,7 @@ impl Parse for ArgData {
                             let value = get_expr_path_ident(&assign.right)?;
                             match value.to_string().as_str() {
                                 "normal" => range = Some(Range::Normal),
+                                "positive" => range = Some(Range::Positive),
                                 _ => {
                                     return Err(syn::Error::new(
                                         assign.right.span(),
@@ -92,7 +93,10 @@ fn get_expr_path_ident(expr: &syn::Expr) -> Result<&Ident> {
 
 #[derive(Clone, Copy)]
 enum Range {
+    /// [-1,1]
     Normal,
+    /// [0,1]
+    Positive,
 }
 
 struct NewData {
@@ -256,12 +260,15 @@ impl GenImplData {
                     impl knyst::handles::HandleNormalRange for #handle_name {}
                 }
             }
+            Range::Positive => todo!(),
         });
         let handle_functions = parameters.iter().filter(|&p| matches!(p._ty, ParameterTy::Input | ParameterTy::InputTrig)).map(|p| {
             let param_ident = Ident::new(&p.ident.to_string().to_lowercase(), Span::call_site());
             let param_string = p.ident.to_string();
             let i = &p.ident;
+            let doc_str = format!("Set the input {i} to the output of a handle or a constant value.");
             let set_fn = quote! {
+                #[doc = #doc_str]
                 pub fn #i(self, #param_ident: impl Into<knyst::handles::Input>) -> knyst::handles::Handle<Self> {
                     use knyst::controller::KnystCommands;
                     let inp = #param_ident.into();

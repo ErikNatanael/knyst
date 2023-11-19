@@ -7,7 +7,6 @@
 //! but also includes modifying [`Resources`].
 
 use std::{
-    borrow::BorrowMut,
     cell::RefCell,
     sync::{atomic::AtomicBool, Arc},
     time::{Duration, Instant},
@@ -22,7 +21,7 @@ use crate::{
 use crate::{
     graph::{
         connection::{ConnectionBundle, ConnectionError, InputBundle},
-        gen, Connection, FreeError, GenOrGraph, GenOrGraphEnum, Graph, GraphId, GraphSettings,
+         Connection, FreeError, GenOrGraph, GenOrGraphEnum, Graph, GraphId, GraphSettings,
         NodeId, ParameterChange, SimultaneousChanges,
     },
     handles::{GraphHandle, Handle},
@@ -31,7 +30,7 @@ use crate::{
     time::Superbeats,
     KnystError,
 };
-use crossbeam_channel::{unbounded, Receiver, Select, Sender};
+use crossbeam_channel::{unbounded, Receiver, Sender};
 
 /// Encodes commands sent from a [`KnystCommands`]
 enum Command {
@@ -136,6 +135,7 @@ pub trait KnystCommands {
         &mut self,
         change_fn: impl FnOnce(&mut MusicalTimeMap) + Send + 'static,
     );
+    /// Request a [`GraphInspection`] of the top level graph which will be sent back in the returned channel
     fn request_inspection(&mut self) -> std::sync::mpsc::Receiver<GraphInspection>;
 
     /// Return the [`GraphSettings`] of the top level graph. This means you
@@ -282,7 +282,7 @@ impl KnystCommands for MultiThreadedKnystCommands {
                     if let Some(g) = g {
                         match g.connect(connection.clone()) {
                             Ok(()) => true,
-                            Err(e) => false,
+                            Err(_e) => false,
                         }
                     } else {
                         false

@@ -144,9 +144,11 @@ pub struct SampleRate(Sample);
 
 impl SampleRate {
     #[inline(always)]
+    #[allow(missing_docs)]
     pub fn to_f64(self) -> f64 {
         self.0 as f64
     }
+    #[allow(missing_docs)]
     #[inline(always)]
     pub fn to_usize(self) -> usize {
         self.0 as usize

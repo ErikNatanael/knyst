@@ -237,7 +237,7 @@ pub struct PanMonoToStereo;
 impl PanMonoToStereo {
     #[new]
     #[must_use]
-    pub fn new() -> Self {
+    fn new() -> Self {
         Self
     }
     #[process]

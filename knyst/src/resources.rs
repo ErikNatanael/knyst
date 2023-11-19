@@ -1,3 +1,9 @@
+//! Some [`Gen`]s benefit from shared resources: [`Buffer`]s for example [`Wavetable`]s. 
+//! [`Resources`] provides an interface to such shared resources.
+
+
+#[allow(unused)]
+use crate::gen::Gen;
 use core::fmt::Debug;
 use downcast_rs::{impl_downcast, Downcast};
 use slotmap::{new_key_type, SecondaryMap, SlotMap};
@@ -109,6 +115,7 @@ impl WavetableId {
     pub fn new() -> Self {
         Self(NEXT_WAVETABLE_ID.fetch_add(1, std::sync::atomic::Ordering::Release))
     }
+    /// Return the WavetableId for the static cosine table.
     pub fn cos() -> Self {
         Self(0)
     }
@@ -239,7 +246,8 @@ impl Resources {
 
         r
     }
-    pub fn apply_command(&mut self, command: ResourcesCommand) -> ResourcesResponse {
+    /// Apply the command sent from the user to change the Resources.
+    pub(crate) fn apply_command(&mut self, command: ResourcesCommand) -> ResourcesResponse {
         match command {
             ResourcesCommand::InsertBuffer { id, buffer } => {
                 ResourcesResponse::InsertBuffer(self.insert_buffer_with_id(buffer, id))
@@ -274,9 +282,11 @@ impl Resources {
             }
         }
     }
+    /// Return a Buffer if the key is valid.
     pub fn buffer(&self, key: BufferKey) -> Option<&Buffer> {
         self.buffers.get(key)
     }
+    /// Return a Wavetable if the key is valid.
     pub fn wavetable(&self, key: WavetableKey) -> Option<&Wavetable> {
         self.wavetables.get(key)
     }

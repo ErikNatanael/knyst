@@ -1,3 +1,14 @@
+//! Knyst uses its own wrapper around a buffer allocation: [`NodeBufferRef`]. Buffers are only 
+//! dropped from a non-audio thread once no pointers to the allocation persist using an
+//! application specific atomic flag mechanism.
+//! 
+//! You should avoid manually interacting with the NodeBufferRef if you can, e.g. by
+//! using the [`impl_gen`] macro instead of a manual [`Gen`] implementation.
+//! 
+#[allow(unused)]
+use crate::gen::Gen;
+#[allow(unused)]
+use knyst_macro::impl_gen;
 use crate::Sample;
 
 /// Wrapper around a buffer of output samples. Panics at improper usage.
@@ -31,7 +42,7 @@ impl NodeBufferRef {
         }
     }
 
-    pub fn new(buf: *mut Sample, num_channels: usize, block_size: usize) -> Self {
+    pub(crate) fn new(buf: *mut Sample, num_channels: usize, block_size: usize) -> Self {
         Self {
             buf,
             num_channels,

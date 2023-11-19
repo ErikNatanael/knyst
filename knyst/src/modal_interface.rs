@@ -1,15 +1,26 @@
+//! Knyst is used through a modal interface. A [`KnystSphere`] corresponds to a whole instance of Knyst. Spheres 
+//! are completely separated from each other. The current sphere and active graph within a sphere is set on a thread by thread basis
+//! using thread locals. Most Knyst programs only need one sphere.
+//! 
+//! Interaction with Knyst is done through the [`knyst`] function which will return an object that implements [`KnystCommands`]. 
+//! The implementation depends on the platform.
+//! 
+//! The purpose of this architecture is to allow for a highly ergonomic and concise way of interacting with the graph(s),
+//! as well as multiple underlying implementations suitable for different systems. A library targeting Knyst should 
+//! work the on any platform.
+//! 
+//! Most of the methods of the [`KnystCommands`] trait aren't normally needed by users but, will be used internally by handles. 
+//! Using [`KnystCommands`] directly instead of using handles is discouraged.
+
 use std::cell::RefCell;
-use std::hint::black_box;
 use std::rc::Rc;
-use std::sync::Arc;
 use std::sync::{atomic::AtomicU16, Mutex};
-use std::time::Instant;
 
 use crate::audio_backend::AudioBackendError;
 use crate::resources::{BufferId, WavetableId};
 
 use crate::controller::KnystCommands;
-use crate::graph::{Graph, GraphSettings, NodeId};
+use crate::graph::{GraphSettings, NodeId};
 use crate::handles::{GraphHandle, Handle};
 use crate::prelude::{CallbackHandle, MultiThreadedKnystCommands};
 use crate::sphere::KnystSphere;
@@ -18,19 +29,19 @@ use crate::sphere::KnystSphere;
 #[derive(Copy, Clone, PartialOrd, Ord, PartialEq, Eq, Debug, Hash)]
 pub struct SphereId(u16);
 
-// #[derive(Clone, Debug)]
-// pub struct MultiThreadedKnystCommands(Arc<String>);
-// #[derive(Clone, Debug)]
-// pub struct SingleThreadedKnystCommands;
-// #[derive(Clone, Debug)]
+/// Implements KnystCommands, but does nothing except reports a warning. This is done in order to
+/// enable the infallible thread local state interface. 
 pub struct DummyKnystCommands;
 impl DummyKnystCommands {
     fn report_dummy(&self) {
         eprintln!("No KnystCommands set, command ignored.")
     }
 }
+/// Represents and possible implementor of [`KnystCommands`]
 pub enum UnifiedKnystCommands {
+    #[allow(missing_docs)]
     Real(Rc<RefCell<SelectedKnystCommands>>),
+    #[allow(missing_docs)]
     Dummy(DummyKnystCommands),
 }
 type SelectedKnystCommands = MultiThreadedKnystCommands;
@@ -348,13 +359,14 @@ fn get_sphere_commands(sphere_id: SphereId) -> Result<MultiThreadedKnystCommands
         Ok(spheres) => spheres,
         Err(poison_lock) => poison_lock.into_inner(),
     };
-    if let Some((sphere, id)) = spheres.iter().find(|(_s, id)| *id == sphere_id) {
+    if let Some((sphere, _id)) = spheres.iter().find(|(_s, id)| *id == sphere_id) {
         Ok(sphere.commands())
     } else {
         Err(SphereError::SphereNotFound)
     }
 }
 
+/// Set the selected sphere to be active on this thread.
 pub fn set_active_sphere(id: SphereId) -> Result<(), SphereError> {
     ACTIVE_KNYST_SPHERE.with(|aks| *aks.borrow_mut() = id);
     ACTIVE_KNYST_SPHERE_COMMANDS.with(|aksc| {
@@ -366,13 +378,15 @@ pub fn set_active_sphere(id: SphereId) -> Result<(), SphereError> {
 }
 
 // Return impl KnystCommands to avoid committing to a return type and being able to change the return type through conditional compilation for different platforms
+/// Returns an implementor of [`KnystCommands`] which allows interacting with Knyst
 pub fn commands() -> impl KnystCommands {
     if let Some(kc) = ACTIVE_KNYST_SPHERE_COMMANDS.with(|aksc| aksc.borrow().clone()) {
         UnifiedKnystCommands::Real(kc)
     } else {
         // It could be the first time commands is called from this thread in which case we should try to set the default sphere
         let default_sphere = DEFAULT_KNYST_SPHERE.load(std::sync::atomic::Ordering::SeqCst);
-        set_active_sphere(SphereId(default_sphere));
+        // TODO: report an error if this fails
+        set_active_sphere(SphereId(default_sphere)).ok();
         if let Some(kc) = ACTIVE_KNYST_SPHERE_COMMANDS.with(|aksc| aksc.borrow().clone()) {
             UnifiedKnystCommands::Real(kc)
         } else {

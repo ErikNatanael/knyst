@@ -1,10 +1,12 @@
+//! [`Gen`]s for generating random numbers. All the [`Gen`]s in this module are initialised with a deterministic seed so
+//! that if they all are created in the same order and run at the same time the output values will be the same.
+
 use std::sync::atomic::AtomicU64;
 
 use knyst_macro::impl_gen;
 
-use crate::wavetable::{FRACTIONAL_PART, TABLE_SIZE};
+use crate::Sample;
 use crate::{self as knyst, SampleRate};
-use crate::{wavetable::WavetablePhase, Sample};
 
 use super::GenState;
 
@@ -23,6 +25,7 @@ pub static NEXT_SEED: AtomicU64 = AtomicU64::new(0);
 
 #[impl_gen]
 impl RandomLin {
+    /// Create a new RandomLin, seeding it from the global atomic seed.
     pub fn new() -> Self {
         let mut rng = fastrand::Rng::with_seed(
             NEXT_SEED.fetch_add(1, std::sync::atomic::Ordering::SeqCst) * 94 + 53,
@@ -36,6 +39,7 @@ impl RandomLin {
         }
     }
 
+    /// Init internal state
     pub fn init(&mut self, sample_rate: SampleRate) {
         self.freq_to_phase_inc = 1.0 / *sample_rate;
         self.new_value();
@@ -51,6 +55,7 @@ impl RandomLin {
         // dbg!(old_target, self.current_value, self.current_change_width);
     }
 
+    /// Process block
     pub fn process(&mut self, freq: &[Sample], output: &mut [Sample]) -> GenState {
         let phase_step = freq[0] * self.freq_to_phase_inc;
 

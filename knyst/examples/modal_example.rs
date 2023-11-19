@@ -1,15 +1,14 @@
 use anyhow::Result;
+#[allow(unused)]
 use knyst::{
     audio_backend::{CpalBackend, CpalBackendOptions, JackBackend},
     controller::print_error_handler,
     envelope::Envelope,
-    graph,
     handles::{graph_output, handle, Handle},
     modal_interface::commands,
     prelude::{delay::static_sample_delay, *},
     sphere::{KnystSphere, SphereSettings},
 };
-use rand::{thread_rng, Rng};
 fn main() -> Result<()> {
     // let mut backend = CpalBackend::new(CpalBackendOptions::default())?;
     let mut backend = JackBackend::new("Knyst<3JACK")?;

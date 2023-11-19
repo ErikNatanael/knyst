@@ -262,6 +262,7 @@ impl Buffer {
         &self.buffer[index..index + self.num_channels]
         // unsafe{ *self.buffer.get_unchecked(index) }
     }
+    /// Save the buffer to a 16 bit wave file
     pub fn save_to_disk(&self, path: impl Into<PathBuf>) -> Result<(), hound::Error> {
         let spec = hound::WavSpec {
             channels: self.num_channels as u16,
@@ -285,9 +286,11 @@ impl Buffer {
     pub fn num_channels(&self) -> usize {
         self.num_channels
     }
+    /// Returns the length of the buffer in seconds
     pub fn length_seconds(&self) -> f64 {
         self.num_frames / self.sample_rate
     }
+    /// Apply a DC highpass filter to the buffer content
     pub fn remove_dc(&mut self) {
         let mut prev = vec![0.0; self.num_channels];
         let mut lpf_sample = vec![0.0; self.num_channels];

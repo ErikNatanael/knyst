@@ -6,11 +6,7 @@
 //! synthesizer Gen or signalling that it is time for a new value.
 //!
 use crate as knyst;
-use knyst::{
-    gen::{Gen, GenContext, GenState},
-    resources::Resources,
-    Sample, SampleRate,
-};
+use knyst::{gen::GenState, Sample, SampleRate};
 use knyst_macro::impl_gen;
 
 use crate::time::Superseconds;
@@ -43,6 +39,7 @@ impl OnceTrig {
         OnceTrig(false)
     }
     #[process]
+    /// Process one block
     pub fn process(&mut self, trig: &mut [Sample]) -> GenState {
         let out = trig;
         if self.0 {

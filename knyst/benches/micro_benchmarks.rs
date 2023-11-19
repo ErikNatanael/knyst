@@ -1,7 +1,6 @@
-use std::f32::consts::{PI, TAU};
+use std::f32::consts::TAU;
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use fundsp::wavetable;
 use knyst::envelope::{Curve, Envelope};
 use knyst::prelude::*;
 use knyst::wavetable::{PhaseF32, WavetablePhase, FRACTIONAL_PART};
@@ -54,7 +53,6 @@ pub fn envelope_segments(c: &mut Criterion) {
             let envelope = Envelope {
                 start_value: 0.0,
                 points: vec![(1.0, 0.1), (0.5, 0.5), (0.1, 1.2)],
-                sample_rate,
                 ..Default::default()
             };
             let mut envelope = envelope.to_gen();
@@ -76,7 +74,6 @@ pub fn envelope_segments(c: &mut Criterion) {
                     Curve::Exponential(4.0),
                     Curve::Exponential(0.125),
                 ],
-                sample_rate,
                 ..Default::default()
             };
             let mut envelope = envelope.to_gen();
@@ -95,7 +92,7 @@ pub fn wavetable_vs_sin(c: &mut Criterion) {
     let sample_rate = 48000.0;
     let integer_phase_increase =
         ((frequency / sample_rate) * TABLE_SIZE as f32 * FRACTIONAL_PART as f32) as u32;
-    let mut w = Wavetable::sine();
+    let w = Wavetable::sine();
     let mut phase = WavetablePhase(0);
     c.bench_function("wavetable sin linear", |b| {
         b.iter(|| {
