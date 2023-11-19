@@ -51,7 +51,7 @@ use crate::{
 
 use crate::{
     graph::{connection::NodeChannel, GenOrGraph, NodeId},
-    modal_interface::commands,
+    modal_interface::knyst,
     prelude::{Bus, KnystCommands, MulGen, RampGen},
 };
 
@@ -99,9 +99,9 @@ impl<A: Copy + HandleData> Handle<A> {
     pub fn powf(self, exponent: impl Into<Input>) -> Handle<PowfHandle> {
         let connecting_channels: Vec<_> = self.out_channels().collect();
         let num_channels = connecting_channels.len();
-        let node_id = commands().push_without_inputs(PowfGen(connecting_channels.len()));
+        let node_id = knyst().push_without_inputs(PowfGen(connecting_channels.len()));
         for (i, (source, chan)) in connecting_channels.into_iter().enumerate() {
-            commands().connect(source.to(node_id).from_channel(chan).to_channel(i + 1));
+            knyst().connect(source.to(node_id).from_channel(chan).to_channel(i + 1));
         }
         Handle::new(PowfHandle {
             node_id,
@@ -112,7 +112,7 @@ impl<A: Copy + HandleData> Handle<A> {
     /// Free the node(s) this handle is pointing to
     pub fn free(self) {
         for id in self.node_ids() {
-            commands().free_node(id);
+            knyst().free_node(id);
         }
     }
     /// Returns a handle to a single channel from this Handle (not type checked)
@@ -150,7 +150,7 @@ impl PowfHandle {
         let inp = exponent.into();
         match inp {
             Input::Constant(v) => {
-                commands().connect(
+                knyst().connect(
                     crate::graph::connection::constant(v)
                         .to(self.node_id)
                         .to_channel(0),
@@ -158,7 +158,7 @@ impl PowfHandle {
             }
             Input::Handle { output_channels } => {
                 for (node_id, chan) in output_channels {
-                    crate::modal_interface::commands()
+                    crate::modal_interface::knyst()
                         .connect(node_id.to(self.node_id).from_channel(chan).to_channel(0));
                 }
             }
@@ -529,10 +529,10 @@ where
 
     fn mul(self, rhs: Handle<A>) -> Self::Output {
         let num_out_channels = self.out_channels().collect::<Vec<_>>().len();
-        let mul_id = commands().push_without_inputs(MulGen(num_out_channels));
+        let mul_id = knyst().push_without_inputs(MulGen(num_out_channels));
         for (i, (out0, out1)) in self.out_channels().zip(rhs.out_channels()).enumerate() {
-            commands().connect(out0.0.to(mul_id).from_channel(out0.1).to_channel(i * 2));
-            commands().connect(out1.0.to(mul_id).from_channel(out1.1).to_channel(i * 2 + 1));
+            knyst().connect(out0.0.to(mul_id).from_channel(out0.1).to_channel(i * 2));
+            knyst().connect(out1.0.to(mul_id).from_channel(out1.1).to_channel(i * 2 + 1));
         }
         Handle::new(MulHandle {
             node_id: mul_id,
@@ -546,14 +546,14 @@ impl<B: Copy + HandleData> Mul<Handle<B>> for Sample {
 
     fn mul(self, rhs: Handle<B>) -> Self::Output {
         let num_out_channels = rhs.out_channels().collect::<Vec<_>>().len();
-        let mul_id = commands().push_without_inputs(MulGen(num_out_channels));
+        let mul_id = knyst().push_without_inputs(MulGen(num_out_channels));
         for (i, (out0, out1)) in std::iter::repeat(self).zip(rhs.out_channels()).enumerate() {
-            commands().connect(
+            knyst().connect(
                 crate::graph::connection::constant(out0)
                     .to(mul_id)
                     .to_channel(i * 2),
             );
-            commands().connect(out1.0.to(mul_id).from_channel(out1.1).to_channel(i * 2 + 1));
+            knyst().connect(out1.0.to(mul_id).from_channel(out1.1).to_channel(i * 2 + 1));
         }
         Handle::new(MulHandle {
             node_id: mul_id,
@@ -578,10 +578,10 @@ where
 
     fn mul(self, rhs: AnyNodeHandle) -> Self::Output {
         let num_out_channels = self.out_channels().collect::<Vec<_>>().len();
-        let mul_id = commands().push_without_inputs(MulGen(num_out_channels));
+        let mul_id = knyst().push_without_inputs(MulGen(num_out_channels));
         for (i, (out0, out1)) in self.out_channels().zip(rhs.out_channels()).enumerate() {
-            commands().connect(out0.0.to(mul_id).from_channel(out0.1).to_channel(i * 2));
-            commands().connect(out1.0.to(mul_id).from_channel(out1.1).to_channel(i * 2 + 1));
+            knyst().connect(out0.0.to(mul_id).from_channel(out0.1).to_channel(i * 2));
+            knyst().connect(out1.0.to(mul_id).from_channel(out1.1).to_channel(i * 2 + 1));
         }
         Handle::new(MulHandle {
             node_id: mul_id,
@@ -597,10 +597,10 @@ where
 
     fn mul(self, rhs: Handle<B>) -> Self::Output {
         let num_out_channels = self.out_channels().collect::<Vec<_>>().len();
-        let mul_id = commands().push_without_inputs(MulGen(num_out_channels));
+        let mul_id = knyst().push_without_inputs(MulGen(num_out_channels));
         for (i, (out0, out1)) in self.out_channels().zip(rhs.out_channels()).enumerate() {
-            commands().connect(out0.0.to(mul_id).from_channel(out0.1).to_channel(i * 2));
-            commands().connect(out1.0.to(mul_id).from_channel(out1.1).to_channel(i * 2 + 1));
+            knyst().connect(out0.0.to(mul_id).from_channel(out0.1).to_channel(i * 2));
+            knyst().connect(out1.0.to(mul_id).from_channel(out1.1).to_channel(i * 2 + 1));
         }
         Handle::new(MulHandle {
             node_id: mul_id,
@@ -614,14 +614,14 @@ impl Mul<AnyNodeHandle> for Sample {
 
     fn mul(self, rhs: AnyNodeHandle) -> Self::Output {
         let num_out_channels = rhs.out_channels().collect::<Vec<_>>().len();
-        let mul_id = commands().push_without_inputs(MulGen(num_out_channels));
+        let mul_id = knyst().push_without_inputs(MulGen(num_out_channels));
         for (i, (out0, out1)) in std::iter::repeat(self).zip(rhs.out_channels()).enumerate() {
-            commands().connect(
+            knyst().connect(
                 crate::graph::connection::constant(out0)
                     .to(mul_id)
                     .to_channel(i * 2),
             );
-            commands().connect(out1.0.to(mul_id).from_channel(out1.1).to_channel(i * 2 + 1));
+            knyst().connect(out1.0.to(mul_id).from_channel(out1.1).to_channel(i * 2 + 1));
         }
         Handle::new(MulHandle {
             node_id: mul_id,
@@ -647,10 +647,10 @@ where
 
     fn add(self, rhs: Handle<A>) -> Self::Output {
         let num_out_channels = self.out_channels().collect::<Vec<_>>().len();
-        let node_id = commands().push_without_inputs(Bus(num_out_channels));
+        let node_id = knyst().push_without_inputs(Bus(num_out_channels));
         for (i, (out0, out1)) in self.out_channels().zip(rhs.out_channels()).enumerate() {
-            commands().connect(out0.0.to(node_id).from_channel(out0.1).to_channel(i));
-            commands().connect(out1.0.to(node_id).from_channel(out1.1).to_channel(i));
+            knyst().connect(out0.0.to(node_id).from_channel(out0.1).to_channel(i));
+            knyst().connect(out1.0.to(node_id).from_channel(out1.1).to_channel(i));
         }
         Handle::new(AddHandle {
             node_id,
@@ -664,14 +664,14 @@ impl<B: Copy + HandleData> Add<Handle<B>> for Sample {
 
     fn add(self, rhs: Handle<B>) -> Self::Output {
         let num_out_channels = rhs.out_channels().collect::<Vec<_>>().len();
-        let node_id = commands().push_without_inputs(Bus(num_out_channels));
+        let node_id = knyst().push_without_inputs(Bus(num_out_channels));
         for (i, (out0, out1)) in std::iter::repeat(self).zip(rhs.out_channels()).enumerate() {
-            commands().connect(
+            knyst().connect(
                 crate::graph::connection::constant(out0)
                     .to(node_id)
                     .to_channel(i),
             );
-            commands().connect(out1.0.to(node_id).from_channel(out1.1).to_channel(i));
+            knyst().connect(out1.0.to(node_id).from_channel(out1.1).to_channel(i));
         }
         Handle::new(AddHandle {
             node_id,
@@ -696,10 +696,10 @@ where
 
     fn add(self, rhs: Handle<A>) -> Self::Output {
         let num_out_channels = self.out_channels().collect::<Vec<_>>().len();
-        let node_id = commands().push_without_inputs(Bus(num_out_channels));
+        let node_id = knyst().push_without_inputs(Bus(num_out_channels));
         for (i, (out0, out1)) in self.out_channels().zip(rhs.out_channels()).enumerate() {
-            commands().connect(out0.0.to(node_id).from_channel(out0.1).to_channel(i));
-            commands().connect(out1.0.to(node_id).from_channel(out1.1).to_channel(i));
+            knyst().connect(out0.0.to(node_id).from_channel(out0.1).to_channel(i));
+            knyst().connect(out1.0.to(node_id).from_channel(out1.1).to_channel(i));
         }
         Handle::new(AddHandle {
             node_id,
@@ -715,10 +715,10 @@ where
 
     fn add(self, rhs: AnyNodeHandle) -> Self::Output {
         let num_out_channels = self.out_channels().collect::<Vec<_>>().len();
-        let node_id = commands().push_without_inputs(Bus(num_out_channels));
+        let node_id = knyst().push_without_inputs(Bus(num_out_channels));
         for (i, (out0, out1)) in self.out_channels().zip(rhs.out_channels()).enumerate() {
-            commands().connect(out0.0.to(node_id).from_channel(out0.1).to_channel(i));
-            commands().connect(out1.0.to(node_id).from_channel(out1.1).to_channel(i));
+            knyst().connect(out0.0.to(node_id).from_channel(out0.1).to_channel(i));
+            knyst().connect(out1.0.to(node_id).from_channel(out1.1).to_channel(i));
         }
         Handle::new(AddHandle {
             node_id,
@@ -732,14 +732,14 @@ impl Add<AnyNodeHandle> for Sample {
 
     fn add(self, rhs: AnyNodeHandle) -> Self::Output {
         let num_out_channels = rhs.out_channels().collect::<Vec<_>>().len();
-        let node_id = commands().push_without_inputs(Bus(num_out_channels));
+        let node_id = knyst().push_without_inputs(Bus(num_out_channels));
         for (i, (out0, out1)) in std::iter::repeat(self).zip(rhs.out_channels()).enumerate() {
-            commands().connect(
+            knyst().connect(
                 crate::graph::connection::constant(out0)
                     .to(node_id)
                     .to_channel(i),
             );
-            commands().connect(out1.0.to(node_id).from_channel(out1.1).to_channel(i));
+            knyst().connect(out1.0.to(node_id).from_channel(out1.1).to_channel(i));
         }
         Handle::new(AddHandle {
             node_id,
@@ -850,10 +850,10 @@ impl<H: HandleData + Copy + HandleNormalRange> Handle<H> {
         // Convert to the correct range for the RangeGen
         let input = self * 0.5 + 0.5;
         let num_out_channels = input.out_channels().collect::<Vec<_>>().len();
-        let node_id = commands().push_without_inputs(RampGen(num_out_channels));
+        let node_id = knyst().push_without_inputs(RampGen(num_out_channels));
         match min.into() {
             Input::Constant(c) => {
-                commands().connect(
+                knyst().connect(
                     crate::graph::connection::constant(c)
                         .to(node_id)
                         .to_channel(0),
@@ -863,7 +863,7 @@ impl<H: HandleData + Copy + HandleNormalRange> Handle<H> {
                 ref mut output_channels,
             } => {
                 if let Some((node, chan)) = output_channels.next() {
-                    commands().connect(node.to(node_id).from_channel(chan).to_channel(0));
+                    knyst().connect(node.to(node_id).from_channel(chan).to_channel(0));
                 } else {
                     // TODO: Error: empty handle as min input to ramp
                 }
@@ -874,7 +874,7 @@ impl<H: HandleData + Copy + HandleNormalRange> Handle<H> {
         }
         match max.into() {
             Input::Constant(c) => {
-                commands().connect(
+                knyst().connect(
                     crate::graph::connection::constant(c)
                         .to(node_id)
                         .to_channel(1),
@@ -884,7 +884,7 @@ impl<H: HandleData + Copy + HandleNormalRange> Handle<H> {
                 ref mut output_channels,
             } => {
                 if let Some((node, chan)) = output_channels.next() {
-                    commands().connect(node.to(node_id).from_channel(chan).to_channel(1));
+                    knyst().connect(node.to(node_id).from_channel(chan).to_channel(1));
                 } else {
                     // TODO: Error: empty handle as max input to ramp
                 }
@@ -894,7 +894,7 @@ impl<H: HandleData + Copy + HandleNormalRange> Handle<H> {
             }
         }
         for (i, out0) in input.out_channels().enumerate() {
-            commands().connect(out0.0.to(node_id).from_channel(out0.1).to_channel(i + 2));
+            knyst().connect(out0.0.to(node_id).from_channel(out0.1).to_channel(i + 2));
         }
         Handle::new(RangeHandle {
             node_id,
@@ -951,7 +951,7 @@ pub fn graph_output(index: usize, input: impl Into<Input>) {
         }
         Input::Handle { output_channels } => {
             for (i, (node_id, chan)) in output_channels.enumerate() {
-                commands().connect(
+                knyst().connect(
                     node_id
                         .to_graph_out()
                         .from_channel(chan)
@@ -988,7 +988,7 @@ impl GenericHandle {
         let channel = channel.into();
         match inp {
             Input::Constant(v) => {
-                commands().connect(
+                knyst().connect(
                     crate::graph::connection::constant(v)
                         .to(self.node_id)
                         .to_channel(channel),
@@ -996,7 +996,7 @@ impl GenericHandle {
             }
             Input::Handle { output_channels } => {
                 for (node_id, chan) in output_channels {
-                    commands().connect(
+                    knyst().connect(
                         node_id
                             .to(self.node_id)
                             .from_channel(chan)
@@ -1012,7 +1012,7 @@ impl GenericHandle {
         let _ = channel;
         // TODO: better way to send a trigger
         let change = ParameterChange::now(self.node_id.input(channel), Change::Trigger);
-        commands().schedule_change(change);
+        knyst().schedule_change(change);
         todo!(
             "Sending trigs this way doesn't work and I don't have time to troubleshoot right now"
         );
@@ -1043,7 +1043,7 @@ impl HandleData for GenericHandle {
 pub fn handle(gen: impl GenOrGraph) -> Handle<GenericHandle> {
     let num_inputs = gen.num_inputs();
     let num_outputs = gen.num_outputs();
-    let node_id = commands().push_without_inputs(gen);
+    let node_id = knyst().push_without_inputs(gen);
     Handle::new(GenericHandle {
         node_id,
         num_inputs,
@@ -1088,7 +1088,7 @@ impl GraphHandle {
         let channel = channel.into();
         match inp {
             Input::Constant(v) => {
-                commands().connect(
+                knyst().connect(
                     crate::graph::connection::constant(v)
                         .to(self.node_id)
                         .to_channel(channel),
@@ -1096,7 +1096,7 @@ impl GraphHandle {
             }
             Input::Handle { output_channels } => {
                 for (node_id, chan) in output_channels {
-                    commands().connect(
+                    knyst().connect(
                         node_id
                             .to(self.node_id)
                             .from_channel(chan)
@@ -1129,7 +1129,7 @@ impl HandleData for GraphHandle {
 #[must_use]
 /// Create a Bus Gen with the selected number of channels. One use case is as a single node for setting values later. Another is as a passthrough node for gathering multiple variable sources.
 pub fn bus(num_channels: usize) -> Handle<GenericHandle> {
-    let node_id = commands().push_without_inputs(Bus(num_channels));
+    let node_id = knyst().push_without_inputs(Bus(num_channels));
     Handle::new(GenericHandle {
         node_id,
         num_inputs: num_channels,

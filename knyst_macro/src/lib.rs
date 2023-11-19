@@ -126,7 +126,7 @@ impl NewData {
             pub fn #create_fn_name(#(#param_types_in_sig),*) -> knyst::handles::Handle<#handle_name> {
                 use knyst::controller::KnystCommands;
                 let node_id =
-                    knyst::modal_interface::commands().push_without_inputs(#type_ident::#fn_name(#(#param_names_in_call),*));
+                    knyst::modal_interface::knyst().push_without_inputs(#type_ident::#fn_name(#(#param_names_in_call),*));
                 knyst::handles::Handle::new(#handle_name{node_id})
             }
         }
@@ -274,11 +274,11 @@ impl GenImplData {
                     let inp = #param_ident.into();
                     match inp {
                         knyst::handles::Input::Constant(v) => {
-                            knyst::modal_interface::commands().connect(knyst::graph::connection::constant(v).to(self.node_id).to_channel(#param_string));
+                            knyst::modal_interface::knyst().connect(knyst::graph::connection::constant(v).to(self.node_id).to_channel(#param_string));
                         }
                         knyst::handles::Input::Handle { output_channels } => {
                             for (i, (node_id, chan)) in output_channels.enumerate() {
-                            knyst::modal_interface::commands().connect(node_id.to(self.node_id).from_channel(chan).to_channel(#param_string));
+                            knyst::modal_interface::knyst().connect(node_id.to(self.node_id).from_channel(chan).to_channel(#param_string));
                             }
                         }
                     }
@@ -299,7 +299,7 @@ impl GenImplData {
                             for id in self.node_ids() {
                                 let mut s = knyst::graph::SimultaneousChanges::now();
                                 s.push(id.change().trigger(#param_string));
-                                knyst::commands().schedule_changes(s);
+                                knyst::knyst().schedule_changes(s);
                             }
                             knyst::handles::Handle::new(self)
                         }

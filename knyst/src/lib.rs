@@ -58,7 +58,7 @@ use std::ops::{Deref, DerefMut};
 // Import these for docs
 #[allow(unused_imports)]
 use graph::{Connection, Graph, RunGraph};
-pub use modal_interface::commands;
+pub use modal_interface::knyst;
 pub use resources::Resources;
 
 // assert_no_alloc to make sure we are not allocating on the audio thread. The

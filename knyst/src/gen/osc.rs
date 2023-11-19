@@ -10,7 +10,7 @@ use crate::{
 use knyst_macro::impl_gen;
 
 // Necessary to use impl_gen from inside the knyst crate
-use crate::{self as knyst, handles::HandleData, modal_interface::commands};
+use crate::{self as knyst, handles::HandleData, modal_interface::knyst};
 
 /// Oscillator using a shared [`Wavetable`] stored in a [`Resources`]. Assumes the wavetable has normal range for the `range` method on the Handle.
 /// *inputs*
@@ -362,7 +362,7 @@ pub fn buffer_reader_multi(
 ) -> knyst::handles::Handle<BufferReaderMultiHandle> {
     let gen = BufferReaderMulti::new(buffer, rate, stop_action).looping(looping);
     let num_channels = buffer.num_channels();
-    let id = knyst::prelude::KnystCommands::push_without_inputs(&mut commands(), gen);
+    let id = knyst::prelude::KnystCommands::push_without_inputs(&mut knyst(), gen);
     knyst::handles::Handle::new(BufferReaderMultiHandle {
         node_id: id,
         num_channels,

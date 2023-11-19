@@ -5,7 +5,7 @@ use knyst::{
     controller::print_error_handler,
     envelope::Envelope,
     handles::{graph_output, handle, Handle},
-    modal_interface::commands,
+    modal_interface::knyst,
     prelude::{delay::static_sample_delay, *},
     sphere::{KnystSphere, SphereSettings},
 };
@@ -61,7 +61,7 @@ fn main() -> Result<()> {
 
     for &freq in [400, 600, 500].iter().cycle() {
         // new graph
-        commands().init_local_graph(commands().default_graph_settings());
+        knyst().init_local_graph(knyst().default_graph_settings());
         let sig = sine().freq(freq as f32).out("sig") * 0.25;
         let env = Envelope {
             points: vec![(1.0, 0.005), (0.0, 0.5)],
@@ -73,7 +73,7 @@ fn main() -> Result<()> {
 
         graph_output(0, sig.repeat_outputs(1));
         // push graph to sphere
-        let graph = commands().upload_local_graph();
+        let graph = knyst().upload_local_graph();
         let sig = graph + static_sample_delay(48 * 500).input(graph);
 
         graph_output(0, sig.repeat_outputs(1));
