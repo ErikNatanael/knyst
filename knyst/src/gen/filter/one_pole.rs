@@ -56,7 +56,8 @@ impl<
         self.hp = false;
     }
     // TODO: Not verified to set the frequency correctly. In fact, I suspect it doesn't
-    fn set_freq_highpass(&mut self, freq: T, sample_rate: T) {
+    /// Calculate coefficients for a highpass OnePole
+    pub fn set_freq_highpass(&mut self, freq: T, sample_rate: T) {
         // let x = T::from_f32(2.).unwrap() * FloatConst::PI() * (freq / sample_rate);
         // let p = (T::from_f32(2.).unwrap() + x.cos())
         //     - ((T::from_f32(2.0).unwrap() + x.cos()).powi(2) - T::one()).sqrt();
@@ -68,7 +69,7 @@ impl<
         self.set_freq_lowpass(freq, sample_rate);
         self.hp = true;
     }
-    /// Process one sample 
+    /// Process one sample
     pub fn process_sample(&mut self, input: T) -> T {
         self.last_output = input * self.a0 + self.last_output * self.b1;
         if self.hp {
@@ -82,7 +83,7 @@ impl<
         self.last_output = input * self.a0 + self.last_output * self.b1;
         self.last_output
     }
-    /// Process one sample assuming the OnePole is set to highpass 
+    /// Process one sample assuming the OnePole is set to highpass
     pub fn process_hp(&mut self, input: T) -> T {
         self.last_output = input * self.a0 + self.last_output * self.b1;
         input - self.last_output
@@ -113,7 +114,8 @@ impl OnePoleLpf {
             last_freq: 19000.,
         }
     }
-    fn process(
+    /// Process one block
+    pub fn process(
         &mut self,
         sample_rate: SampleRate,
         sig: &[Sample],
