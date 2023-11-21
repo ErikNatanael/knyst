@@ -15,14 +15,15 @@ use std::{
 use crate::{
     buffer::Buffer,
     inspection::GraphInspection,
+    knyst,
     resources::{BufferId, ResourcesCommand, ResourcesResponse, WavetableId},
     wavetable::Wavetable,
 };
 use crate::{
     graph::{
         connection::{ConnectionBundle, ConnectionError, InputBundle},
-         Connection, FreeError, GenOrGraph, GenOrGraphEnum, Graph, GraphId, GraphSettings,
-        NodeId, ParameterChange, SimultaneousChanges,
+        Connection, FreeError, GenOrGraph, GenOrGraphEnum, Graph, GraphId, GraphSettings, NodeId,
+        ParameterChange, SimultaneousChanges,
     },
     handles::{GraphHandle, Handle},
     inputs,
@@ -153,6 +154,16 @@ pub trait KnystCommands {
     fn upload_local_graph(&mut self) -> crate::handles::Handle<crate::handles::GraphHandle>;
 }
 
+/// Create a new local graph, runs the init function to let you build it, and then uploads it to the active Sphere.
+fn new_graph(
+    settings: GraphSettings,
+    init: impl FnOnce(),
+) -> crate::handles::Handle<crate::handles::GraphHandle> {
+    knyst().init_local_graph(settings);
+    init();
+    knyst().upload_local_graph()
+}
+
 #[derive(Clone, Copy)]
 enum SelectedGraph {
     Local { previous_selected_graph_id: GraphId },
@@ -169,47 +180,37 @@ pub struct MultiThreadedKnystCommands {
     /// Make the top level graph settings available so that creating a matching sub graph is easy.
     top_level_graph_settings: GraphSettings,
     /// The default graph to push new nodes to
-    selected_graph: SelectedGraph,
+    selected_graph_remote_graph: GraphId,
 }
 
 impl KnystCommands for MultiThreadedKnystCommands {
     /// Push a Gen or Graph to the top level Graph without specifying any inputs.
     fn push_without_inputs(&mut self, gen_or_graph: impl GenOrGraph) -> NodeId {
-        match self.selected_graph {
-            SelectedGraph::Local { .. } => self.push(gen_or_graph, inputs![]),
-            SelectedGraph::Remote(id) => self.push_to_graph_without_inputs(gen_or_graph, id),
-        }
+        self.push(gen_or_graph, inputs![])
     }
     /// Push a Gen or Graph to the default Graph.
     fn push(&mut self, gen_or_graph: impl GenOrGraph, inputs: impl Into<InputBundle>) -> NodeId {
-        match self.selected_graph {
-            SelectedGraph::Local {
-                previous_selected_graph_id,
-            } => LOCAL_GRAPH.with_borrow_mut(|g| {
-                if let Some(g) = g {
-                    let mut node_id = NodeId::new();
-                    if let Err(e) =
-                        g.push_with_existing_address_to_graph(gen_or_graph, &mut node_id, g.id())
-                    {
-                        // TODO: report error
-                        eprintln!("{e:?}");
-                    }
-                    // Connect any inputs
-                    let inputs: InputBundle = inputs.into();
-                    self.connect_bundle(inputs.to(node_id));
-                    node_id
-                } else {
-                    self.selected_graph = SelectedGraph::Remote(previous_selected_graph_id);
-                    self.push(gen_or_graph, inputs)
+        LOCAL_GRAPH.with_borrow_mut(|g| {
+            if let Some(g) = g.last_mut() {
+                let mut node_id = NodeId::new();
+                if let Err(e) =
+                    g.push_with_existing_address_to_graph(gen_or_graph, &mut node_id, g.id())
+                {
+                    // TODO: report error
+                    eprintln!("{e:?}");
                 }
-            }),
-            SelectedGraph::Remote(id) => {
-                let addr = self.push_to_graph_without_inputs(gen_or_graph, id);
+                // Connect any inputs
+                let inputs: InputBundle = inputs.into();
+                self.connect_bundle(inputs.to(node_id));
+                node_id
+            } else {
+                let addr = self
+                    .push_to_graph_without_inputs(gen_or_graph, self.selected_graph_remote_graph);
                 let inputs: InputBundle = inputs.into();
                 self.connect_bundle(inputs.to(addr));
                 addr
             }
-        }
+        })
     }
     /// Push a Gen or Graph to the Graph with the specified id without specifying inputs.
     fn push_to_graph_without_inputs(
@@ -218,35 +219,27 @@ impl KnystCommands for MultiThreadedKnystCommands {
         graph_id: GraphId,
     ) -> NodeId {
         let gen_or_graph = gen_or_graph.into_gen_or_graph_enum();
-        let found_in_local = match self.selected_graph {
-            SelectedGraph::Local {
-                previous_selected_graph_id,
-            } => LOCAL_GRAPH.with_borrow_mut(|g| {
-                if let Some(g) = g {
-                    if g.id() == graph_id {
-                        let mut node_id = NodeId::new();
-                        if let Err(e) = g.push_with_existing_address_to_graph(
-                            gen_or_graph,
-                            &mut node_id,
-                            g.id(),
-                        ) {
-                            // TODO: report error
-                            // TODO: recover the gen_or_graph from the PushError
-                            eprintln!("{e:?}");
-                        }
-                        Ok(node_id)
-                    } else {
-                        eprintln!("Local graph does not match requested graph");
-                        Err(gen_or_graph)
+        let found_in_local = LOCAL_GRAPH.with_borrow_mut(|g| {
+            if let Some(g) = g.last_mut() {
+                if g.id() == graph_id {
+                    let mut node_id = NodeId::new();
+                    if let Err(e) =
+                        g.push_with_existing_address_to_graph(gen_or_graph, &mut node_id, g.id())
+                    {
+                        // TODO: report error
+                        // TODO: recover the gen_or_graph from the PushError
+                        eprintln!("{e:?}");
                     }
+                    Ok(node_id)
                 } else {
-                    // There is no local graph
-                    self.selected_graph = SelectedGraph::Remote(previous_selected_graph_id);
+                    eprintln!("Local graph does not match requested graph");
                     Err(gen_or_graph)
                 }
-            }),
-            _ => Err(gen_or_graph),
-        };
+            } else {
+                // There is no local graph
+                Err(gen_or_graph)
+            }
+        });
         match found_in_local {
             Ok(node_id) => node_id,
             Err(gen_or_graph) => {
@@ -275,26 +268,19 @@ impl KnystCommands for MultiThreadedKnystCommands {
     }
     /// Create a new connections
     fn connect(&mut self, connection: Connection) {
-        match self.selected_graph {
-            SelectedGraph::Local { .. } => {
-                // The connection may be in our local graph or remotely. Check local first.
-                let found_in_local = LOCAL_GRAPH.with_borrow_mut(|g| {
-                    if let Some(g) = g {
-                        match g.connect(connection.clone()) {
-                            Ok(()) => true,
-                            Err(_e) => false,
-                        }
-                    } else {
-                        false
-                    }
-                });
-                if !found_in_local {
-                    self.sender.send(Command::Connect(connection)).unwrap();
+        // The connection may be in our local graph or remotely. Check local first.
+        let found_in_local = LOCAL_GRAPH.with_borrow_mut(|g| {
+            if let Some(g) = g.last_mut() {
+                match g.connect(connection.clone()) {
+                    Ok(()) => true,
+                    Err(_e) => false,
                 }
+            } else {
+                false
             }
-            SelectedGraph::Remote(_) => {
-                self.sender.send(Command::Connect(connection)).unwrap();
-            }
+        });
+        if !found_in_local {
+            self.sender.send(Command::Connect(connection)).unwrap();
         }
     }
     /// Make several connections at once using any of the ConnectionBundle
@@ -432,33 +418,17 @@ impl KnystCommands for MultiThreadedKnystCommands {
     fn init_local_graph(&mut self, settings: GraphSettings) -> GraphId {
         let graph = Graph::new(settings);
         let graph_id = graph.id();
-        LOCAL_GRAPH.with_borrow_mut(|g| *g = Some(graph));
-        let previous_graph_id = match self.selected_graph {
-            SelectedGraph::Local {
-                previous_selected_graph_id,
-            } => previous_selected_graph_id,
-            SelectedGraph::Remote(id) => id,
-        };
-        self.selected_graph = SelectedGraph::Local {
-            previous_selected_graph_id: previous_graph_id,
-        };
+        LOCAL_GRAPH.with_borrow_mut(|g| g.push(graph));
         graph_id
     }
 
     fn upload_local_graph(&mut self) -> Handle<GraphHandle> {
-        let previous_graph_id = match self.selected_graph {
-            SelectedGraph::Local {
-                previous_selected_graph_id,
-            } => previous_selected_graph_id,
-            SelectedGraph::Remote(id) => id,
-        };
-        self.selected_graph = SelectedGraph::Remote(previous_graph_id);
         LOCAL_GRAPH.with_borrow_mut(|g| {
-            if let Some(g) = g.take() {
+            if let Some(g) = g.pop() {
                 let num_inputs = g.num_inputs();
                 let num_outputs = g.num_outputs();
                 let graph_id = g.id();
-                let id = self.push_to_graph_without_inputs(g, previous_graph_id);
+                let id = self.push_to_graph_without_inputs(g, self.selected_graph_remote_graph);
                 Handle::new(GraphHandle::new(id, graph_id, num_inputs, num_outputs))
             } else {
                 eprintln!("No local graph found");
@@ -476,11 +446,11 @@ impl KnystCommands for MultiThreadedKnystCommands {
     }
 
     fn to_graph(&mut self, graph_id: GraphId) {
-        self.selected_graph = SelectedGraph::Remote(graph_id);
+        self.selected_graph_remote_graph = graph_id;
     }
 
     fn to_top_level_graph(&mut self) {
-        self.selected_graph = SelectedGraph::Remote(self.top_level_graph_id);
+        self.selected_graph_remote_graph = self.top_level_graph_id;
     }
     // /// Create a new Self which pushes to the selected GraphId by default
     // fn to_graph(&self, graph_id: GraphId) -> Self {
@@ -497,7 +467,7 @@ impl KnystCommands for MultiThreadedKnystCommands {
 }
 
 thread_local! {
-    static LOCAL_GRAPH: RefCell<Option<Graph>> = RefCell::new(None);
+    static LOCAL_GRAPH: RefCell<Vec<Graph>> = RefCell::new(Vec::with_capacity(1));
 }
 
 /// Handle to modify a running/scheduled callback
@@ -869,7 +839,7 @@ impl Controller {
             sender: self.command_sender.clone(),
             top_level_graph_id: self.top_level_graph.id(),
             top_level_graph_settings: self.top_level_graph.graph_settings(),
-            selected_graph: SelectedGraph::Remote(self.top_level_graph.id()),
+            selected_graph_remote_graph: self.top_level_graph.id(),
         }
     }
 
@@ -889,7 +859,7 @@ impl Controller {
             sender,
             top_level_graph_id,
             top_level_graph_settings,
-            selected_graph: SelectedGraph::Remote(top_level_graph_id),
+            selected_graph_remote_graph: top_level_graph_id,
         }
     }
 }
