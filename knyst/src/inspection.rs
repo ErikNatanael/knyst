@@ -57,7 +57,7 @@ pub struct NodeInspection {
     pub graph_inspection: Option<GraphInspection>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 /// Metadata for an edge.
 #[allow(missing_docs)]
 pub struct EdgeInspection {
@@ -66,7 +66,7 @@ pub struct EdgeInspection {
     pub to_index: usize,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 /// Edge source type used for inspection. The index of a node is only valid for that specific GraphInspection.
 #[allow(missing_docs)]
 pub enum EdgeSource {
