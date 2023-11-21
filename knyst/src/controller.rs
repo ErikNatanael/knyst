@@ -155,19 +155,13 @@ pub trait KnystCommands {
 }
 
 /// Create a new local graph, runs the init function to let you build it, and then uploads it to the active Sphere.
-fn new_graph(
+pub fn upload_graph(
     settings: GraphSettings,
     init: impl FnOnce(),
 ) -> crate::handles::Handle<crate::handles::GraphHandle> {
     knyst().init_local_graph(settings);
     init();
     knyst().upload_local_graph()
-}
-
-#[derive(Clone, Copy)]
-enum SelectedGraph {
-    Local { previous_selected_graph_id: GraphId },
-    Remote(GraphId),
 }
 
 #[derive(Clone)]
@@ -190,7 +184,8 @@ impl KnystCommands for MultiThreadedKnystCommands {
     }
     /// Push a Gen or Graph to the default Graph.
     fn push(&mut self, gen_or_graph: impl GenOrGraph, inputs: impl Into<InputBundle>) -> NodeId {
-        LOCAL_GRAPH.with_borrow_mut(|g| {
+        let node_id = {
+            let local_node_id = LOCAL_GRAPH.with_borrow_mut(|g| {
             if let Some(g) = g.last_mut() {
                 let mut node_id = NodeId::new();
                 if let Err(e) =
@@ -199,18 +194,23 @@ impl KnystCommands for MultiThreadedKnystCommands {
                     // TODO: report error
                     eprintln!("{e:?}");
                 }
-                // Connect any inputs
-                let inputs: InputBundle = inputs.into();
-                self.connect_bundle(inputs.to(node_id));
-                node_id
+                Ok(node_id)
             } else {
-                let addr = self
-                    .push_to_graph_without_inputs(gen_or_graph, self.selected_graph_remote_graph);
-                let inputs: InputBundle = inputs.into();
-                self.connect_bundle(inputs.to(addr));
-                addr
+               Err(gen_or_graph) 
+            }});
+            match local_node_id {
+                Ok(node_id) => node_id,
+                Err(gen_or_graph) => {
+
+                self
+                    .push_to_graph_without_inputs(gen_or_graph, self.selected_graph_remote_graph)
+                },
             }
-        })
+        };
+        // Connect any inputs
+        let inputs: InputBundle = inputs.into();
+        self.connect_bundle(inputs.to(node_id));
+        node_id
     }
     /// Push a Gen or Graph to the Graph with the specified id without specifying inputs.
     fn push_to_graph_without_inputs(
@@ -423,18 +423,17 @@ impl KnystCommands for MultiThreadedKnystCommands {
     }
 
     fn upload_local_graph(&mut self) -> Handle<GraphHandle> {
-        LOCAL_GRAPH.with_borrow_mut(|g| {
-            if let Some(g) = g.pop() {
-                let num_inputs = g.num_inputs();
-                let num_outputs = g.num_outputs();
-                let graph_id = g.id();
-                let id = self.push_to_graph_without_inputs(g, self.selected_graph_remote_graph);
-                Handle::new(GraphHandle::new(id, graph_id, num_inputs, num_outputs))
-            } else {
-                eprintln!("No local graph found");
-                Handle::new(GraphHandle::new(NodeId::new(), 0, 0, 0))
-            }
-        })
+        let graph_to_upload = LOCAL_GRAPH.with_borrow_mut(|g| g.pop());
+        if let Some(g) = graph_to_upload {
+            let num_inputs = g.num_inputs();
+            let num_outputs = g.num_outputs();
+            let graph_id = g.id();
+            let id = self.push_to_graph_without_inputs(g, self.selected_graph_remote_graph);
+            Handle::new(GraphHandle::new(id, graph_id, num_inputs, num_outputs))
+        } else {
+            eprintln!("No local graph found");
+            Handle::new(GraphHandle::new(NodeId::new(), 0, 0, 0))
+        }
     }
 
     fn request_inspection(&mut self) -> std::sync::mpsc::Receiver<GraphInspection> {
