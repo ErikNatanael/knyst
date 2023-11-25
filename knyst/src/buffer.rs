@@ -16,6 +16,12 @@ use symphonia::core::{
     meta::MetadataOptions,
     probe::Hint,
 };
+#[allow(unused)]
+use crate::gen::BufferReader;
+#[allow(unused)]
+use crate::gen::BufferReaderMulti;
+#[allow(unused)]
+use crate::graph::Graph;
 
 use crate::SampleRate;
 

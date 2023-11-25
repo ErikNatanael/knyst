@@ -29,6 +29,8 @@
 use crate::gen::{Gen, GenContext, GenState};
 use crate::{BlockSize, Sample, SampleRate};
 use knyst_macro::impl_gen;
+#[allow(unused)]
+use crate::trig;
 // For using impl_gen inside the knyst crate
 use crate as knyst;
 // #[cfg(loom)]
@@ -82,7 +84,7 @@ pub type GraphId = u64;
 
 /// Get a unique id for a Graph from this by using `fetch_add`
 static NEXT_GRAPH_ID: AtomicU64 = AtomicU64::new(0);
-/// NodeAddresses need to be unique and hashable and this unique number makes it so.
+/// NodeIds need to be unique and hashable and this unique number makes it so.
 static NEXT_ADDRESS_ID: AtomicU64 = AtomicU64::new(0);
 
 /// An address to a specific Node. The graph_id is constant indepentently of where the graph is (inside some
@@ -567,7 +569,7 @@ pub enum FreeError {
         "The graph containing the NodeAdress provided was not found. The node itself may or may not exist."
     )]
     GraphNotFound,
-    #[error("The NodeAddress does not exist. The Node may have been freed already.")]
+    #[error("The NodeId does not exist. The Node may have been freed already.")]
     NodeNotFound,
     #[error("The free action required making a new connection, but the connection failed.")]
     ConnectionError(#[from] Box<connection::ConnectionError>),
@@ -579,7 +581,7 @@ pub enum ScheduleError {
         "The graph containing the NodeAdress provided was not found. The node itself may or may not exist."
     )]
     GraphNotFound,
-    #[error("The NodeAddress does not exist. The Node may have been freed already.")]
+    #[error("The NodeId does not exist. The Node may have been freed already.")]
     NodeNotFound,
     #[error("The input label specified was not registered for the node: `{0}`")]
     InputLabelNotFound(&'static str),
@@ -845,7 +847,7 @@ impl Gen for ClosureGen {
 }
 
 new_key_type! {
-    /// Node identifier in a specific Graph. For referring to a Node outside of the context of a Graph, use NodeAddress instead.
+    /// Node identifier in a specific Graph. For referring to a Node outside of the context of a Graph, use NodeId instead.
     struct NodeKey;
 }
 
@@ -953,7 +955,7 @@ impl Drop for OwnedRawBuffer {
 /// - adding/freeing nodes/connections are scheduled to be done as soon as possible when it is safe to do so and [`Graph::commit_changes`] is called
 ///
 /// # Manipulating the [`Graph`]
-/// - [`Graph::push`] creates a node from a [`Gen`] or a [`Graph`], returning a [`NodeAddress`] which is a handle to that node.
+/// - [`Graph::push`] creates a node from a [`Gen`] or a [`Graph`], returning a [`NodeId`] which is a handle to that node.
 /// - [`Graph::connect`] uses [`Connection`] to add or clear connections between nodes and the [`Graph`] they are in. You can also connect a constant value to a node input.
 /// - [`Graph::commit_changes`] recalculates node order and applies changes to connections and nodes to the running `GraphGen` from the next time it is called. It also tries to free any resources it can that have been previously removed.
 /// - [`Graph::schedule_change`] adds a parameter/input constant change to the scheduler.
@@ -2936,7 +2938,7 @@ impl Graph {
         }
     }
     /// Apply a change to the internal [`MusicalTimeMap`] shared between all
-    /// [`Graphs`] in a tree. Call this only on the top level Graph.
+    /// [`Graph`]s in a tree. Call this only on the top level Graph.
     ///
     /// # Errors
     /// If the scheduler was not yet created, meaning the Graph is not running.

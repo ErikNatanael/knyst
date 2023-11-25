@@ -1,10 +1,14 @@
 //! Connecting nodes/[`Gen`]s in a Graph is fundamentally done through a
-//! [`Connection`]. Additionally, a [`NodeAddress`] has convenience functions to
+//! [`Connection`]. Additionally, a [`NodeId`] has convenience functions to
 //! generate [`Connection`]s and the [`ConnectionBundle`] API is often more
 //! convenient and ergonomic.
 use std::fmt::Display;
 
 use super::{FreeError, NodeId, Sample};
+#[allow(unused)]
+use crate::gen::Gen;
+#[allow(unused)]
+use crate::graph::Graph;
 
 /// Connection provides a convenient API for creating connections between nodes in a
 /// graph. When used for nodes in a running graph, the shadow engine will translate the
@@ -546,9 +550,9 @@ impl Connection {
 pub enum ConnectionError {
     #[error("The nodes that you are trying to connect are in different graphs. Nodes can only be connected within a graph.")]
     DifferentGraphs,
-    #[error("The graph containing the NodeAdress provided was not found. The node itself may or may not exist. Connection: {0}")]
+    #[error("The graph containing the NodeId provided was not found. The node itself may or may not exist. Connection: {0}")]
     GraphNotFound(Connection),
-    #[error("The NodeAddress does not exist. The Node may have been freed already.")]
+    #[error("The NodeId does not exist. The Node may have been freed already.")]
     NodeNotFound,
     #[error("The given input label (`{0}`) is not available for the given node.")]
     InvalidInputLabel(&'static str),
@@ -696,7 +700,7 @@ impl From<NodeOutput> for ConstantOrNodeOutput {
     }
 }
 
-/// Holds descriptions of several [`Connections`] to the same node. Can be used
+/// Holds descriptions of several [`Connection`]s to the same node. Can be used
 /// with the `input!` macro or one of several other syntax variations to connect
 /// inputs to a new node.
 #[derive(Clone)]

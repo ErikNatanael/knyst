@@ -1,15 +1,15 @@
-//! Knyst is used through a modal interface. A [`KnystSphere`] corresponds to a whole instance of Knyst. Spheres 
+//! Knyst is used through a modal interface. A [`KnystSphere`] corresponds to a whole instance of Knyst. Spheres
 //! are completely separated from each other. The current sphere and active graph within a sphere is set on a thread by thread basis
 //! using thread locals. Most Knyst programs only need one sphere.
-//! 
-//! Interaction with Knyst is done through the [`knyst`] function which will return an object that implements [`KnystCommands`]. 
+//!
+//! Interaction with Knyst is done through the [`knyst`] function which will return an object that implements [`KnystCommands`].
 //! The implementation depends on the platform.
-//! 
+//!
 //! The purpose of this architecture is to allow for a highly ergonomic and concise way of interacting with the graph(s),
-//! as well as multiple underlying implementations suitable for different systems. A library targeting Knyst should 
+//! as well as multiple underlying implementations suitable for different systems. A library targeting Knyst should
 //! work the on any platform.
-//! 
-//! Most of the methods of the [`KnystCommands`] trait aren't normally needed by users but, will be used internally by handles. 
+//!
+//! Most of the methods of the [`KnystCommands`] trait aren't normally needed by users but, will be used internally by handles.
 //! Using [`KnystCommands`] directly instead of using handles is discouraged.
 
 use std::cell::RefCell;
@@ -30,7 +30,7 @@ use crate::sphere::KnystSphere;
 pub struct SphereId(u16);
 
 /// Implements KnystCommands, but does nothing except reports a warning. This is done in order to
-/// enable the infallible thread local state interface. 
+/// enable the infallible thread local state interface.
 pub struct DummyKnystCommands;
 impl DummyKnystCommands {
     fn report_dummy(&self) {
@@ -350,6 +350,29 @@ pub(crate) fn register_sphere(sphere: KnystSphere) -> Result<SphereId, SphereErr
         Ok(id)
     } else {
         Err(SphereError::NoMoreSphereIds)
+    }
+}
+pub(crate) fn remove_sphere(sphere_id: SphereId) -> Result<(), SphereError> {
+    let mut spheres = match ALL_KNYST_SPHERES.lock() {
+        Ok(s) => s,
+        Err(poison) => poison.into_inner(),
+    };
+    if let Some(index) = spheres.iter().position(|(_, id)| *id == sphere_id) {
+        let (old_sphere, _) = spheres.remove(index);
+        if ACTIVE_KNYST_SPHERE.with(|aks| *aks.borrow_mut()) == sphere_id {
+            if let Some((_, new_active)) = spheres.first() {
+                let new_active = *new_active;
+                drop(spheres);
+                set_active_sphere(new_active)?;
+            } else {
+                ACTIVE_KNYST_SPHERE_COMMANDS.with(|aksc| {
+                    *aksc.borrow_mut() = None;
+                });
+            }
+        }
+        Ok(())
+    } else {
+        Err(SphereError::SphereNotFound)
     }
 }
 

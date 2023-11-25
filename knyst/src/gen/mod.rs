@@ -12,6 +12,11 @@ pub use osc::*;
 pub mod delay;
 pub mod filter;
 
+#[allow(unused)]
+use crate::graph::{Graph, Connection};
+#[allow(unused)]
+use knyst_macro::impl_gen;
+
 /// If it implements Gen, it can be a `Node` in a [`Graph`].
 pub trait Gen {
     /// The input and output buffers are both indexed using \[in/out_index\]\[sample_index\].
@@ -53,7 +58,7 @@ pub struct GenContext<'a, 'b> {
     pub inputs: &'a NodeBufferRef,
     /// Output buffers the Gen is supposed to fill.
     pub outputs: &'b mut NodeBufferRef,
-    /// The sample rate of the [`GraphGen`] that the current Gen is in.
+    /// The sample rate of the [`Graph`] that the current Gen is in.
     pub sample_rate: Sample,
 }
 impl<'a, 'b> GenContext<'a, 'b> {

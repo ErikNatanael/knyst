@@ -20,7 +20,7 @@ pub const FRACTIONAL_PART: u32 = 65536;
 
 /// Wavetable is a standardised wavetable with a buffer of samples, as well as a
 /// separate buffer with the difference between the current sample and the next.
-/// The wavetable is of size [`TABLE_SIZE`] and can be indexed using a [`Phase`].
+/// The wavetable is of size [`TABLE_SIZE`] and can be indexed using a [`WavetablePhase`].
 ///
 /// It is not safe to modify the wavetable while it is being used on the audio
 /// thread, even if no Node is currently reading from it, because most modifying

@@ -3,7 +3,8 @@
 //! [`set_active_sphere`], but most use cases require only one [`KnystSphere`].
 
 use std::time::Duration;
-
+#[allow(unused)]
+use crate::controller::KnystCommands;
 use crate::KnystError;
 use crate::controller::Controller;
 use crate::{resources::ResourcesSettings, Resources, Sample};

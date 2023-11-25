@@ -50,6 +50,13 @@
 // #![warn(clippy::pedantic)]
 #![cfg_attr(feature = "unstable", feature(portable_simd))]
 
+
+#[allow(unused)]
+use crate::sphere::KnystSphere;
+#[allow(unused)]
+use crate::audio_backend::AudioBackend;
+#[allow(unused)]
+use crate::gen::Gen;
 use audio_backend::AudioBackendError;
 use core::fmt::Debug;
 use modal_interface::SphereError;
@@ -89,6 +96,7 @@ pub mod time;
 pub mod trig;
 pub mod wavetable;
 pub mod xorrng;
+pub mod test_utils;
 
 /// Combined error type for Knyst, containing any other error in the library.
 #[derive(thiserror::Error, Debug)]

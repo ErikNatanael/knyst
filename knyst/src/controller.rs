@@ -6,6 +6,8 @@
 //! [`Controller`]. The API is similar to calling methods on [`Graph`] directly,
 //! but also includes modifying [`Resources`].
 
+#[allow(unused)]
+use crate::resources::Resources;
 use std::{
     cell::RefCell,
     sync::{atomic::AtomicBool, Arc},
@@ -815,7 +817,7 @@ impl Controller {
     }
 
     /// Receives messages, applies them and then runs maintenance. Maintenance
-    /// includes updating the [`Graph`](s), sending the changes made to the
+    /// includes updating the [`Graph`], sending the changes made to the
     /// audio thread.
     ///
     /// `max_commands_before_update` is the maximum number of commands read from

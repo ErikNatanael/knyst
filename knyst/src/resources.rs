@@ -4,6 +4,8 @@
 
 #[allow(unused)]
 use crate::gen::Gen;
+#[allow(unused)]
+use crate::controller::KnystCommands;
 use core::fmt::Debug;
 use downcast_rs::{impl_downcast, Downcast};
 use slotmap::{new_key_type, SecondaryMap, SlotMap};

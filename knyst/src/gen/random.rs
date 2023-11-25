@@ -6,7 +6,8 @@ use std::sync::atomic::AtomicU64;
 use knyst_macro::impl_gen;
 
 use crate::Sample;
-use crate::{self as knyst, SampleRate};
+#[allow(unused)]
+use crate::{self as knyst, SampleRate, gen::Gen};
 
 use super::GenState;
 

@@ -1,5 +1,7 @@
 //! Contains some commonly used oscillators
 
+#[allow(unused)]
+use crate::buffer::Buffer;
 use crate::{
     buffer::BufferKey,
     gen::{Gen, GenContext, GenState, StopAction},
@@ -353,7 +355,7 @@ impl Gen for BufferReaderMulti {
     }
 }
 
-/// Upload a [`BufferReadedMulti`] to the current graph and return a handle to it.
+/// Upload a [`BufferReaderMulti`] to the current graph and return a handle to it.
 pub fn buffer_reader_multi(
     buffer: BufferId,
     rate: f64,
@@ -471,5 +473,117 @@ impl WavetableOscillatorOwned {
         self.reset_phase();
         self.freq_to_phase_inc =
             TABLE_SIZE as f64 * FRACTIONAL_PART as f64 * (1.0 / sample_rate.to_f64());
+    }
+}
+
+/// Linear ramp from 0 to 1 at a given frequency. Will alias at higher frequencies.
+struct Phasor {
+    phase: f64,
+    freq_to_phase_step_mult: f64,
+}
+
+#[impl_gen]
+impl Phasor {
+    #[allow(missing_docs)]
+    pub fn new() -> Self {
+        Self {
+            phase: 0.0,
+            freq_to_phase_step_mult: 0.0,
+        }
+    }
+    #[allow(missing_docs)]
+    pub fn init(&mut self, sample_rate: SampleRate) {
+        self.freq_to_phase_step_mult = 1.0_f64 / (sample_rate.to_f64() - 0.0);
+    }
+    #[allow(missing_docs)]
+    pub fn process(&mut self, freq: &[Sample], output: &mut [Sample]) -> GenState {
+        for (freq, out) in freq.iter().zip(output.iter_mut()) {
+            *out = self.phase as Sample;
+            let step = *freq as f64 * self.freq_to_phase_step_mult;
+            self.phase += step;
+            while self.phase >= 1.0 {
+                self.phase -= 1.0;
+            }
+        }
+        GenState::Continue
+    }
+}
+/// Sawtooth wave starting at 0. Linear ramp from 0 to 1, then -1 to 0, at a given frequency. Will alias at higher frequencies.
+struct AliasingSaw {
+    phase: f64,
+    freq_to_phase_step_mult: f64,
+}
+
+#[impl_gen]
+impl AliasingSaw {
+    #[allow(missing_docs)]
+    pub fn new() -> Self {
+        Self {
+            phase: 0.0,
+            freq_to_phase_step_mult: 0.0,
+        }
+    }
+    #[allow(missing_docs)]
+    pub fn init(&mut self, sample_rate: SampleRate) {
+        self.freq_to_phase_step_mult = 2.0_f64 / (sample_rate.to_f64());
+    }
+    #[allow(missing_docs)]
+    pub fn process(&mut self, freq: &[Sample], output: &mut [Sample]) -> GenState {
+        for (freq, out) in freq.iter().zip(output.iter_mut()) {
+            *out = self.phase as Sample;
+            let step = *freq as f64 * self.freq_to_phase_step_mult;
+            self.phase += step;
+            while self.phase >= 1.0 {
+                self.phase -= 2.0;
+            }
+        }
+        GenState::Continue
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::test_utils::init_knyst_test;
+
+    use super::*;
+    use knyst::prelude::*;
+    #[test]
+    fn phasor_test() {
+        let mut kt = init_knyst_test(128, 64, 0, 1);
+        let p = phasor().freq(2.0);
+        graph_output(0, p);
+        kt.process_block();
+        let output = kt.output_channel(0).unwrap();
+        dbg!(1.0/128.0);
+        assert_eq!(output[0], 0.0);
+        assert!((output[63]-1.0).abs() < 0.1, "{}", output[63]);
+        // Test that it keeps in phase over time
+        kt.process_block();
+        kt.process_block();
+        kt.process_block();
+        let output = kt.output_channel(0).unwrap();
+        assert!((output[0]).abs() < 0.1, "{}",  output[0]);
+        assert!((output[63]-1.0).abs() < 0.1, "{}", output[63]);
+    }
+    #[test]
+    fn saw_test() {
+        let mut kt = init_knyst_test(64, 64, 0, 1);
+        let p = aliasing_saw().freq(2.0);
+        graph_output(0, p);
+        kt.process_block();
+        let output = kt.output_channel(0).unwrap();
+        dbg!(output);
+        assert_eq!(output[0], 0.0);
+        assert!((output[7] - 0.5).abs() < 0.1, "{}", output[7]);
+        assert!((output[15] - 1.0).abs() < 0.1, "{}", output[15]);
+        assert!((output[16] + 1.0).abs() < 0.1, "{}", output[16]);
+        assert!(output[31].abs() < 0.1 , "{}", output[31]);
+        kt.process_block();
+        let output = kt.output_channel(0).unwrap();
+        assert!((output[0]).abs() < 0.1);
+        assert!((output[7] - 0.5).abs() < 0.1, "{}", output[7]);
+        assert!((output[15] - 1.0).abs() < 0.1, "{}", output[15]);
+        assert!((output[16] + 1.0).abs() < 0.1, "{}", output[16]);
+        assert!(output[31].abs() < 0.1 , "{}", output[31]);
     }
 }

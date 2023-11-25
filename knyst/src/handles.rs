@@ -14,17 +14,14 @@
 //! # Example
 //! ```
 //! use knyst::prelude::*;
+//! use knyst::test_utils::*;
 //! 
-//! let mut backend = CpalBackend::new(CpalBackendOptions::default())?;
-//! let _sphere = KnystSphere::start(
-//!    &mut backend,
-//!    SphereSettings::default(),
-//!    print_error_handler,
-//! );
+//! let mut kt = init_knyst_test(128, 64, 0, 1);
+//! 
 //! // Upload a wavetable oscillator to the current graph and set its inputs.
-//! let sig = wavetable_oscillator(WavetableId::cos()).freq(440.);
+//! let sig = oscillator(WavetableId::cos()).freq(440.);
 //! // Create another one
-//! let modulator = wavetable_oscillator(WavetableId::cos()).freq(440.);
+//! let modulator = oscillator(WavetableId::cos()).freq(440.);
 //! // Change the input of the first oscillator. You can do basic arithmetic on handles and 
 //! // the necessary Gens will be added automatically.
 //! sig.freq(modulator * 440.);
@@ -36,6 +33,7 @@
 //! // output of all of Knyst. The first argument determines what channel index to start outputting to. All
 //! // output channels in the `sig` will be output, in this case only 1.
 //! graph_output(0, sig); 
+//! 
 //! ```
 
 use std::{
@@ -54,6 +52,11 @@ use crate::{
     modal_interface::knyst,
     prelude::{Bus, KnystCommands, MulGen, RampGen},
 };
+
+#[allow(unused)]
+use crate::gen::Gen;
+#[allow(unused)]
+use knyst_macro::impl_gen;
 
 /// Handle
 #[derive(Copy, Clone, Debug)]

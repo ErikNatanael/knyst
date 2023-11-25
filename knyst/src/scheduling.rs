@@ -29,13 +29,13 @@ impl TempoChange {
         }
     }
 }
-/// A map detailing tempo changes such that a [`MusicalTime`] value can be
+/// A map detailing tempo changes such that a [`Superbeats`] value can be
 /// mapped to a deterministic time in seconds (wall clock time). The timestamps
-/// are stored as [`MusicalTime`] in absolute time from the start (0 beats), not
+/// are stored as [`Superbeats`] in absolute time from the start (0 beats), not
 /// as relative section lengths.
 ///
 /// Must always have a first [`TempoChange`] at the start, otherwise it wouldn't
-/// be possible to map [`MusicalTime`] to seconds. The tempo_changes must be
+/// be possible to map [`Superbeats`] to seconds. The tempo_changes must be
 /// sorted in ascending order.
 pub struct MusicalTimeMap {
     tempo_changes: Vec<(TempoChange, Superbeats)>,
@@ -99,7 +99,7 @@ impl MusicalTimeMap {
             self.tempo_changes[index].0 = tempo_change;
         }
     }
-    /// Move a [`TempoChange`] to a new position in [`MusicalTime`]. If the
+    /// Move a [`TempoChange`] to a new position in [`Superbeats`]. If the
     /// first tempo change is moved a 60 bpm tempo change will be inserted at
     /// the start.
     pub fn move_tempo_change(&mut self, index: usize, time_stamp: Superbeats) {
@@ -110,7 +110,7 @@ impl MusicalTimeMap {
             self.insert(TempoChange::NewTempo { bpm: 60.0 }, Superbeats::new(0, 0));
         }
     }
-    /// Convert a [`MusicalTime`] timestamp to seconds using this map.
+    /// Convert a [`Superbeats`] timestamp to seconds using this map.
     ///
     /// # Example
     /// ```
