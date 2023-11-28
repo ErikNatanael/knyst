@@ -227,9 +227,15 @@ mod jack_backend {
                 self.run_graph.run_resources_communication(50);
                 self.run_graph.process_block();
 
-                let graph_output_buffers = self.run_graph.graph_output_buffers();
+                let graph_output_buffers = self.run_graph.graph_output_buffers_mut();
                 for (i, out_port) in self.out_ports.iter_mut().enumerate() {
-                    let out_buffer = graph_output_buffers.get_channel(i);
+                    let out_buffer = unsafe { graph_output_buffers.get_channel_mut(i) };
+                    for sample in out_buffer.iter_mut() {
+                        *sample = sample.clamp(-1.0, 1.0);
+                        if sample.is_nan() {
+                            *sample = 0.0;
+                        }
+                    }
                     let out_port_slice = out_port.as_mut_slice(ps);
                     out_port_slice.clone_from_slice(out_buffer);
                 }

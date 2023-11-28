@@ -154,6 +154,11 @@ impl RunGraph {
     pub fn graph_output_buffers(&self) -> &NodeBufferRef {
         &self.output_node_buffer_ref
     }
+    /// Return a reference to the buffer holding the output of the [`Graph`].
+    /// Channels which have no [`Connection`]/graph edge to them will be 0.0.
+    pub fn graph_output_buffers_mut(&mut self) -> &mut NodeBufferRef {
+        &mut self.output_node_buffer_ref
+    }
     /// Returns the block size of the resulting output and input buffer(s) of
     /// the top level [`Graph`].
     pub fn block_size(&self) -> usize {
