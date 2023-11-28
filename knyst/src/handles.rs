@@ -38,12 +38,12 @@
 
 use std::{
     any::Any,
-    ops::{Add, Deref, Mul},
+    ops::{Add, Sub, Deref, Mul},
 };
 
 use crate::{
     graph::{Change, Connection, GraphId, ParameterChange},
-    prelude::PowfGen,
+    prelude::{PowfGen, SubGen},
     Sample,
 };
 
@@ -225,6 +225,35 @@ impl<H: Copy + HandleData> HandleData for RepeatOutputs<H> {
 
     fn node_ids(&self) -> NodeIdIter {
         self.handle.node_ids()
+    }
+}
+
+
+/// Handle for a - operation
+#[derive(Copy, Clone, Debug)]
+pub struct SubHandle {
+    node_id: NodeId,
+    num_out_channels: usize,
+}
+impl HandleData for SubHandle {
+    fn out_channels(&self) -> ChannelIter {
+        ChannelIter::SingleNodeId {
+            node_id: self.node_id,
+            num_channels: self.num_out_channels,
+            current_iter_index: 0,
+        }
+    }
+
+    fn in_channels(&self) -> ChannelIter {
+        ChannelIter::SingleNodeId {
+            node_id: self.node_id,
+            num_channels: self.num_out_channels * 2,
+            current_iter_index: 0,
+        }
+    }
+
+    fn node_ids(&self) -> NodeIdIter {
+        NodeIdIter::Single(self.node_id)
     }
 }
 
@@ -523,6 +552,9 @@ impl Iterator for ChannelIter {
     }
 }
 
+
+// Multiplication
+
 impl<A, B> Mul<Handle<A>> for Handle<B>
 where
     A: Copy + HandleData,
@@ -572,7 +604,7 @@ impl<B: Copy + HandleData> Mul<Sample> for Handle<B> {
     }
 }
 
-// Mull AnyNodeHandle * Handle
+// Mul AnyNodeHandle * Handle
 impl<B> Mul<AnyNodeHandle> for Handle<B>
 where
     B: Copy + HandleData,
@@ -639,6 +671,126 @@ impl Mul<Sample> for AnyNodeHandle {
         rhs * self
     }
 }
+
+// Subtraction
+
+impl<A, B> Sub<Handle<A>> for Handle<B>
+where
+    A: Copy + HandleData,
+    B: Copy + HandleData,
+{
+    type Output = Handle<SubHandle>;
+
+    fn sub(self, rhs: Handle<A>) -> Self::Output {
+        let num_out_channels = self.out_channels().collect::<Vec<_>>().len();
+        let id = knyst().push_without_inputs(SubGen(num_out_channels));
+        for (i, (out0, out1)) in self.out_channels().zip(rhs.out_channels()).enumerate() {
+            knyst().connect(out0.0.to(id).from_channel(out0.1).to_channel(i * 2));
+            knyst().connect(out1.0.to(id).from_channel(out1.1).to_channel(i * 2 + 1));
+        }
+        Handle::new(SubHandle {
+            node_id: id,
+            num_out_channels,
+        })
+    }
+}
+
+impl<B: Copy + HandleData> Sub<Handle<B>> for Sample {
+    type Output = Handle<SubHandle>;
+
+    fn sub(self, rhs: Handle<B>) -> Self::Output {
+        let num_out_channels = rhs.out_channels().collect::<Vec<_>>().len();
+        let id = knyst().push_without_inputs(SubGen(num_out_channels));
+        for (i, (out0, out1)) in std::iter::repeat(self).zip(rhs.out_channels()).enumerate() {
+            knyst().connect(
+                crate::graph::connection::constant(out0)
+                    .to(id)
+                    .to_channel(i * 2),
+            );
+            knyst().connect(out1.0.to(id).from_channel(out1.1).to_channel(i * 2 + 1));
+        }
+        Handle::new(SubHandle {
+            node_id: id,
+            num_out_channels,
+        })
+    }
+}
+impl<B: Copy + HandleData> Sub<Sample> for Handle<B> {
+    type Output = Handle<SubHandle>;
+
+    fn sub(self, rhs: Sample) -> Self::Output {
+        rhs - self
+    }
+}
+
+// Sub AnyNodeHandle - Handle
+impl<B> Sub<AnyNodeHandle> for Handle<B>
+where
+    B: Copy + HandleData,
+{
+    type Output = Handle<SubHandle>;
+
+    fn sub(self, rhs: AnyNodeHandle) -> Self::Output {
+        let num_out_channels = self.out_channels().collect::<Vec<_>>().len();
+        let id = knyst().push_without_inputs(SubGen(num_out_channels));
+        for (i, (out0, out1)) in self.out_channels().zip(rhs.out_channels()).enumerate() {
+            knyst().connect(out0.0.to(id).from_channel(out0.1).to_channel(i * 2));
+            knyst().connect(out1.0.to(id).from_channel(out1.1).to_channel(i * 2 + 1));
+        }
+        Handle::new(SubHandle {
+            node_id: id,
+            num_out_channels,
+        })
+    }
+}
+impl<B> Sub<Handle<B>> for AnyNodeHandle
+where
+    B: Copy + HandleData,
+{
+    type Output = Handle<SubHandle>;
+
+    fn sub(self, rhs: Handle<B>) -> Self::Output {
+        let num_out_channels = self.out_channels().collect::<Vec<_>>().len();
+        let id = knyst().push_without_inputs(SubGen(num_out_channels));
+        for (i, (out0, out1)) in self.out_channels().zip(rhs.out_channels()).enumerate() {
+            knyst().connect(out0.0.to(id).from_channel(out0.1).to_channel(i * 2));
+            knyst().connect(out1.0.to(id).from_channel(out1.1).to_channel(i * 2 + 1));
+        }
+        Handle::new(SubHandle {
+            node_id: id,
+            num_out_channels,
+        })
+    }
+}
+
+impl Sub<AnyNodeHandle> for Sample {
+    type Output = Handle<SubHandle>;
+
+    fn sub(self, rhs: AnyNodeHandle) -> Self::Output {
+        let num_out_channels = rhs.out_channels().collect::<Vec<_>>().len();
+        let id = knyst().push_without_inputs(SubGen(num_out_channels));
+        for (i, (out0, out1)) in std::iter::repeat(self).zip(rhs.out_channels()).enumerate() {
+            knyst().connect(
+                crate::graph::connection::constant(out0)
+                    .to(id)
+                    .to_channel(i * 2),
+            );
+            knyst().connect(out1.0.to(id).from_channel(out1.1).to_channel(i * 2 + 1));
+        }
+        Handle::new(SubHandle {
+            node_id: id,
+            num_out_channels,
+        })
+    }
+}
+impl Sub<Sample> for AnyNodeHandle {
+    type Output = Handle<SubHandle>;
+
+    fn sub(self, rhs: Sample) -> Self::Output {
+        rhs - self
+    }
+}
+
 
 // Add
 impl<A, B> Add<Handle<A>> for Handle<B>
