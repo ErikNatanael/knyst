@@ -475,7 +475,6 @@ impl EnvelopeGen {
             .zip(restart_trigger_in.iter())
         {
             if is_trigger(release_trig) {
-                eprintln!("Released env");
                 self.release();
             }
             if is_trigger(restart_trig) {
