@@ -64,7 +64,7 @@ impl SampleDelay {
     }
 }
 
-/// Schroeder (?) allpass interpolation 
+/// Schroeder (?) allpass interpolation
 #[derive(Clone, Copy, Debug)]
 pub struct AllpassInterpolator {
     coeff: f64,
@@ -255,7 +255,8 @@ impl AllpassFeedbackDelay {
 /// ```
 pub struct StaticSampleDelay {
     buffer: Vec<Sample>,
-    position: usize,
+    /// The current read/write position in the buffer. Public because in some situations it is more efficient to have access to it directly.
+    pub position: usize,
     delay_length: usize,
 }
 #[impl_gen]
@@ -277,6 +278,10 @@ impl StaticSampleDelay {
     /// Set a new delay length for the delay. Real time safe. If the given length is longer than the max delay length it will be set to the max delay length.
     pub fn set_delay_length(&mut self, delay_length_in_samples: usize) {
         self.delay_length = delay_length_in_samples.min(self.buffer.len());
+    }
+    /// Set a new delay length for the delay as a fraction of the entire delay length. Real time safe.
+    pub fn set_delay_length_fraction(&mut self, fraction: Sample) {
+        self.delay_length = (self.buffer.len() as Sample * fraction) as usize;
     }
 
     /// Read a whole block at a time. Only use this if the delay time is longer than 1 block.
@@ -311,6 +316,22 @@ impl StaticSampleDelay {
     /// Read a sample from the buffer. Does not advance the frame pointer. Read first, then write.
     pub fn read(&mut self) -> Sample {
         self.buffer[self.position]
+    }
+    /// Read a sample from the buffer at a given position. Does not advance the frame pointer. Read first, then write.
+    pub fn read_at(&mut self, index: usize) -> Sample {
+        self.buffer[index]
+    }
+    /// Read a sample from the buffer at a given position with linear interpolation. Does not advance the frame pointer. Read first, then write.
+    pub fn read_at_lin(&mut self, index: f32) -> Sample {
+        let mut low = index.floor() as usize;
+        let mut high = index.ceil() as usize % self.buffer.len();
+        while low >= self.buffer.len() {
+            low -= self.buffer.len();
+            high -= self.buffer.len();
+        }
+        let low_sample = self.buffer[low];
+        let high_sample = self.buffer[high];
+        low_sample + (high_sample - low_sample) * index.fract()
     }
     /// Write a sample to the buffer. Advances the frame pointer.
     pub fn write_and_advance(&mut self, input: Sample) {
