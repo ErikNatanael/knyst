@@ -27,10 +27,10 @@
 //! synthesis or implement your own backend.
 
 use crate::gen::{Gen, GenContext, GenState};
-use crate::{BlockSize, Sample, SampleRate};
-use knyst_macro::impl_gen;
 #[allow(unused)]
 use crate::trig;
+use crate::{BlockSize, Sample, SampleRate};
+use knyst_macro::impl_gen;
 // For using impl_gen inside the knyst crate
 use crate as knyst;
 // #[cfg(loom)]
@@ -434,7 +434,9 @@ struct Task {
     /// inputs to copy from the graph inputs (whole buffers) in the form `(from_graph_input_index, to_node_input_index)`
     graph_inputs_to_copy: Vec<(usize, usize)>,
     /// list of tuples of single floats in the form `(from, to)` where the `from` points to an output of a different node and the `to` points to the input buffer.
-    inputs_to_copy: Vec<(*mut Sample, *mut Sample)>,
+    // inputs_to_copy: Vec<(*mut Sample, *mut Sample)>,
+    /// list of tuples of single floats in the form `(from, to, block_size)` where the `from` points to an output of a different node and the `to` points to the input buffer.
+    inputs_to_copy: Vec<(*mut Sample, *mut Sample, usize)>,
     input_buffers: NodeBufferRef,
     gen: *mut dyn Gen,
     output_buffers_first_ptr: *mut Sample,
@@ -484,10 +486,15 @@ impl Task {
             }
         }
         // Copy all inputs
-        for (from, to) in &self.inputs_to_copy {
-            unsafe {
-                **to += **from;
+        for (from, to, block_size) in &self.inputs_to_copy {
+            let from_slice = unsafe { std::slice::from_raw_parts(*from, *block_size) };
+            let to_slice = unsafe { std::slice::from_raw_parts_mut(*to, *block_size) };
+
+            for (from, to) in from_slice.iter().zip(to_slice.iter_mut()) {
+                *to += *from;
             }
+            // This is way faster, but requires a single input edge per channel
+            // unsafe { to.copy_from_nonoverlapping(*from, *block_size) };
         }
         if self.start_node_at_sample <= sample_time_at_block_start {
             // Process node
@@ -1942,8 +1949,7 @@ impl Graph {
             }
         }
         if node_might_be_in_this_graph {
-            if let Some(key) = Self::key_from_id(&self.node_ids, change.input.node)
-            {
+            if let Some(key) = Self::key_from_id(&self.node_ids, change.input.node) {
                 // Does the Node exist?
                 if !self.get_nodes_mut().contains_key(key) {
                     return Err(ScheduleError::NodeNotFound);
@@ -3121,14 +3127,13 @@ impl Graph {
             for input_edge in input_edges {
                 let source = &nodes[input_edge.source];
                 let mut output_values = source.output_buffers();
-                for sample_index in 0..self.block_size * self.oversampling.as_usize() {
-                    let from_channel = input_edge.from_output_index;
-                    let to_channel = input_edge.to_input_index;
-                    inputs_to_copy.push((
-                        unsafe { output_values.ptr_to_sample(from_channel, sample_index) },
-                        unsafe { input_buffers.ptr_to_sample(to_channel, sample_index) },
-                    ));
-                }
+                let from_channel = input_edge.from_output_index;
+                let to_channel = input_edge.to_input_index;
+                inputs_to_copy.push((
+                    unsafe { output_values.ptr_to_sample(from_channel, 0) },
+                    unsafe { input_buffers.ptr_to_sample(to_channel, 0) },
+                    self.block_size * self.oversampling.as_usize(),
+                ));
             }
             for input_edge in graph_input_edges {
                 graph_inputs_to_copy
@@ -3137,12 +3142,11 @@ impl Graph {
             for feedback_edge in feedback_input_edges {
                 let source = &nodes[feedback_edge.source];
                 let mut output_values = source.output_buffers();
-                for i in 0..self.block_size * self.oversampling.as_usize() {
-                    inputs_to_copy.push((
-                        unsafe { output_values.ptr_to_sample(feedback_edge.from_output_index, i) },
-                        unsafe { input_buffers.ptr_to_sample(feedback_edge.from_output_index, i) },
-                    ));
-                }
+                inputs_to_copy.push((
+                    unsafe { output_values.ptr_to_sample(feedback_edge.from_output_index, 0) },
+                    unsafe { input_buffers.ptr_to_sample(feedback_edge.from_output_index, 0) },
+                    self.block_size * self.oversampling.as_usize(),
+                ));
             }
             let node = &nodes[node_key];
             tasks.push(node.to_task(

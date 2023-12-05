@@ -54,7 +54,7 @@ impl Node {
     pub(super) fn to_task(
         &self,
         node_key: NodeKey,
-        inputs_to_copy: Vec<(*mut Sample, *mut Sample)>,
+        inputs_to_copy: Vec<(*mut Sample, *mut Sample, usize)>,
         graph_inputs_to_copy: Vec<(usize, usize)>,
         input_buffers: NodeBufferRef,
     ) -> Task {
