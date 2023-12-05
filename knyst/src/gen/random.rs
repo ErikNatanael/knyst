@@ -22,14 +22,19 @@ pub struct RandomLin {
 }
 
 /// Used to seed random number generating Gens to create a deterministic result as long as all Gens are created in the same order from start.
-pub static NEXT_SEED: AtomicU64 = AtomicU64::new(0);
+static NEXT_SEED: AtomicU64 = AtomicU64::new(0);
+
+/// Request the next randomness seed. This ensures that a graph constructed in the same order can have deterministic randomness.
+pub fn next_randomness_seed() -> u64 {
+    NEXT_SEED.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+}
 
 #[impl_gen]
 impl RandomLin {
     /// Create a new RandomLin, seeding it from the global atomic seed.
     pub fn new() -> Self {
         let mut rng = fastrand::Rng::with_seed(
-            NEXT_SEED.fetch_add(1, std::sync::atomic::Ordering::SeqCst) * 94 + 53,
+            next_randomness_seed() * 94 + 53,
         );
         Self {
             current_value: rng.f32() as Sample,
