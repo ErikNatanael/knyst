@@ -276,6 +276,7 @@ impl StaticSampleDelay {
     }
 
     /// Set a new delay length for the delay. Real time safe. If the given length is longer than the max delay length it will be set to the max delay length.
+    #[inline]
     pub fn set_delay_length(&mut self, delay_length_in_samples: usize) {
         self.delay_length = delay_length_in_samples.min(self.buffer.len());
     }
@@ -285,6 +286,7 @@ impl StaticSampleDelay {
     }
 
     /// Read a whole block at a time. Only use this if the delay time is longer than 1 block.
+    #[inline]
     pub fn read_block(&mut self, output: &mut [Sample]) {
         let block_size = output.len();
         assert!(self.buffer.len() >= block_size);
@@ -299,6 +301,7 @@ impl StaticSampleDelay {
         }
     }
     /// Write a whole block at a time. Only use this if the delay time is longer than 1 block. Advances the frame pointer.
+    #[inline]
     pub fn write_block_and_advance(&mut self, input: &[Sample]) {
         let block_size = input.len();
         assert!(self.buffer.len() >= block_size);
@@ -314,6 +317,7 @@ impl StaticSampleDelay {
         self.position = (self.position + block_size) % self.buffer.len();
     }
     /// Read a sample from the buffer. Does not advance the frame pointer. Read first, then write.
+    #[inline]
     pub fn read(&mut self) -> Sample {
         self.buffer[self.position]
     }
@@ -337,11 +341,13 @@ impl StaticSampleDelay {
         low_sample + (high_sample - low_sample) * index.fract()
     }
     /// Write a sample to the buffer. Advances the frame pointer.
+    #[inline]
     pub fn write_and_advance(&mut self, input: Sample) {
         self.buffer[self.position] = input;
         self.position = (self.position + 1) % self.delay_length;
     }
     /// Process one block of the delay. Will choose block based processing at runtime if the delay time is larger than the block size.
+    #[inline]
     pub fn process(
         &mut self,
         input: &[Sample],
