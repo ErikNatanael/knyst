@@ -447,6 +447,7 @@ struct Task {
     start_node_at_sample: u64,
 }
 impl Task {
+    #[inline]
     fn init_constants(&mut self) {
         // Copy all constants
         let node_constants = unsafe { &*self.input_constants };
@@ -454,6 +455,7 @@ impl Task {
             self.input_buffers.fill_channel(constant, channel);
         }
     }
+    #[inline]
     fn apply_constant_change(&mut self, change: &ScheduledChange, start_sample_in_block: usize) {
         match change.kind {
             ScheduledChangeKind::Constant { index, value } => {
@@ -468,6 +470,7 @@ impl Task {
             }
         }
     }
+    #[inline]
     fn run(
         &mut self,
         graph_inputs: &NodeBufferRef,
@@ -2553,6 +2556,8 @@ impl Graph {
                         });
                     }
                 }
+
+                self.recalculation_required = true;
             }
             Connection::Constant {
                 value,
@@ -2673,6 +2678,8 @@ impl Graph {
                         to_input_index: (to_index + i) % self.num_outputs,
                     });
                 }
+
+                self.recalculation_required = true;
             }
             Connection::GraphInput {
                 ref sink,
@@ -2696,6 +2703,7 @@ impl Graph {
                 if self.node_keys_pending_removal.contains(&sink_key) {
                     return Err(ConnectionError::NodeNotFound);
                 }
+
                 // Find the index number, potentially from the label
                 let to_index = if to_index.is_some() {
                     if let Some(i) = to_index {
@@ -2726,6 +2734,8 @@ impl Graph {
                         to_input_index: to_index + i,
                     });
                 }
+
+                self.recalculation_required = true;
             }
             Connection::Clear {
                 ref node,
@@ -2751,6 +2761,8 @@ impl Graph {
                 if self.node_keys_pending_removal.contains(&node_key) {
                     return Err(ConnectionError::NodeNotFound);
                 }
+
+                self.recalculation_required = true;
                 let channel_index = match channel {
                     Some(c) => {
                         let index = match c {
@@ -2914,9 +2926,10 @@ impl Graph {
                         to_input_index: to_output_channel + i,
                     })
                 }
+
+                self.recalculation_required = true;
             }
         }
-        self.recalculation_required = true;
         Ok(())
     }
     fn input_index_from_label(&self, node: NodeKey, label: &'static str) -> Option<usize> {

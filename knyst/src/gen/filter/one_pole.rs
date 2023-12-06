@@ -38,10 +38,12 @@ impl<
         }
     }
     /// Reset memory of last sample, keep coefficients
+    #[inline]
     pub fn reset(&mut self) {
         self.last_output = T::zero();
     }
     /// Calculate coefficients for a lowpass OnePole
+    #[inline]
     pub fn set_freq_lowpass(&mut self, freq: T, sample_rate: T) {
         // let freq: T = freq
         //     .max(T::zero())
@@ -57,6 +59,7 @@ impl<
     }
     // TODO: Not verified to set the frequency correctly. In fact, I suspect it doesn't
     /// Calculate coefficients for a highpass OnePole
+    #[inline]
     pub fn set_freq_highpass(&mut self, freq: T, sample_rate: T) {
         // let x = T::from_f32(2.).unwrap() * FloatConst::PI() * (freq / sample_rate);
         // let p = (T::from_f32(2.).unwrap() + x.cos())
@@ -70,6 +73,7 @@ impl<
         self.hp = true;
     }
     /// Process one sample
+    #[inline]
     pub fn process_sample(&mut self, input: T) -> T {
         self.last_output = input * self.a0 + self.last_output * self.b1;
         if self.hp {
@@ -79,16 +83,19 @@ impl<
         }
     }
     /// Process one sample assuming the OnePole is set to lowpass
+    #[inline]
     pub fn process_lp(&mut self, input: T) -> T {
         self.last_output = input * self.a0 + self.last_output * self.b1;
         self.last_output
     }
     /// Process one sample assuming the OnePole is set to highpass
+    #[inline]
     pub fn process_hp(&mut self, input: T) -> T {
         self.last_output = input * self.a0 + self.last_output * self.b1;
         input - self.last_output
     }
     /// A cheap, but pretty accurate approximation for compensating for the delay introduced by this filter on very short delay lengths.
+    #[inline]
     pub fn cheap_tuning_compensation_lpf(&self) -> T {
         T::from_f32(-2.).unwrap() * (T::one() - self.b1).ln()
     }
@@ -150,6 +157,7 @@ impl OnePoleHpf {
             last_freq: 19000.,
         }
     }
+    #[inline]
     fn process(
         &mut self,
         sample_rate: SampleRate,
