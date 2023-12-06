@@ -4,7 +4,7 @@ use knyst::{audio_backend::JackBackend, controller, graph::Mult, prelude::*};
 fn main() -> Result<()> {
     let mut backend = JackBackend::new("Knyst<3JACK")?;
 
-    let sample_rate = backend.sample_rate() as f32;
+    let sample_rate = backend.sample_rate() as Sample;
     let block_size = backend.block_size().unwrap_or(64);
     println!("sr: {sample_rate}, block: {block_size}");
     let resources = Resources::new(ResourcesSettings::default());

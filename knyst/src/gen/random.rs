@@ -54,7 +54,7 @@ impl RandomLin {
     #[inline]
     fn new_value(&mut self) {
         let old_target = self.current_value + self.current_change_width;
-        let new = self.rng.f32();
+        let new = self.rng.f32() as Sample;
         self.current_value = old_target;
         self.current_change_width = new - old_target;
         self.phase = 0.0;

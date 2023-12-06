@@ -62,7 +62,7 @@ fn main() -> Result<()> {
     for &freq in [400, 600, 500].iter().cycle() {
         // new graph
         knyst().init_local_graph(knyst().default_graph_settings());
-        let sig = sine().freq(freq as f32).out("sig") * 0.25;
+        let sig = sine().freq(freq as Sample).out("sig") * 0.25;
         let env = Envelope {
             points: vec![(1.0, 0.005), (0.0, 0.5)],
             stop_action: StopAction::FreeGraph,

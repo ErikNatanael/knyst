@@ -106,7 +106,7 @@ mod jack_backend {
     use crate::audio_backend::{AudioBackend, AudioBackendError};
     use crate::controller::Controller;
     use crate::graph::{RunGraph, RunGraphSettings};
-    use crate::KnystError;
+    use crate::{KnystError, Sample};
     use crate::{graph::Graph, Resources};
     use assert_no_alloc::*;
     enum JackClient {
@@ -222,7 +222,10 @@ mod jack_backend {
                 for (i, in_port) in self.in_ports.iter().enumerate() {
                     let in_port_slice = in_port.as_slice(ps);
                     let in_buffer = unsafe { graph_input_buffers.get_channel_mut(i) };
-                    in_buffer.clone_from_slice(in_port_slice);
+                    // in_buffer.clone_from_slice(in_port_slice);
+                    for (from_jack, graph_in) in in_port_slice.iter().zip(in_buffer.iter_mut()) {
+                        *graph_in = *from_jack as Sample;
+                    }
                 }
                 self.run_graph.run_resources_communication(50);
                 self.run_graph.process_block();
@@ -237,7 +240,10 @@ mod jack_backend {
                         }
                     }
                     let out_port_slice = out_port.as_mut_slice(ps);
-                    out_port_slice.clone_from_slice(out_buffer);
+                    // out_port_slice.clone_from_slice(out_buffer);
+                    for (to_jack, graph_out) in out_port_slice.iter_mut().zip(out_buffer.iter()) {
+                        *to_jack = *graph_out as f32;
+                    }
                 }
                 jack::Control::Continue
             })

@@ -101,7 +101,7 @@ impl<
 pub struct OnePoleLpf {
     /// The interval one pole filter implementation
     pub op: OnePole<f64>,
-    last_freq: f32,
+    last_freq: Sample,
 }
 #[impl_gen]
 impl OnePoleLpf {
@@ -127,7 +127,7 @@ impl OnePoleLpf {
                 self.op.set_freq_lowpass(cutoff as f64, *sample_rate as f64);
                 self.last_freq = cutoff;
             }
-            *o = self.op.process_lp(i as f64) as f32;
+            *o = self.op.process_lp(i as f64) as Sample;
         }
         GenState::Continue
     }
@@ -137,7 +137,7 @@ impl OnePoleLpf {
 pub struct OnePoleHpf {
     /// Internal one pole implementation
     pub op: OnePole<f64>,
-    last_freq: f32,
+    last_freq: Sample,
 }
 #[impl_gen]
 impl OnePoleHpf {
@@ -163,7 +163,7 @@ impl OnePoleHpf {
                     .set_freq_highpass(cutoff as f64, *sample_rate as f64);
                 self.last_freq = cutoff;
             }
-            *o = self.op.process_hp(i as f64) as f32;
+            *o = self.op.process_hp(i as f64) as Sample;
         }
         GenState::Continue
     }

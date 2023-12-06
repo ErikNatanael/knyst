@@ -79,7 +79,7 @@ impl Gen for PowfGen {
             // #[cfg(not(feature = "unstable"))]
             {
                 for i in 0..block_size {
-                    out[i] = fastapprox::fast::pow(value[i], exponent[i]);
+                    out[i] = fastapprox::fast::pow(value[i] as f32, exponent[i] as f32) as Sample;
                 }
             }
             // #[cfg(feature = "unstable")]
