@@ -324,9 +324,12 @@ impl StaticSampleDelay {
     /// Read a sample from the buffer at a given position with linear interpolation. Does not advance the frame pointer. Read first, then write.
     pub fn read_at_lin(&mut self, index: f32) -> Sample {
         let mut low = index.floor() as usize;
-        let mut high = index.ceil() as usize % self.buffer.len();
+        let mut high = index.ceil() as usize;
         while low >= self.buffer.len() {
             low -= self.buffer.len();
+            high -= self.buffer.len();
+        }
+        if high >= self.buffer.len() {
             high -= self.buffer.len();
         }
         let low_sample = self.buffer[low];
