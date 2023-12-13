@@ -96,7 +96,7 @@ pub mod time;
 pub mod trig;
 pub mod wavetable;
 pub mod xorrng;
-pub mod test_utils;
+pub mod offline;
 
 /// Combined error type for Knyst, containing any other error in the library.
 #[derive(thiserror::Error, Debug)]

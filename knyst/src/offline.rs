@@ -2,48 +2,54 @@ use crate::{
     audio_backend::AudioBackend,
     controller::{print_error_handler, Controller},
     graph::RunGraph,
+    modal_interface::{remove_sphere, set_active_sphere, SphereId},
     prelude::{KnystSphere, SphereSettings},
-    Sample, modal_interface::{set_active_sphere, SphereId, remove_sphere},
+    Sample,
 };
 
-pub fn init_knyst_test(
-    sample_rate: usize,
-    block_size: usize,
-    num_inputs: usize,
-    num_outputs: usize,
-) -> KnystTest {
-    let mut backend = TestBackend {
-        sample_rate,
-        block_size,
-        num_inputs,
-        num_outputs,
-        run_graph: None,
-    };
-    let (sphere_id, controller) = KnystSphere::start_return_controller(
-        &mut backend,
-        SphereSettings {
-            num_inputs: 0,
-            num_outputs: 2,
-            ..Default::default()
-        },
-        print_error_handler,
-    )
-    .unwrap();
-  set_active_sphere(sphere_id).unwrap();
-    KnystTest {
-        test_backend: backend,
-        controller,
-        sphere_id,
-    }
-}
-
-/// For running and inspecting the output of Knyst in a test context. Remove the KnystSphere when dropped.
-pub struct KnystTest {
-    test_backend: TestBackend,
+/// For running and inspecting the output of Knyst offline i.e. generating buffers of samples without outputing them anywhere. Removes the associated KnystSphere when dropped.
+pub struct KnystOffline {
+    test_backend: OfflineBackend,
     controller: Controller,
     sphere_id: SphereId,
 }
-impl KnystTest {
+impl KnystOffline {
+    /// Creates an offline Knyst sphere and activates it. You can then use the modal knyst API as 
+    /// usual, buf you have to manually process blocks of audio samples and store them if you want.
+    pub fn new(
+        sample_rate: usize,
+        block_size: usize,
+        num_inputs: usize,
+        num_outputs: usize,
+    ) -> KnystOffline {
+        let mut backend = OfflineBackend {
+            sample_rate,
+            block_size,
+            num_inputs,
+            num_outputs,
+            run_graph: None,
+        };
+        let (sphere_id, controller) = KnystSphere::start_return_controller(
+            &mut backend,
+            SphereSettings {
+                num_inputs: 0,
+                num_outputs: 2,
+                ..Default::default()
+            },
+            print_error_handler,
+        )
+        .unwrap();
+        set_active_sphere(sphere_id).unwrap();
+        KnystOffline {
+            test_backend: backend,
+            controller,
+            sphere_id,
+        }
+    }
+    /// Returns the [`SphereId`] of the offline sphere
+    pub fn sphere_id(&self) -> SphereId {
+        self.sphere_id
+    }
     /// Process one block of audio, incl controller
     pub fn process_block(&mut self) {
         self.controller.run(10000);
@@ -74,31 +80,35 @@ impl KnystTest {
             }
         }
     }
+    /// Returns a channel of audio if that channel exists
     pub fn output_channel(&self, channel: usize) -> Option<&[Sample]> {
         if let Some(run_graph) = &self.test_backend.run_graph {
             let output_buffers = run_graph.graph_output_buffers();
-            assert!(channel < self.test_backend.num_outputs);
-            let chan = output_buffers.get_channel(channel);
-            Some(chan)
+            if channel < self.test_backend.num_outputs {
+                let chan = output_buffers.get_channel(channel);
+                Some(chan)
+            } else {
+                None
+            }
         } else {
-          None
+            None
         }
     }
 }
-impl Drop for KnystTest {
+impl Drop for KnystOffline {
     fn drop(&mut self) {
-      remove_sphere(self.sphere_id).unwrap();
+        remove_sphere(self.sphere_id).unwrap();
     }
 }
 
-struct TestBackend {
+struct OfflineBackend {
     sample_rate: usize,
     block_size: usize,
     num_outputs: usize,
     num_inputs: usize,
     run_graph: Option<RunGraph>,
 }
-impl AudioBackend for TestBackend {
+impl AudioBackend for OfflineBackend {
     fn start_processing_return_controller(
         &mut self,
         mut graph: crate::graph::Graph,

@@ -543,13 +543,13 @@ impl AliasingSaw {
 
 #[cfg(test)]
 mod tests {
-    use crate::test_utils::init_knyst_test;
+    use crate::offline::KnystOffline;
 
     use super::*;
     use knyst::prelude::*;
     #[test]
     fn phasor_test() {
-        let mut kt = init_knyst_test(128, 64, 0, 1);
+        let mut kt = KnystOffline::new(128, 64, 0, 1);
         let p = phasor().freq(2.0);
         graph_output(0, p);
         kt.process_block();
@@ -567,7 +567,7 @@ mod tests {
     }
     #[test]
     fn saw_test() {
-        let mut kt = init_knyst_test(64, 64, 0, 1);
+        let mut kt = KnystOffline::new(64, 64, 0, 1);
         let p = aliasing_saw().freq(2.0);
         graph_output(0, p);
         kt.process_block();
