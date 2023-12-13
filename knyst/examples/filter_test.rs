@@ -11,8 +11,8 @@ use knyst::{
     sphere::{KnystSphere, SphereSettings},
 };
 fn main() -> Result<()> {
-    // let mut backend = CpalBackend::new(CpalBackendOptions::default())?;
-    let mut backend = JackBackend::new("Knyst<3JACK")?;
+    let mut backend = CpalBackend::new(CpalBackendOptions::default())?;
+    // let mut backend = JackBackend::new("Knyst<3JACK")?;
     let _sphere = KnystSphere::start(
         &mut backend,
         SphereSettings {
@@ -25,8 +25,10 @@ fn main() -> Result<()> {
 
     let filter = svf_filter(SvfFilterType::Band, 1000., 10000.0, -20.)
         .input(graph_input(0, 1) + pink_noise());
-    // graph_output(0, filter * 0.01);
-    graph_output(0, white_noise());
+    graph_output(0, filter * 0.01);
+    // graph_output(0, white_noise());
+
+    // Quick and dirty analysis of the amplitude of the input signal
     let mut average = 0.0;
     let mut peak = 0.0;
     let mut peak_env = 0.0;
@@ -56,26 +58,9 @@ fn main() -> Result<()> {
 
     // graph_output(0, (sine(wt).freq(200.)).repeat_outputs(1));
 
+    // Wait for ENTER
+    println!("Press ENTER to exit");
     let mut input = String::new();
-    loop {
-        match std::io::stdin().read_line(&mut input) {
-            Ok(n) => {
-                println!("{} bytes read", n);
-                println!("{}", input.trim());
-                let input = input.trim();
-                if let Ok(freq) = input.parse::<usize>() {
-                    // node0.freq(freq as f32);
-                } else if input == "q" {
-                    break;
-                }
-            }
-            Err(error) => println!("error: {}", error),
-        }
-        input.clear();
-    }
+    std::io::stdin().read_line(&mut input)?;
     Ok(())
-}
-
-fn sine() -> Handle<OscillatorHandle> {
-    oscillator(WavetableId::cos())
 }

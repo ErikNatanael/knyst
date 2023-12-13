@@ -1,3 +1,6 @@
+//! For running and inspecting the output of Knyst offline i.e. generating buffers of samples without automatically outputing them anywhere e.g. to a sound card.
+//!
+//! Useful for tests and non-realtime processing.
 use crate::{
     audio_backend::AudioBackend,
     controller::{print_error_handler, Controller},
@@ -14,7 +17,7 @@ pub struct KnystOffline {
     sphere_id: SphereId,
 }
 impl KnystOffline {
-    /// Creates an offline Knyst sphere and activates it. You can then use the modal knyst API as 
+    /// Creates an offline Knyst sphere and activates it. You can then use the modal knyst API as
     /// usual, buf you have to manually process blocks of audio samples and store them if you want.
     pub fn new(
         sample_rate: usize,

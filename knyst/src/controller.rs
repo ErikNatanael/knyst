@@ -188,25 +188,23 @@ impl KnystCommands for MultiThreadedKnystCommands {
     fn push(&mut self, gen_or_graph: impl GenOrGraph, inputs: impl Into<InputBundle>) -> NodeId {
         let node_id = {
             let local_node_id = LOCAL_GRAPH.with_borrow_mut(|g| {
-            if let Some(g) = g.last_mut() {
-                let mut node_id = NodeId::new();
-                if let Err(e) =
-                    g.push_with_existing_address_to_graph(gen_or_graph, &mut node_id, g.id())
-                {
-                    // TODO: report error
-                    eprintln!("{e:?}");
+                if let Some(g) = g.last_mut() {
+                    let mut node_id = NodeId::new();
+                    if let Err(e) =
+                        g.push_with_existing_address_to_graph(gen_or_graph, &mut node_id, g.id())
+                    {
+                        // TODO: report error
+                        eprintln!("{e:?}");
+                    }
+                    Ok(node_id)
+                } else {
+                    Err(gen_or_graph)
                 }
-                Ok(node_id)
-            } else {
-               Err(gen_or_graph) 
-            }});
+            });
             match local_node_id {
                 Ok(node_id) => node_id,
-                Err(gen_or_graph) => {
-
-                self
-                    .push_to_graph_without_inputs(gen_or_graph, self.selected_graph_remote_graph)
-                },
+                Err(gen_or_graph) => self
+                    .push_to_graph_without_inputs(gen_or_graph, self.selected_graph_remote_graph),
             }
         };
         // Connect any inputs
@@ -245,13 +243,14 @@ impl KnystCommands for MultiThreadedKnystCommands {
         match found_in_local {
             Ok(node_id) => node_id,
             Err(gen_or_graph) => {
-                let new_node_address = NodeId::new();
+                let mut new_node_address = NodeId::new();
                 let command = Command::Push {
                     gen_or_graph,
                     node_address: new_node_address,
                     graph_id,
                 };
                 self.sender.send(command).unwrap();
+                new_node_address.set_graph_id(graph_id);
                 new_node_address
             }
         }

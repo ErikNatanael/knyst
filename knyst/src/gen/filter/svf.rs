@@ -1,7 +1,7 @@
-/// SVF filter for all your EQ needs
-///
-/// Implemented based on [a technical paper by Andrew Simper, Cytomic, 2013](https://cytomic.com/files/dsp/SvfLinearTrapOptimised2.pdf) also available at <https://cytomic.com/technical-papers/>
-///
+//! SVF filter for all your EQ needs
+//!
+//! Implemented based on [a technical paper by Andrew Simper, Cytomic, 2013](https://cytomic.com/files/dsp/SvfLinearTrapOptimised2.pdf) also available at <https://cytomic.com/technical-papers/>
+//!
 use knyst_macro::impl_gen;
 
 use crate as knyst;

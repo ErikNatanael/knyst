@@ -1,4 +1,4 @@
-/// Noise
+//! Noise
 use knyst_macro::impl_gen;
 
 use super::random::next_randomness_seed;

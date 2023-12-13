@@ -358,7 +358,7 @@ pub(crate) fn remove_sphere(sphere_id: SphereId) -> Result<(), SphereError> {
         Err(poison) => poison.into_inner(),
     };
     if let Some(index) = spheres.iter().position(|(_, id)| *id == sphere_id) {
-        let (old_sphere, _) = spheres.remove(index);
+        let (_old_sphere, _) = spheres.remove(index);
         if ACTIVE_KNYST_SPHERE.with(|aks| *aks.borrow_mut()) == sphere_id {
             if let Some((_, new_active)) = spheres.first() {
                 let new_active = *new_active;

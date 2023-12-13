@@ -50,13 +50,12 @@
 // #![warn(clippy::pedantic)]
 #![cfg_attr(feature = "unstable", feature(portable_simd))]
 
-
-#[allow(unused)]
-use crate::sphere::KnystSphere;
 #[allow(unused)]
 use crate::audio_backend::AudioBackend;
 #[allow(unused)]
 use crate::gen::Gen;
+#[allow(unused)]
+use crate::sphere::KnystSphere;
 use audio_backend::AudioBackendError;
 use core::fmt::Debug;
 use modal_interface::SphereError;
@@ -88,6 +87,7 @@ pub mod inspection;
 mod internal_filter;
 pub mod modal_interface;
 pub mod node_buffer;
+pub mod offline;
 pub mod prelude;
 pub mod resources;
 pub mod scheduling;
@@ -96,25 +96,24 @@ pub mod time;
 pub mod trig;
 pub mod wavetable;
 pub mod xorrng;
-pub mod offline;
 
 /// Combined error type for Knyst, containing any other error in the library.
 #[derive(thiserror::Error, Debug)]
 pub enum KnystError {
     /// Error making a connection inside a [`Graph`]
-    #[error("There was an error adding or removing connections between nodes: {0}")]
+    #[error("Error adding or removing connections: {0}")]
     ConnectionError(#[from] graph::connection::ConnectionError),
     /// Error freeing a node from a [`Graph`]
-    #[error("There was an error freeing a node: {0}")]
+    #[error("Error freeing a node: {0}")]
     FreeError(#[from] graph::FreeError),
     /// Error pushing a node to a [`Graph`]
-    #[error("There was an error pushing a node: {0}]")]
+    #[error("Error pushing a node: {0}]")]
     PushError(#[from] graph::PushError),
     /// Error scheduling a change
-    #[error("There was an error scheduling a change: {0}")]
+    #[error("Error scheduling a change: {0}")]
     ScheduleError(#[from] graph::ScheduleError),
     /// Error from creating a RunGraph
-    #[error("There was an error with the RunGraph: {0}")]
+    #[error("Error with the RunGraph: {0}")]
     RunGraphError(#[from] graph::run_graph::RunGraphError),
     /// Error from interacting with [`Resources`]
     #[error("Resources error : {0}")]

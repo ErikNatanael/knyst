@@ -55,7 +55,7 @@ rand = "0.8"
 criterion = "0.5"
 anyhow = "1.0"
 dialog = "0.3"
-fundsp = { version = "0.15" }
+knyst_reverb = { path = "../../knyst_reverb" }
 rfd = "0.12"
 tokio = { version = "1.26.0", features = [
   "rt",

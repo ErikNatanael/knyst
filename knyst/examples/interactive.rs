@@ -13,12 +13,14 @@ use anyhow::Result;
 use knyst::{
     audio_backend::{CpalBackend, CpalBackendOptions},
     controller::MultiThreadedKnystCommands,
-    envelope::{Curve, Envelope},
+    envelope::{envelope_gen, Curve, Envelope, EnvelopeGenHandle},
     graph::{ClosureGen, Mult, NodeId},
-    inputs,
+    handles::{AnyNodeHandle, HandleData},
+    inputs, knyst,
     prelude::*,
-    trig::OnceTrig,
+    trig::{once_trig, OnceTrig},
 };
+use knyst_reverb::galactic::galactic;
 use rand::{seq::SliceRandom, thread_rng, Rng};
 use std::{
     io::Write,
@@ -32,91 +34,69 @@ use termion::raw::IntoRawMode;
 static ROOT_FREQ: Sample = 200.;
 
 struct State {
-    potential_reverb_inputs: Vec<NodeId>,
-    reverb_node: Option<NodeId>,
+    potential_reverb_inputs: Vec<AnyNodeHandle>,
+    reverb_node: Option<AnyNodeHandle>,
     harmony_wavetable_id: WavetableId,
     block_size: usize,
     tokio_trigger: Arc<AtomicBool>,
-    lead_env_address: NodeId,
+    lead_env: Handle<EnvelopeGenHandle>,
     error_strings: Vec<String>,
     error_receiver: Receiver<String>,
     // store a NodeAddress pointing to nothing to simulate getting an error
-    invalid_node: NodeId,
+    invalid_node: AnyNodeHandle,
 }
 
 // TODO: Use the musical time map for scheduling and sometimes change the tempo
 fn main() -> Result<()> {
-    let mut backend = CpalBackend::new(CpalBackendOptions::default())?;
-
-    let sample_rate = backend.sample_rate() as Sample;
-    let block_size = backend.block_size().unwrap_or(64);
-    dbg!(block_size);
-    let resources = Resources::new(ResourcesSettings::default());
-    let top_level_graph = Graph::new(GraphSettings {
-        block_size,
-        sample_rate,
-        oversampling: knyst::graph::Oversampling::X1,
-        num_outputs: backend.num_outputs(),
-        ..Default::default()
-    });
     let (error_sender, error_receiver) = std::sync::mpsc::channel();
-    let mut k = backend.start_processing(
-        top_level_graph,
-        resources,
-        RunGraphSettings {
-            scheduling_latency: Duration::from_millis(100),
+
+    let mut backend = CpalBackend::new(CpalBackendOptions::default())?;
+    // let mut backend = JackBackend::new("Knyst<3JACK")?;
+    let block_size = backend.block_size().unwrap_or(64);
+    let _sphere = KnystSphere::start(
+        &mut backend,
+        SphereSettings {
+            num_inputs: 0,
+            num_outputs: 2,
+            ..Default::default()
         },
         Box::new(move |error| {
             error_sender.send(format!("{error}")).unwrap();
         }),
-    )?;
-    let num_outputs = backend.num_outputs();
+    );
 
-    // This NodeAddress will very soon point to nothing because it will run and
+    // This Handle will very soon point to nothing because it will run and
     // then immediately free itself
-    let invalid_node = k.push(OnceTrig::new(), inputs![]);
+    let invalid_node = once_trig();
 
-    // Nodes are pushed to the top level graph if no graph id is specified
-    let modulator = k.push(
-        WavetableOscillatorOwned::new(Wavetable::sine()),
-        // The `inputs` macro accepts multiple tuples in the format
-        // `(channel : constant ; node_outputs)` where the constant and the node_outputs are
-        // optional
-        inputs!(("freq" : 5.)),
+    let mod_amp = bus(1).set(0, 0.25);
+    let freq_bus = bus(1).set(0, ROOT_FREQ);
+    let modulator = wavetable_oscillator_owned(Wavetable::sine()).freq(freq_bus * 5.);
+    let node0 = oscillator(WavetableId::cos()).freq(freq_bus + (modulator * mod_amp));
+
+    let env = envelope_gen(
+        0.0,
+        vec![(0.25, 0.02), (0.125, 0.1), (0.0, 0.5)],
+        knyst::envelope::SustainMode::NoSustain,
+        StopAction::Continue,
     );
-    let mod_amp = k.push(Mult, inputs!((0 ; modulator.out(0)), (1 : 0.25)));
-    let node0 = k.push(
-        WavetableOscillatorOwned::new(Wavetable::sine()),
-        inputs!(("freq": ROOT_FREQ ; mod_amp.out(0))),
+    let node = node0 * env;
+    graph_output(0, node.repeat_outputs(1));
+
+    let sub_graph = upload_graph(
+        knyst()
+            .default_graph_settings()
+            .oversampling(knyst::graph::Oversampling::X2),
+        || {},
     );
-    let env = Envelope {
-        // Points are given in the format (value, time_to_reach_value)
-        points: vec![(0.25, 0.02), (0.125, 0.1), (0.0, 0.5)],
-        curves: vec![Curve::Linear, Curve::Linear, Curve::Exponential(2.0)],
-        ..Default::default()
-    };
-    let env = k.push(env.to_gen(), inputs!());
-    let amp = k.push(Mult, inputs!((0 ; node0.out(0)), (1 ; env.out(0))));
-    k.connect(amp.to_graph_out().channels(2));
 
-    let sub_graph = Graph::new(GraphSettings {
-        // block_size: block_size / 2,
-        block_size,
-        sample_rate,
-        num_outputs,
-        oversampling: knyst::graph::Oversampling::X2,
-        name: String::from("subgraph"),
-        num_inputs: 0,
-        ..Default::default()
-    });
-
-    let sub_graph_id = sub_graph.id();
-    let sub_graph = k.push(sub_graph, inputs!());
-    k.connect(sub_graph.to_graph_out().channels(2));
+    let sub_graph_id = sub_graph.graph_id();
+    graph_output(0, sub_graph);
 
     // Store the nodes that would be connected to the reverb if it's toggled on.
-    let potential_reverb_inputs = vec![sub_graph, amp];
+    let potential_reverb_inputs: Vec<AnyNodeHandle> = vec![sub_graph.into(), node0.into()];
 
+    let mut k = knyst();
     let mut harmony_wavetable = Wavetable::sine();
     harmony_wavetable.add_odd_harmonics(8, 1.3);
     harmony_wavetable.normalize();
@@ -132,8 +112,8 @@ fn main() -> Result<()> {
             vec![9, 17, 45],
             vec![0, 9, 22],
         ];
-        let mut k = k.clone();
         std::thread::spawn(move || {
+            let mut k = knyst();
             let mut rng = thread_rng();
             let harmony_nodes: Vec<NodeId> = (0..chords[0].len())
                 .map(|i| {
@@ -187,9 +167,8 @@ fn main() -> Result<()> {
     let tokio_trigger = Arc::new(AtomicBool::new(false));
 
     {
-        let k = k.clone();
         let trigger = tokio_trigger.clone();
-        std::thread::spawn(move || tokio_knyst(k, trigger));
+        std::thread::spawn(move || tokio_knyst(trigger));
     }
     let mut state = State {
         potential_reverb_inputs,
@@ -197,10 +176,10 @@ fn main() -> Result<()> {
         block_size,
         harmony_wavetable_id,
         tokio_trigger,
-        lead_env_address: env.clone(),
+        lead_env: env.into(),
         error_strings: vec![],
         error_receiver,
-        invalid_node,
+        invalid_node: invalid_node.into(),
     };
 
     // Set terminal to raw mode to allow reading stdin one key at a time
@@ -254,21 +233,16 @@ fn main() -> Result<()> {
                 termion::event::Key::Char('q') => break,
                 // Else print the pressed key
                 termion::event::Key::Char(c) => {
-                    if !handle_special_keys(c, k.clone(), &mut state) {
+                    if !handle_special_keys(c, &mut state) {
                         // Change the frequency of the nodes based on what key was pressed
                         let new_freq = character_to_hz(c);
-                        k.schedule_change(ParameterChange::now(node0.input("freq"), new_freq));
-                        k.schedule_change(ParameterChange::now(
-                            modulator.input("freq"),
-                            new_freq * 5.,
-                        ));
-                        k.schedule_change(ParameterChange::now(mod_amp.input(1), new_freq * 0.1));
+                        freq_bus.set(0, new_freq);
+                        mod_amp.set(0, new_freq * 0.2);
                         // Trigger the envelope to restart
-                        let trig = k.push(OnceTrig::new(), inputs!());
-                        k.connect(trig.to(state.lead_env_address).to_label("restart_trig"));
+                        state.lead_env.restart_trig();
                         write!(
                             stdout,
-                            "{}Triggered note with frequency {new_freq}",
+                            "{}Triggered note with frequency {new_freq}                  ",
                             termion::cursor::Goto(1, lines.len() as u16 + 2)
                         )
                         .unwrap();
@@ -322,7 +296,8 @@ fn character_to_hz(c: char) -> Sample {
 }
 
 /// Perform different actions depending on the key
-fn handle_special_keys(c: char, mut k: MultiThreadedKnystCommands, state: &mut State) -> bool {
+fn handle_special_keys(c: char, state: &mut State) -> bool {
+    let mut k = knyst();
     match c {
         'm' => {
             // Load a buffer and play it back
@@ -347,10 +322,12 @@ fn handle_special_keys(c: char, mut k: MultiThreadedKnystCommands, state: &mut S
         'n' => {
             // Toggle the fundsp reverb on or off
             match state.reverb_node.take() {
-                Some(reverb_node) => k.free_node_mend_connections(reverb_node),
+                Some(reverb_node) => {
+                    k.free_node_mend_connections(reverb_node.node_ids().next().unwrap())
+                }
                 None => {
                     let reverb_node =
-                        insert_reverb(k, &state.potential_reverb_inputs, state.block_size);
+                        insert_reverb(&state.potential_reverb_inputs, state.block_size);
                     state.reverb_node = Some(reverb_node);
                 }
             }
@@ -400,75 +377,43 @@ fn handle_special_keys(c: char, mut k: MultiThreadedKnystCommands, state: &mut S
         }
         'x' => {
             // Produce an error by making an invalid connection
-            k.connect(state.invalid_node.to_graph_out());
+            graph_output(0, &state.invalid_node);
             true
         }
         _ => false,
     }
 }
 
-fn insert_reverb(
-    mut k: MultiThreadedKnystCommands,
-    inputs: &[NodeId],
-    _block_size: usize,
-) -> NodeId {
-    let mix = 0.5;
-    let reverb = k.push(fundsp_reverb_gen(mix), inputs!());
-    for &input in inputs {
+fn insert_reverb(inputs: &[AnyNodeHandle], _block_size: usize) -> AnyNodeHandle {
+    let reverb = galactic()
+        .size(0.5)
+        .brightness(0.9)
+        .detune(0.2)
+        .mix(0.2)
+        .replace(0.7);
+    graph_output(0, reverb);
+    for input in inputs {
         // Clear all connections from this node to the outputs of the graph it is in.
-        k.disconnect(Connection::clear_to_graph_outputs(input));
+        knyst().disconnect(Connection::clear_to_graph_outputs(
+            input.node_ids().next().unwrap(),
+        ));
         // Connect the node to the newly created reverb instead
-        k.connect(input.clone().to(reverb));
-        k.connect(input.clone().to(reverb).to_index(1));
+        reverb.left(input);
+        reverb.right(input);
     }
-    k.connect(reverb.to_graph_out().channels(2));
-    reverb
-}
-
-/// Create a Gen containing a fundsp graph
-///
-/// Note: This currently allocates on the audio thread, the creator of fundsp is
-/// working on a solution
-fn fundsp_reverb_gen(mix: f32) -> ClosureGen {
-    let mut fundsp_graph = {
-        use fundsp::hacker32::*;
-        let mut c = multipass() & mix * reverb_stereo(10.0, 5.0);
-        c.allocate(); // Allocate any buffers needed internally ahead of time.
-        c.reset();
-        c
-    };
-
-    gen(move |ctx, _resources| {
-        let in0 = ctx.inputs.get_channel(0);
-        let in1 = ctx.inputs.get_channel(1);
-        let block_size = ctx.block_size();
-        let mut outputs = ctx.outputs.iter_mut();
-        let out0 = outputs.next().unwrap();
-        let out1 = outputs.next().unwrap();
-        // With an f32 fundsp AudioUnit we can pass input/output buffers
-        // straight to the fundsp process method to avoid copying.
-        let mut output = [out0, out1];
-        let input = [in0, in1];
-        fundsp_graph.process(block_size, input.as_slice(), output.as_mut_slice());
-        GenState::Continue
-    })
-    .output("out0")
-    .output("out1")
-    .input("in0")
-    .input("in1")
+    reverb.into()
 }
 
 // Start a tokio async runtime to demonstrate that it works. This is an
 // alternative to using standard threads.
 #[tokio::main]
-async fn tokio_knyst(k: MultiThreadedKnystCommands, mut trigger: Arc<AtomicBool>) {
+async fn tokio_knyst(mut trigger: Arc<AtomicBool>) {
     let mut rng = thread_rng();
     loop {
         receive_trigger(&mut trigger).await;
-        let k = k.clone();
         let speed = rng.gen_range(0.1..0.6);
         tokio::spawn(async move {
-            play_a_little_tune(k, speed).await;
+            play_a_little_tune(speed).await;
         });
     }
 }
@@ -480,7 +425,7 @@ async fn receive_trigger(trigger: &mut Arc<AtomicBool>) {
     trigger.store(false, std::sync::atomic::Ordering::SeqCst);
 }
 
-async fn play_a_little_tune(mut k: MultiThreadedKnystCommands, speed: Sample) {
+async fn play_a_little_tune(speed: Sample) {
     let melody = vec![
         (17, 1.),
         (22, 1.),
@@ -494,12 +439,13 @@ async fn play_a_little_tune(mut k: MultiThreadedKnystCommands, speed: Sample) {
     ];
     for (degree_53, beats) in melody {
         let freq = degree_53_to_hz(degree_53 as Sample + 53., ROOT_FREQ);
-        spawn_note(&mut k, freq, beats * speed).await;
+        spawn_note(freq, beats * speed).await;
         tokio::time::sleep(tokio::time::Duration::from_secs_f32((beats * speed) as f32)).await;
     }
 }
 
-async fn spawn_note(k: &mut MultiThreadedKnystCommands, freq: Sample, length_seconds: Sample) {
+async fn spawn_note(freq: Sample, length_seconds: Sample) {
+    let mut k = knyst();
     let mut settings = k.default_graph_settings();
     settings.num_outputs = 1;
     settings.num_inputs = 0;

@@ -923,6 +923,29 @@ pub struct GraphSettings {
     pub ring_buffer_size: usize,
 }
 
+impl GraphSettings {
+    /// Set the num_inputs to a new value
+    pub fn num_inputs(mut self, num_inputs: usize) -> Self {
+        self.num_inputs = num_inputs;
+        self
+    }
+    /// Set the num_outputs to a new value
+    pub fn num_outputs(mut self, num_outputs: usize) -> Self {
+        self.num_outputs = num_outputs;
+        self
+    }
+    /// Set the oversampling to a new value
+    pub fn oversampling(mut self, oversampling: Oversampling) -> Self {
+        self.oversampling = oversampling;
+        self
+    }
+    /// Set the oversampling to a new value
+    pub fn block_size(mut self, block_size: usize) -> Self {
+        self.block_size = block_size;
+        self
+    }
+}
+
 impl Default for GraphSettings {
     fn default() -> Self {
         GraphSettings {
@@ -1294,6 +1317,7 @@ impl Graph {
                 }
                 self.graphs_per_node.insert(node_key, graph);
             }
+            node_address.graph_id = Some(self.id);
             Ok(())
         } else {
             // Try to find the graph containing the node by asking all the graphs in this graph to free the node

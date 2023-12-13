@@ -1,44 +1,44 @@
-//! Handles are the preferred and most ergonomic way of interacting with Knyst, and may 
-//! become the only way in the future. 
-//! 
-//! ## With your own types 
+//! Handles are the preferred and most ergonomic way of interacting with Knyst, and may
+//! become the only way in the future.
+//!
+//! ## With your own types
 //! For your own [`Gen`]s, the [`impl_gen`] macro will automatically
 //! create a handle type for you if you include a `new` function in the impl_gen block. You can also create
 //! a handle type yourself by implementing [`HandleData`].
-//! 
+//!
 //! If a Gen you want to use does not have a handle type, you can use the [`handle`] function to upload
 //! it to the current graph and get a [`GenericHandle`] to it. This handle type can be used in routing, but doesn't
 //! have all the type safety features that a custom handle type has, e.g. setting inputs on specifucally named methods.
-//! 
-//! 
+//!
+//!
 //! # Example
 //! ```
 //! use knyst::prelude::*;
 //! use knyst::test_utils::*;
-//! 
+//!
 //! let mut kt = init_knyst_test(128, 64, 0, 1);
-//! 
+//!
 //! // Upload a wavetable oscillator to the current graph and set its inputs.
 //! let sig = oscillator(WavetableId::cos()).freq(440.);
 //! // Create another one
 //! let modulator = oscillator(WavetableId::cos()).freq(440.);
-//! // Change the input of the first oscillator. You can do basic arithmetic on handles and 
+//! // Change the input of the first oscillator. You can do basic arithmetic on handles and
 //! // the necessary Gens will be added automatically.
 //! sig.freq(modulator * 440.);
 //! // Lower the amplitude by half. The result of an arithmetic operation is a new
 //! // handle representing the outermost operation in the chain, in this case the multiplication.
 //! // To still have access to the settings on the inner handles those handles have to be stored.
 //! let sig = sig * 0.5;
-//! // Output the signal to the graph output. Since we are working on the outermost graph, this is the 
+//! // Output the signal to the graph output. Since we are working on the outermost graph, this is the
 //! // output of all of Knyst. The first argument determines what channel index to start outputting to. All
 //! // output channels in the `sig` will be output, in this case only 1.
-//! graph_output(0, sig); 
-//! 
+//! graph_output(0, sig);
+//!
 //! ```
 
 use std::{
     any::Any,
-    ops::{Add, Sub, Deref, Mul},
+    ops::{Add, Deref, Mul, Sub},
 };
 
 use crate::{
@@ -227,7 +227,6 @@ impl<H: Copy + HandleData> HandleData for RepeatOutputs<H> {
         self.handle.node_ids()
     }
 }
-
 
 /// Handle for a - operation
 #[derive(Copy, Clone, Debug)]
@@ -552,7 +551,6 @@ impl Iterator for ChannelIter {
     }
 }
 
-
 // Multiplication
 
 impl<A, B> Mul<Handle<A>> for Handle<B>
@@ -790,7 +788,6 @@ impl Sub<Sample> for AnyNodeHandle {
         rhs - self
     }
 }
-
 
 // Add
 impl<A, B> Add<Handle<A>> for Handle<B>
@@ -1232,6 +1229,10 @@ impl GraphHandle {
     #[must_use]
     pub fn graph_id(&self) -> GraphId {
         self.graph_id
+    }
+    /// Set this graph to the active graph to push new Gens to on the local thread
+    pub fn activate(&self) {
+        knyst().to_graph(self.graph_id)
     }
     /// The non-typed way to set an input channel's value
     pub fn set(
