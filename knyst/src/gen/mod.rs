@@ -1,7 +1,9 @@
 //! A [`Gen`] is anything that implements the [`Gen`] trait and is the code of Knyst. Gen is short for Generator, often called unit generators in other contexts, a term that dates back to [Max Mathews' program MUSIC from 1957](https://en.wikipedia.org/wiki/MUSIC-N)
-//! 
+//!
 //! The best way of implementing [`Gen`] on your own type is using the [`impl_gen`] macro.
 mod basic_gens;
+pub mod noise;
+pub use noise::*;
 pub mod random;
 pub use basic_gens::*;
 mod smoothing;
@@ -13,7 +15,7 @@ pub mod delay;
 pub mod filter;
 
 #[allow(unused)]
-use crate::graph::{Graph, Connection};
+use crate::graph::{Connection, Graph};
 #[allow(unused)]
 use knyst_macro::impl_gen;
 

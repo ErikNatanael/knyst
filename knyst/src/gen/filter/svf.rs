@@ -1,22 +1,40 @@
+/// SVF filter for all your EQ needs
+///
+/// Implemented based on [a technical paper by Andrew Simper, Cytomic, 2013](https://cytomic.com/files/dsp/SvfLinearTrapOptimised2.pdf) also available at <https://cytomic.com/technical-papers/>
+///
 use knyst_macro::impl_gen;
 
+use crate as knyst;
 use crate::prelude::GenState;
 use crate::{Sample, SampleRate};
-use crate as knyst;
 
+/// Different supported filter types
 #[derive(Clone, Copy, Debug)]
 pub enum SvfFilterType {
+    #[allow(missing_docs)]
     Low,
+    #[allow(missing_docs)]
     High,
+    #[allow(missing_docs)]
     Band,
+    #[allow(missing_docs)]
     Notch,
+    #[allow(missing_docs)]
     Peak,
+    #[allow(missing_docs)]
     All,
+    #[allow(missing_docs)]
     Bell,
+    #[allow(missing_docs)]
     LowShelf,
+    #[allow(missing_docs)]
     HighShelf,
 }
-pub struct GeneralSvfFilter {
+/// A versatile EQ filter implementation
+///
+/// Implemented based on [a technical paper by Andrew Simper, Cytomic, 2013](https://cytomic.com/files/dsp/SvfLinearTrapOptimised2.pdf) also available at <https://cytomic.com/technical-papers/>
+#[derive(Clone)]
+pub struct SvfFilter {
     ty: SvfFilterType,
     cutoff_freq: Sample,
     q: Sample,
@@ -34,7 +52,8 @@ pub struct GeneralSvfFilter {
 }
 
 #[impl_gen]
-impl GeneralSvfFilter {
+impl SvfFilter {
+    #[allow(missing_docs)]
     pub fn new(ty: SvfFilterType, cutoff_freq: Sample, q: Sample, gain_db: Sample) -> Self {
         Self {
             ic1eq: 0.,
@@ -51,6 +70,7 @@ impl GeneralSvfFilter {
             gain_db,
         }
     }
+    /// Set the coefficients for the currently set filter type. `gain_db` is only used for Bell, HighShelf and LowShelf.
     pub fn set_coeffs(&mut self, cutoff: Sample, q: Sample, gain_db: Sample, sample_rate: Sample) {
         match self.ty {
             SvfFilterType::Low => {
@@ -151,12 +171,14 @@ impl GeneralSvfFilter {
             }
         }
     }
+    #[allow(missing_docs)]
     pub fn init(&mut self, sample_rate: SampleRate) {
-      self.set_coeffs(self.cutoff_freq, self.q, self.gain_db, *sample_rate);
+        self.set_coeffs(self.cutoff_freq, self.q, self.gain_db, *sample_rate);
     }
     // TODO: This is vectorisable such that multiple filters can be run at once, e.g. multiple channels with the same coefficients
+    #[allow(missing_docs)]
     pub fn process_sample(&mut self, v0: Sample) -> Sample {
-        let GeneralSvfFilter {
+        let SvfFilter {
             ic1eq,
             ic2eq,
             a1,
@@ -175,10 +197,11 @@ impl GeneralSvfFilter {
 
         *m0 * v0 + *m1 * v1 + *m2 * v2
     }
+    #[allow(missing_docs)]
     pub fn process(&mut self, input: &[Sample], output: &mut [Sample]) -> GenState {
-      for (inp, out) in input.iter().zip(output.iter_mut()) {
-        *out = self.process_sample(*inp);
-      }
-      GenState::Continue
+        for (inp, out) in input.iter().zip(output.iter_mut()) {
+            *out = self.process_sample(*inp);
+        }
+        GenState::Continue
     }
 }
