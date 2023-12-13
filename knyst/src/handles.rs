@@ -71,6 +71,15 @@ impl<H: Copy> Deref for Handle<H> {
         &self.handle
     }
 }
+impl Into<GenericHandle> for GraphHandle {
+    fn into(self) -> GenericHandle {
+        GenericHandle {
+            node_id: self.node_id,
+            num_inputs: self.num_inputs,
+            num_outputs: self.num_outputs,
+        }
+    }
+}
 // impl<A: Copy + Into<NodeId>> From<NodeHandle<A>> for NodeId {
 //     fn from(value: NodeHandle<A>) -> Self {
 //         value.handle.into()
@@ -98,6 +107,13 @@ impl<A: Copy + HandleData> Handle<A> {
             repeats: n,
         })
     }
+    /// Repeat all the outputs such that [1, 2, 3] -> [1, 1, 2, 2, 3, 3]
+    pub fn channels(self, n: usize) -> Handle<Channels<A>> {
+        Handle::new(Channels {
+            handle: self.handle,
+            channels: n,
+        })
+    }
     /// Take all the output channels to the power of the given exponent
     pub fn powf(self, exponent: impl Into<Input>) -> Handle<PowfHandle> {
         let connecting_channels: Vec<_> = self.out_channels().collect();
@@ -111,6 +127,18 @@ impl<A: Copy + HandleData> Handle<A> {
             num_channels,
         })
         .exponent(exponent)
+    }
+    /// Remove all connections to inputs to this handle
+    pub fn clear_input_connections(self) {
+        for id in self.node_ids() {
+            knyst().connect(Connection::clear_to_nodes(id));
+        }
+    }
+    /// Remove all connections from outputs from this handle
+    pub fn clear_output_connections(self) {
+        for id in self.node_ids() {
+            knyst().connect(Connection::clear_from_nodes(id));
+        }
     }
     /// Free the node(s) this handle is pointing to
     pub fn free(self) {
@@ -200,6 +228,37 @@ impl HandleData for OutputChannelHandle {
 
     fn node_ids(&self) -> NodeIdIter {
         NodeIdIter::Single(self.node_id)
+    }
+}
+
+/// Handle for a [`Handle::channels`]. Cycles the outputs from the source handle to return a given number of handles.
+///
+/// # Examples
+/// [1, 2].channels(4) -> [1, 2, 1, 2]
+///
+/// [1, 2, 3, 4, 5, 6].channels(2) -> [1, 2]
+#[derive(Copy, Clone, Debug)]
+pub struct Channels<H: Copy + HandleData> {
+    handle: H,
+    channels: usize,
+}
+impl<H: Copy + HandleData> HandleData for Channels<H> {
+    fn out_channels(&self) -> ChannelIter {
+        let channels = self
+            .handle
+            .out_channels()
+            .cycle()
+            .take(self.channels)
+            .collect();
+        ChannelIter::from_vec(channels)
+    }
+
+    fn in_channels(&self) -> ChannelIter {
+        self.handle.in_channels()
+    }
+
+    fn node_ids(&self) -> NodeIdIter {
+        self.handle.node_ids()
     }
 }
 

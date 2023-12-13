@@ -379,6 +379,16 @@ impl GenImplData {
 
                     }
 
+                    impl Into<knyst::handles::GenericHandle> for #handle_name {
+    fn into(self) -> knyst::handles::GenericHandle {
+        GenericHandle {
+            node_id: self.node_id,
+            num_inputs: #num_inputs,
+            num_outputs: #num_outputs,
+        }
+}
+                    }
+
                     #init_handle_fn
 
                     #handle_range_impl
