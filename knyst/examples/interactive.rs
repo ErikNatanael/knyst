@@ -12,13 +12,12 @@
 use anyhow::Result;
 use knyst::{
     audio_backend::{CpalBackend, CpalBackendOptions},
-    controller::MultiThreadedKnystCommands,
-    envelope::{envelope_gen, Curve, Envelope, EnvelopeGenHandle},
-    graph::{ClosureGen, Mult, NodeId},
+    envelope::{envelope_gen, Envelope, EnvelopeGenHandle},
+    graph::{Mult, NodeId},
     handles::{AnyNodeHandle, HandleData},
     inputs, knyst,
     prelude::*,
-    trig::{once_trig, OnceTrig},
+    trig::once_trig,
 };
 use knyst_reverb::galactic::galactic;
 use rand::{seq::SliceRandom, thread_rng, Rng};
@@ -242,7 +241,7 @@ fn main() -> Result<()> {
                         state.lead_env.restart_trig();
                         write!(
                             stdout,
-                            "{}Triggered note with frequency {new_freq}                  ",
+                            "{}Triggered note with frequency {new_freq:.2}                  ",
                             termion::cursor::Goto(1, lines.len() as u16 + 2)
                         )
                         .unwrap();
