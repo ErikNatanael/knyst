@@ -420,6 +420,13 @@ pub enum Relative<T> {
     After(T),
 }
 
+/// Stores whether an input can be copied or needs to be added. If there's only a single input to a channel that channel can be copied.
+#[derive(Clone, Copy, Debug)]
+enum CopyOrAdd {
+    Copy,
+    Add,
+}
+
 /// One task to complete, for the node graph Safety: Uses raw pointers to nodes
 /// and buffers. A node and its buffers may not be touched from the Graph while
 /// a Task containing pointers to it is running. This is guaranteed by an atomic
@@ -436,7 +443,7 @@ struct Task {
     /// list of tuples of single floats in the form `(from, to)` where the `from` points to an output of a different node and the `to` points to the input buffer.
     // inputs_to_copy: Vec<(*mut Sample, *mut Sample)>,
     /// list of tuples of single floats in the form `(from, to, block_size)` where the `from` points to an output of a different node and the `to` points to the input buffer.
-    inputs_to_copy: Vec<(*mut Sample, *mut Sample, usize)>,
+    inputs_to_copy: Vec<(*mut Sample, *mut Sample, usize, CopyOrAdd)>,
     input_buffers: NodeBufferRef,
     gen: *mut dyn Gen,
     output_buffers_first_ptr: *mut Sample,
@@ -489,15 +496,28 @@ impl Task {
             }
         }
         // Copy all inputs
-        for (from, to, block_size) in &self.inputs_to_copy {
-            let from_slice = unsafe { std::slice::from_raw_parts(*from, *block_size) };
-            let to_slice = unsafe { std::slice::from_raw_parts_mut(*to, *block_size) };
+        for (from, to, block_size, copy_or_add) in &self.inputs_to_copy {
+            // let from_slice = unsafe { std::slice::from_raw_parts(*from, *block_size) };
+            // let to_slice = unsafe { std::slice::from_raw_parts_mut(*to, *block_size) };
 
-            for (from, to) in from_slice.iter().zip(to_slice.iter_mut()) {
-                *to += *from;
+            // for (from, to) in from_slice.iter().zip(to_slice.iter_mut()) {
+            //     *to += *from;
+            // }
+
+            match copy_or_add {
+                CopyOrAdd::Copy => {
+                    // This is way faster, but requires a single input edge per channel
+                    unsafe { to.copy_from_nonoverlapping(*from, *block_size) };
+                }
+                CopyOrAdd::Add => {
+                    let from_slice = unsafe { std::slice::from_raw_parts(*from, *block_size) };
+                    let to_slice = unsafe { std::slice::from_raw_parts_mut(*to, *block_size) };
+
+                    for (from, to) in from_slice.iter().zip(to_slice.iter_mut()) {
+                        *to += *from;
+                    }
+                }
             }
-            // This is way faster, but requires a single input edge per channel
-            // unsafe { to.copy_from_nonoverlapping(*from, *block_size) };
         }
         if self.start_node_at_sample <= sample_time_at_block_start {
             // Process node
@@ -3160,6 +3180,24 @@ impl Graph {
 
             let mut inputs_to_copy = vec![];
             let mut graph_inputs_to_copy = vec![];
+            let mut inputs_per_channel = vec![0; num_inputs];
+            for input_edge in input_edges {
+                inputs_per_channel[input_edge.to_input_index] += 1;
+            }
+            for input_edge in feedback_input_edges {
+                inputs_per_channel[input_edge.to_input_index] += 1;
+            }
+
+            let copy_or_add: Vec<_> = inputs_per_channel
+                .into_iter()
+                .map(|num| {
+                    if num > 1 {
+                        CopyOrAdd::Add
+                    } else {
+                        CopyOrAdd::Copy
+                    }
+                })
+                .collect();
 
             for input_edge in input_edges {
                 let source = &nodes[input_edge.source];
@@ -3170,6 +3208,7 @@ impl Graph {
                     unsafe { output_values.ptr_to_sample(from_channel, 0) },
                     unsafe { input_buffers.ptr_to_sample(to_channel, 0) },
                     self.block_size * self.oversampling.as_usize(),
+                    copy_or_add[to_channel],
                 ));
             }
             for input_edge in graph_input_edges {
@@ -3183,6 +3222,7 @@ impl Graph {
                     unsafe { output_values.ptr_to_sample(feedback_edge.from_output_index, 0) },
                     unsafe { input_buffers.ptr_to_sample(feedback_edge.from_output_index, 0) },
                     self.block_size * self.oversampling.as_usize(),
+                    copy_or_add[feedback_edge.from_output_index],
                 ));
             }
             let node = &nodes[node_key];

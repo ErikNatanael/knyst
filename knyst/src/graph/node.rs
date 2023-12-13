@@ -1,6 +1,6 @@
 use crate::{node_buffer::NodeBufferRef, Resources, Sample};
 
-use super::{Gen, GenContext, GenState, NodeKey, Task};
+use super::{Gen, GenContext, GenState, NodeKey, Task, CopyOrAdd};
 
 /// Node is a very unsafe struct. Be very careful when changing it.
 ///
@@ -54,7 +54,7 @@ impl Node {
     pub(super) fn to_task(
         &self,
         node_key: NodeKey,
-        inputs_to_copy: Vec<(*mut Sample, *mut Sample, usize)>,
+        inputs_to_copy: Vec<(*mut Sample, *mut Sample, usize, CopyOrAdd)>,
         graph_inputs_to_copy: Vec<(usize, usize)>,
         input_buffers: NodeBufferRef,
     ) -> Task {
