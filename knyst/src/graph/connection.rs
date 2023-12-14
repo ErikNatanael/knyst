@@ -602,8 +602,8 @@ impl From<Sample> for Constant {
 /// A specific output from a specific node.
 #[derive(Clone, Debug)]
 pub struct NodeInput {
-    pub(super) node: NodeId,
-    pub(super) channel: NodeChannel,
+    pub(crate) node: NodeId,
+    pub(crate) channel: NodeChannel,
 }
 impl From<(NodeId, NodeChannel)> for NodeInput {
     fn from(value: (NodeId, NodeChannel)) -> Self {

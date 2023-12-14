@@ -16,6 +16,7 @@ use std::{
 
 use crate::{
     buffer::Buffer,
+    graph::{NodeChanges, Time},
     inspection::GraphInspection,
     knyst,
     resources::{BufferId, ResourcesCommand, ResourcesResponse, WavetableId},
@@ -154,6 +155,10 @@ pub trait KnystCommands {
     fn init_local_graph(&mut self, settings: GraphSettings) -> GraphId;
     /// Upload the local graph to the previously default graph and restore the default graph to that previous default graph.
     fn upload_local_graph(&mut self) -> crate::handles::Handle<crate::handles::GraphHandle>;
+    /// Start a scheduling bundle, meaning any change scheduled will not be applied until [`KnystCommands::upload_scheduling_bundle`] is called. Prefer using [`schedule_bundle`] as it is more difficult to misuse.
+    fn start_scheduling_bundle(&mut self);
+    /// Uploads scheduled changes to the graph and schedules them for the specified time. Prefer [`schedule_bundle`] to help reinforce scoping and potential thread switches.
+    fn upload_scheduling_bundle(&mut self, time: Time);
 }
 
 /// Create a new local graph, runs the init function to let you build it, and then uploads it to the active Sphere.
@@ -164,6 +169,13 @@ pub fn upload_graph(
     knyst().init_local_graph(settings);
     init();
     knyst().upload_local_graph()
+}
+
+/// Schedules any changes made in the closure at the given time. Currently limited to changes of constant values and spawning new nodes, not new connections.
+pub fn schedule_bundle(time: Time, c: impl FnOnce()) {
+    knyst().start_scheduling_bundle();
+    c();
+    knyst().upload_scheduling_bundle(time);
 }
 
 #[derive(Clone)]
@@ -177,6 +189,10 @@ pub struct MultiThreadedKnystCommands {
     top_level_graph_settings: GraphSettings,
     /// The default graph to push new nodes to
     selected_graph_remote_graph: GraphId,
+    /// If changes should be bundled
+    bundle_changes: bool,
+    /// The vec holding changes to be later scheduled as a bundle
+    changes_bundle: Vec<NodeChanges>,
 }
 
 impl KnystCommands for MultiThreadedKnystCommands {
@@ -333,7 +349,16 @@ impl KnystCommands for MultiThreadedKnystCommands {
     /// [`KnystCommands`] through `AudioBackend::start_processing` this is taken
     /// care of automatically.
     fn schedule_change(&mut self, change: ParameterChange) {
-        self.sender.send(Command::ScheduleChange(change)).unwrap();
+        if self.bundle_changes {
+            let change = NodeChanges {
+                node: change.input.node,
+                parameters: vec![(change.input.channel, change.value)],
+                offset: None,
+            };
+            self.changes_bundle.push(change);
+        } else {
+            self.sender.send(Command::ScheduleChange(change)).unwrap();
+        }
     }
     /// Schedule multiple changes to be made.
     ///
@@ -342,7 +367,11 @@ impl KnystCommands for MultiThreadedKnystCommands {
     /// [`KnystCommands`] through `AudioBackend::start_processing` this is taken
     /// care of automatically.
     fn schedule_changes(&mut self, changes: SimultaneousChanges) {
-        self.sender.send(Command::ScheduleChanges(changes)).unwrap();
+        if self.bundle_changes {
+            self.changes_bundle.extend(changes.changes);
+        } else {
+            self.sender.send(Command::ScheduleChanges(changes)).unwrap();
+        }
     }
     /// Inserts a new buffer in the [`Resources`] and returns an id which can be
     /// converted to a key on the audio thread with access to a [`Resources`].
@@ -451,6 +480,25 @@ impl KnystCommands for MultiThreadedKnystCommands {
 
     fn to_top_level_graph(&mut self) {
         self.selected_graph_remote_graph = self.top_level_graph_id;
+    }
+
+    fn start_scheduling_bundle(&mut self) {
+        self.bundle_changes = true;
+        if !self.changes_bundle.is_empty() {
+            eprintln!(
+                "Warning: Starting a new scheduling bundle before the previous one was scheduled."
+            )
+        }
+    }
+
+    fn upload_scheduling_bundle(&mut self, time: Time) {
+        self.bundle_changes = false;
+        let changes = SimultaneousChanges {
+            time,
+            changes: self.changes_bundle.clone(),
+        };
+        self.schedule_changes(changes);
+        self.changes_bundle.clear();
     }
     // /// Create a new Self which pushes to the selected GraphId by default
     // fn to_graph(&self, graph_id: GraphId) -> Self {
@@ -840,6 +888,8 @@ impl Controller {
             top_level_graph_id: self.top_level_graph.id(),
             top_level_graph_settings: self.top_level_graph.graph_settings(),
             selected_graph_remote_graph: self.top_level_graph.id(),
+            bundle_changes: false,
+            changes_bundle: vec![],
         }
     }
 
@@ -860,6 +910,8 @@ impl Controller {
             top_level_graph_id,
             top_level_graph_settings,
             selected_graph_remote_graph: top_level_graph_id,
+            bundle_changes: false,
+            changes_bundle: vec![],
         }
     }
 }

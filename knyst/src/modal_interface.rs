@@ -308,6 +308,20 @@ impl KnystCommands for UnifiedKnystCommands {
             UnifiedKnystCommands::Dummy(kc) => kc.report_dummy(),
         }
     }
+
+    fn start_scheduling_bundle(&mut self) {
+        match self {
+            UnifiedKnystCommands::Real(kc) => kc.borrow_mut().start_scheduling_bundle(),
+            UnifiedKnystCommands::Dummy(kc) => kc.report_dummy(),
+        }
+    }
+
+    fn upload_scheduling_bundle(&mut self, time: crate::graph::Time) {
+        match self {
+            UnifiedKnystCommands::Real(kc) => kc.borrow_mut().upload_scheduling_bundle(time),
+            UnifiedKnystCommands::Dummy(kc) => kc.report_dummy(),
+        }
+    }
     // fn push(&mut self) {
     //     match self {
     //         UnifiedKnystCommands::Real(kc) => kc.borrow_mut().push(),

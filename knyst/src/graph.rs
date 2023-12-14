@@ -267,9 +267,9 @@ impl SimultaneousChanges {
 /// simultaneous_changes.push(node_changes);
 /// ```
 pub struct NodeChanges {
-    node: NodeId,
-    parameters: Vec<(NodeChannel, Change)>,
-    offset: Option<TimeOffset>,
+    pub(crate) node: NodeId,
+    pub(crate) parameters: Vec<(NodeChannel, Change)>,
+    pub(crate) offset: Option<TimeOffset>,
 }
 impl NodeChanges {
     /// New set of changes for a certain node

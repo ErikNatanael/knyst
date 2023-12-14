@@ -1199,11 +1199,8 @@ impl GenericHandle {
         let channel = channel.into();
         match inp {
             Input::Constant(v) => {
-                knyst().connect(
-                    crate::graph::connection::constant(v)
-                        .to(self.node_id)
-                        .to_channel(channel),
-                );
+                let change = ParameterChange::now(self.node_id.input(channel), Change::Constant(v));
+                knyst().schedule_change(change);
             }
             Input::Handle { output_channels } => {
                 for (node_id, chan) in output_channels {
