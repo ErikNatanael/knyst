@@ -9,7 +9,7 @@ pub use basic_gens::*;
 mod smoothing;
 pub use smoothing::*;
 mod osc;
-use crate::{node_buffer::NodeBufferRef, resources::Resources, Sample};
+use crate::{node_buffer::NodeBufferRef, resources::Resources, Sample, graph::NodeId};
 pub use osc::*;
 pub mod delay;
 pub mod filter;
@@ -37,7 +37,7 @@ pub trait Gen {
     /// Initialize buffers etc.
     /// Default: noop
     #[allow(unused)]
-    fn init(&mut self, block_size: usize, sample_rate: Sample) {}
+    fn init(&mut self, block_size: usize, sample_rate: Sample, node_id: NodeId) {}
     /// Return a label for a given input channel index. This sets the label in the [`Connection`] API.
     #[allow(unused)]
     fn input_desc(&self, input: usize) -> &'static str {

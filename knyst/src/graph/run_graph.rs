@@ -19,7 +19,7 @@ use crate::controller::KnystCommands;
 
 use crate::{scheduling::MusicalTimeMap, Resources};
 
-use super::{node::Node, Graph, NodeBufferRef, Sample};
+use super::{node::Node, Graph, NodeBufferRef, Sample, NodeId};
 
 /// Wrapper around a [`Graph`] `Node` with convenience methods to run the
 /// Graph, either from an audio thread or for non-real time purposes.
@@ -54,7 +54,10 @@ impl RunGraph {
         ),
         RunGraphError,
     > {
-        match graph.split_and_create_top_level_node() {
+        // Create a new dummy NodeId since it doesn't matter; we know
+        // that the Graph will not do anything with its NodeId in its init function
+        // and the top level graph doesn't have a NodeId anyway.
+        match graph.split_and_create_top_level_node(NodeId::new()) {
             Ok(graph_node) => {
                 let input_buffer_length = graph_node.num_inputs() * graph_node.block_size;
                 let input_buffer_ptr = if input_buffer_length != 0 {

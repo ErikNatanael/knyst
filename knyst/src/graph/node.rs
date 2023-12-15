@@ -1,6 +1,6 @@
 use crate::{node_buffer::NodeBufferRef, Resources, Sample};
 
-use super::{Gen, GenContext, GenState, NodeKey, Task, CopyOrAdd};
+use super::{Gen, GenContext, GenState, NodeKey, Task, CopyOrAdd, NodeId};
 
 /// Node is a very unsafe struct. Be very careful when changing it.
 ///
@@ -76,7 +76,7 @@ impl Node {
     // }
     /// *Allocates memory*
     /// Allocates enough memory for the given block size
-    pub fn init(&mut self, block_size: usize, sample_rate: Sample) {
+    pub fn init(&mut self, block_size: usize, sample_rate: Sample, node_id: NodeId) {
         // Free the previous buffer
         unsafe {
             drop(Box::from_raw(self.output_buffers));
@@ -91,7 +91,7 @@ impl Node {
         };
         self.block_size = block_size;
         unsafe {
-            (*self.gen).init(block_size, sample_rate);
+            (*self.gen).init(block_size, sample_rate, node_id);
         }
     }
     /// Use the embedded Gen to generate values that are placed in the

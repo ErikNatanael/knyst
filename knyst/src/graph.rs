@@ -1169,13 +1169,13 @@ impl Graph {
     /// Create a node that will run this graph. This will fail if a Node or Gen has already been created from the Graph since only one Gen is allowed to exist per Graph.
     ///
     /// Only use this for manually running the main Graph (the Graph containing all other Graphs). For adding a Graph to another Graph, use the push_graph() method.
-    fn split_and_create_top_level_node(&mut self) -> Result<Node, String> {
+    fn split_and_create_top_level_node(&mut self, node_id: NodeId) -> Result<Node, String> {
         let block_size = self.block_size();
         // For the top level node, we will set the parent to its own settings, but without oversampling.
         let graph_gen =
             self.create_graph_gen(self.block_size, self.sample_rate, Oversampling::X1)?;
         let mut node = Node::new("graph", graph_gen);
-        node.init(block_size, self.sample_rate);
+        node.init(block_size, self.sample_rate, node_id);
         self.recalculation_required = true;
         Ok(node)
     }
@@ -1416,6 +1416,7 @@ impl Graph {
                 "Error: Trying to push a node into a Graph that is at capacity. Try increasing the number of node slots and make sure you free the nodes you don't need."
             );
         }
+        node_id.set_graph_id(self.id);
         self.recalculation_required = true;
         let input_index_to_name = node.input_indices_to_names();
         let input_name_to_index = input_index_to_name
@@ -1432,6 +1433,7 @@ impl Graph {
         node.init(
             self.block_size * self.oversampling.as_usize(),
             self.sample_rate * (self.oversampling.as_usize() as Sample),
+            *node_id,
         );
         let key = self.get_nodes_mut().insert(node);
         self.node_input_edges.insert(key, vec![]);
@@ -1446,7 +1448,6 @@ impl Graph {
         self.node_output_name_to_index
             .insert(key, output_name_to_index);
 
-        node_id.set_graph_id(self.id);
         self.node_ids.insert(key, node_id.clone());
         key
     }
@@ -3336,10 +3337,12 @@ impl Graph {
         let block_size = self.block_size;
         let sample_rate = self.sample_rate;
         let oversampling = self.oversampling;
-        for (_key, n) in self.get_nodes_mut() {
+        for (key, n) in unsafe { &mut *self.nodes.get() } {
+            let id = self.node_ids[key];
             n.init(
                 block_size * oversampling.as_usize(),
                 sample_rate * (oversampling.as_usize() as Sample),
+                id,
             );
         }
         // self.tasks = self.generate_tasks();

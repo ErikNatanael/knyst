@@ -21,7 +21,7 @@ pub fn impl_gen(
 }
 
 struct ProcessData {
-    /// Name of the user writtin function to be called for process
+    /// Name of the user written function to be called for process
     fn_name: Ident,
     inputs: Vec<Ident>,
     outputs: Vec<Ident>,
@@ -162,7 +162,7 @@ impl InitData {
         });
         let parameters_in_sig = parameters.iter().map(|p| &p.ident);
         quote! {
-            fn init(&mut self, block_size: usize, sample_rate: Sample) {
+            fn init(&mut self, block_size: usize, sample_rate: knyst::Sample, node_id: knyst::prelude::NodeId) {
                 #(#parameters_assignments)*
                 self.#fn_name(#(#parameters_in_sig),*);
             }
@@ -204,7 +204,7 @@ impl GenImplData {
             init_data.into_tokens()
         } else {
             quote! {
-                fn init(&mut self, _block_size: usize, _sample_rate: Sample) {}
+                fn init(&mut self, _block_size: usize, _sample_rate: knyst::Sample, _node_id: knyst::prelude::NodeId) {}
             }
         };
         let parameters_in_sig = parameters

@@ -12,8 +12,8 @@ use slotmap::SlotMap;
 use crate::{internal_filter::hiir::StandardDownsampler2X, Resources};
 
 use super::{
-    node::Node, Gen, GenContext, GenState, NodeBufferRef, NodeKey, Oversampling, OwnedRawBuffer,
-    Sample, ScheduleReceiver, TaskData,
+    node::{Node, self}, Gen, GenContext, GenState, NodeBufferRef, NodeKey, Oversampling, OwnedRawBuffer,
+    Sample, ScheduleReceiver, TaskData, NodeId,
 };
 
 pub(super) fn make_graph_gen(
@@ -283,8 +283,8 @@ impl Gen for GraphBlockConverterGen {
         self.graph_gen_node.num_outputs()
     }
 
-    fn init(&mut self, _block_size: usize, sample_rate: Sample) {
-        self.graph_gen_node.init(self.inner_block_size, sample_rate);
+    fn init(&mut self, _block_size: usize, sample_rate: Sample, node_id: NodeId) {
+        self.graph_gen_node.init(self.inner_block_size, sample_rate, node_id);
     }
 
     fn input_desc(&self, input: usize) -> &'static str {
@@ -479,9 +479,9 @@ impl Gen for GraphConvertOversampling2XGen {
         self.graph_gen_node.num_outputs()
     }
 
-    fn init(&mut self, _block_size: usize, _sample_rate: Sample) {
+    fn init(&mut self, _block_size: usize, _sample_rate: Sample, node_id: NodeId) {
         self.graph_gen_node
-            .init(self.inner_block_size, self.inner_sample_rate);
+            .init(self.inner_block_size, self.inner_sample_rate, node_id);
     }
 
     fn input_desc(&self, input: usize) -> &'static str {
