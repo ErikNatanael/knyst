@@ -42,6 +42,7 @@ enum Command {
         gen_or_graph: GenOrGraphEnum,
         node_address: NodeId,
         graph_id: GraphId,
+        start_time: Time,
     },
     Connect(Connection),
     Disconnect(Connection),
@@ -156,9 +157,9 @@ pub trait KnystCommands {
     /// Upload the local graph to the previously default graph and restore the default graph to that previous default graph.
     fn upload_local_graph(&mut self) -> crate::handles::Handle<crate::handles::GraphHandle>;
     /// Start a scheduling bundle, meaning any change scheduled will not be applied until [`KnystCommands::upload_scheduling_bundle`] is called. Prefer using [`schedule_bundle`] as it is more difficult to misuse.
-    fn start_scheduling_bundle(&mut self);
-    /// Uploads scheduled changes to the graph and schedules them for the specified time. Prefer [`schedule_bundle`] to help reinforce scoping and potential thread switches.
-    fn upload_scheduling_bundle(&mut self, time: Time);
+    fn start_scheduling_bundle(&mut self, time: Time);
+    /// Uploads scheduled changes to the graph and schedules them for the time specified in [`KnystCommands::start_scheduling_bundle`]. Prefer [`schedule_bundle`] to help reinforce scoping and potential thread switches.
+    fn upload_scheduling_bundle(&mut self);
 }
 
 /// Create a new local graph, runs the init function to let you build it, and then uploads it to the active Sphere.
@@ -173,9 +174,9 @@ pub fn upload_graph(
 
 /// Schedules any changes made in the closure at the given time. Currently limited to changes of constant values and spawning new nodes, not new connections.
 pub fn schedule_bundle(time: Time, c: impl FnOnce()) {
-    knyst().start_scheduling_bundle();
+    knyst().start_scheduling_bundle(time);
     c();
-    knyst().upload_scheduling_bundle(time);
+    knyst().upload_scheduling_bundle();
 }
 
 #[derive(Clone)]
@@ -193,6 +194,7 @@ pub struct MultiThreadedKnystCommands {
     bundle_changes: bool,
     /// The vec holding changes to be later scheduled as a bundle
     changes_bundle: Vec<NodeChanges>,
+    changes_bundle_time: Time,
 }
 
 impl KnystCommands for MultiThreadedKnystCommands {
@@ -206,9 +208,12 @@ impl KnystCommands for MultiThreadedKnystCommands {
             let local_node_id = LOCAL_GRAPH.with_borrow_mut(|g| {
                 if let Some(g) = g.last_mut() {
                     let mut node_id = NodeId::new();
-                    if let Err(e) =
-                        g.push_with_existing_address_to_graph(gen_or_graph, &mut node_id, g.id())
-                    {
+                    if let Err(e) = g.push_with_existing_address_to_graph_at_time(
+                        gen_or_graph,
+                        &mut node_id,
+                        g.id(),
+                        self.changes_bundle_time,
+                    ) {
                         // TODO: report error
                         eprintln!("{e:?}");
                     }
@@ -264,6 +269,7 @@ impl KnystCommands for MultiThreadedKnystCommands {
                     gen_or_graph,
                     node_address: new_node_address,
                     graph_id,
+                    start_time: self.changes_bundle_time,
                 };
                 self.sender.send(command).unwrap();
                 new_node_address.set_graph_id(graph_id);
@@ -349,6 +355,7 @@ impl KnystCommands for MultiThreadedKnystCommands {
     /// [`KnystCommands`] through `AudioBackend::start_processing` this is taken
     /// care of automatically.
     fn schedule_change(&mut self, change: ParameterChange) {
+        dbg!(self.bundle_changes);
         if self.bundle_changes {
             let change = NodeChanges {
                 node: change.input.node,
@@ -482,8 +489,9 @@ impl KnystCommands for MultiThreadedKnystCommands {
         self.selected_graph_remote_graph = self.top_level_graph_id;
     }
 
-    fn start_scheduling_bundle(&mut self) {
+    fn start_scheduling_bundle(&mut self, time: Time) {
         self.bundle_changes = true;
+        self.changes_bundle_time = time;
         if !self.changes_bundle.is_empty() {
             eprintln!(
                 "Warning: Starting a new scheduling bundle before the previous one was scheduled."
@@ -491,14 +499,15 @@ impl KnystCommands for MultiThreadedKnystCommands {
         }
     }
 
-    fn upload_scheduling_bundle(&mut self, time: Time) {
+    fn upload_scheduling_bundle(&mut self) {
         self.bundle_changes = false;
         let changes = SimultaneousChanges {
-            time,
+            time: self.changes_bundle_time,
             changes: self.changes_bundle.clone(),
         };
         self.schedule_changes(changes);
         self.changes_bundle.clear();
+        self.changes_bundle_time = Time::Immediately;
     }
     // /// Create a new Self which pushes to the selected GraphId by default
     // fn to_graph(&self, graph_id: GraphId) -> Self {
@@ -647,12 +656,17 @@ impl Controller {
                 gen_or_graph,
                 mut node_address,
                 graph_id,
+                start_time,
             } => {
-                if let Err(e) = self.top_level_graph.push_with_existing_address_to_graph(
-                    gen_or_graph,
-                    &mut node_address,
-                    graph_id,
-                ) {
+                if let Err(e) = self
+                    .top_level_graph
+                    .push_with_existing_address_to_graph_at_time(
+                        gen_or_graph,
+                        &mut node_address,
+                        graph_id,
+                        start_time,
+                    )
+                {
                     Err(From::from(e))
                 } else {
                     Ok(())
@@ -890,6 +904,7 @@ impl Controller {
             selected_graph_remote_graph: self.top_level_graph.id(),
             bundle_changes: false,
             changes_bundle: vec![],
+            changes_bundle_time: Time::Immediately,
         }
     }
 
@@ -912,6 +927,7 @@ impl Controller {
             selected_graph_remote_graph: top_level_graph_id,
             bundle_changes: false,
             changes_bundle: vec![],
+            changes_bundle_time: Time::Immediately,
         }
     }
 }
@@ -919,4 +935,95 @@ impl Controller {
 /// Simple error handler that just prints the error using `eprintln!`
 pub fn print_error_handler(e: KnystError) {
     eprintln!("Error in Controller: {e}");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::schedule_bundle;
+    use crate as knyst;
+    use crate::{knyst, offline::KnystOffline, prelude::*, trig::once_trig};
+
+    // Outputs its input value + 1
+    struct OneGen {}
+    #[impl_gen]
+    impl OneGen {
+        fn new() -> Self {
+            Self {}
+        }
+        #[process]
+        fn process(&mut self, passthrough: &[Sample], out: &mut [Sample]) -> GenState {
+            for (i, o) in passthrough.iter().zip(out.iter_mut()) {
+                *o = *i + 1.0;
+            }
+            GenState::Continue
+        }
+    }
+
+    #[test]
+    fn schedule_bundle_test() {
+        let sr = 44100;
+        let mut kt = KnystOffline::new(sr, 64, 0, 1);
+        schedule_bundle(crate::graph::Time::Immediately, || {
+            graph_output(0, once_trig());
+        });
+        schedule_bundle(
+            crate::graph::Time::Superseconds(Superseconds::from_samples(5, sr as u64)),
+            || {
+                graph_output(0, once_trig());
+            },
+        );
+        schedule_bundle(
+            crate::graph::Time::Superseconds(Superseconds::from_samples(10, sr as u64)),
+            || {
+                graph_output(0, once_trig());
+            },
+        );
+        let mut og = None;
+        schedule_bundle(
+            crate::graph::Time::Superseconds(Superseconds::from_samples(16, sr as u64)),
+            || {
+                og = Some(one_gen());
+                graph_output(0, og.unwrap());
+            },
+        );
+        let og = og.unwrap();
+        schedule_bundle(
+            crate::graph::Time::Superseconds(Superseconds::from_samples(17, sr as u64)),
+            || {
+                og.passthrough(2.0);
+            },
+        );
+        schedule_bundle(
+            crate::graph::Time::Superseconds(Superseconds::from_samples(19, sr as u64)),
+            || {
+                og.passthrough(3.0);
+            },
+        );
+        schedule_bundle(
+            crate::graph::Time::Superseconds(Superseconds::from_samples(19, sr as u64)),
+            || {
+                og.passthrough(3.0);
+            },
+        );
+        // Try with the pure KnystCommands methods as well.
+        knyst().start_scheduling_bundle(knyst::graph::Time::Superseconds(
+            Superseconds::from_samples(20, sr as u64),
+        ));
+        og.passthrough(4.0);
+        knyst().upload_scheduling_bundle();
+        kt.process_block();
+        let o = kt.output_channel(0).unwrap();
+        dbg!(o);
+        assert_eq!(o[0], 1.0);
+        assert_eq!(o[1], 0.0);
+        assert_eq!(o[4], 0.0);
+        assert_eq!(o[5], 1.0);
+        assert_eq!(o[6], 0.0);
+        assert_eq!(o[10], 1.0);
+        assert_eq!(o[11], 0.0);
+        assert_eq!(o[16], 1.0);
+        assert_eq!(o[17], 3.0);
+        assert_eq!(o[19], 4.0);
+        assert_eq!(o[19], 5.0);
+    }
 }

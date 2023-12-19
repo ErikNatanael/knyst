@@ -20,7 +20,7 @@ use crate::audio_backend::AudioBackendError;
 use crate::resources::{BufferId, WavetableId};
 
 use crate::controller::KnystCommands;
-use crate::graph::{GraphSettings, NodeId};
+use crate::graph::{GraphSettings, NodeId, Time};
 use crate::handles::{GraphHandle, Handle};
 use crate::prelude::{CallbackHandle, MultiThreadedKnystCommands};
 use crate::sphere::KnystSphere;
@@ -309,16 +309,16 @@ impl KnystCommands for UnifiedKnystCommands {
         }
     }
 
-    fn start_scheduling_bundle(&mut self) {
+    fn start_scheduling_bundle(&mut self, time: Time) {
         match self {
-            UnifiedKnystCommands::Real(kc) => kc.borrow_mut().start_scheduling_bundle(),
+            UnifiedKnystCommands::Real(kc) => kc.borrow_mut().start_scheduling_bundle(time),
             UnifiedKnystCommands::Dummy(kc) => kc.report_dummy(),
         }
     }
 
-    fn upload_scheduling_bundle(&mut self, time: crate::graph::Time) {
+    fn upload_scheduling_bundle(&mut self) {
         match self {
-            UnifiedKnystCommands::Real(kc) => kc.borrow_mut().upload_scheduling_bundle(time),
+            UnifiedKnystCommands::Real(kc) => kc.borrow_mut().upload_scheduling_bundle(),
             UnifiedKnystCommands::Dummy(kc) => kc.report_dummy(),
         }
     }

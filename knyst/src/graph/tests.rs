@@ -2,6 +2,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+use knyst::graph::Time;
 use knyst::resources::{IdOrKey, ResourcesSettings};
 use knyst::Resources;
 
@@ -789,7 +790,7 @@ fn start_nodes_with_sample_precision() {
             GenState::Continue
         })
         .output("out"),
-        Superseconds::from_samples(1, SR),
+        Time::Superseconds(Superseconds::from_samples(1, SR)),
     );
     graph.connect(n0.to_graph_out()).unwrap();
     let mut counter1 = 0.;
@@ -802,7 +803,7 @@ fn start_nodes_with_sample_precision() {
             GenState::Continue
         })
         .output("out"),
-        Superseconds::from_samples(2, SR),
+        Time::Superseconds(Superseconds::from_samples(2, SR)),
     );
     graph.connect(n1.to_graph_out()).unwrap();
     let mut run_graph = test_run_graph(&mut graph, RunGraphSettings::default());
@@ -822,7 +823,7 @@ fn start_nodes_with_sample_precision() {
             GenState::Continue
         })
         .output("out"),
-        Superseconds::from_samples(3 + BLOCK_SIZE as u64, SR),
+        Time::Superseconds(Superseconds::from_samples(3 + BLOCK_SIZE as u64, SR)),
     );
     let mut counter3 = 0.;
     let n3 = graph.push_at_time(
@@ -834,7 +835,7 @@ fn start_nodes_with_sample_precision() {
             GenState::Continue
         })
         .output("out"),
-        Superseconds::from_samples(4 + BLOCK_SIZE as u64, SR),
+        Time::Superseconds(Superseconds::from_samples(4 + BLOCK_SIZE as u64, SR)),
     );
     graph.connect(n2.to_graph_out()).unwrap();
     graph.connect(n3.to_graph_out()).unwrap();

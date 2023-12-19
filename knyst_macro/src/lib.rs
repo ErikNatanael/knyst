@@ -158,6 +158,9 @@ impl InitData {
                 },
                 ParameterTy::InputTrig => todo!(),
                 ParameterTy::OutputTrig => todo!(),
+                ParameterTy::NodeId => {
+                    quote! { let #p_ident = node_id; }
+                }
             }
         });
         let parameters_in_sig = parameters.iter().map(|p| &p.ident);
@@ -235,7 +238,8 @@ impl GenImplData {
                 ParameterTy::Input
                 | ParameterTy::Output
                 | ParameterTy::InputTrig
-                | ParameterTy::OutputTrig => quote! {},
+                | ParameterTy::OutputTrig
+                | ParameterTy::NodeId => quote! {},
                 ParameterTy::SampleRate => {
                     quote! { let #p_ident: knyst::prelude::SampleRate = ctx.sample_rate.into(); }
                 }
@@ -311,88 +315,88 @@ impl GenImplData {
 
         let handle_struct_doc_str = format!("Handle to a {type_ident}.");
         Ok(quote! {
-                    #org_item_impl
+                            #org_item_impl
 
-                    impl knyst::prelude::Gen for #type_path {
-                        fn process(&mut self, ctx: knyst::prelude::GenContext, resources: &mut knyst::prelude::Resources) -> knyst::prelude::GenState {
-                            #(#extract_other_process_parameters)*
-                            let mut inputs = ctx.inputs;
-                            #(#extract_inputs)*
+                            impl knyst::prelude::Gen for #type_path {
+                                fn process(&mut self, ctx: knyst::prelude::GenContext, resources: &mut knyst::prelude::Resources) -> knyst::prelude::GenState {
+                                    #(#extract_other_process_parameters)*
+                                    let mut inputs = ctx.inputs;
+                                    #(#extract_inputs)*
 
-                            let mut outputs = ctx.outputs.iter_mut();
-                            #(#extract_outputs)*
+                                    let mut outputs = ctx.outputs.iter_mut();
+                                    #(#extract_outputs)*
 
-                            self.#process_fn_name ( #(#parameters_in_sig),* )
+                                    self.#process_fn_name ( #(#parameters_in_sig),* )
+                                }
+
+                    fn num_inputs(&self) -> usize {
+                        #num_inputs
+                    }
+                    fn num_outputs(&self) -> usize {
+                        #num_outputs
+                    }
+                    fn input_desc(&self, input: usize) -> &'static str {
+                        match input {
+                            #(#match_input_names)*
+                            _ => ""
                         }
+                    }
+                    fn output_desc(&self, output: usize) -> &'static str {
+                        match output {
+                            #(#match_output_names)*
+                            _ => ""
+                        }
+                    }
+                    #init_function
+                    fn name(&self) -> &'static str {
+                        #type_name_string
+                    }
+                            }
 
-            fn num_inputs(&self) -> usize {
-                #num_inputs
-            }
-            fn num_outputs(&self) -> usize {
-                #num_outputs
-            }
-            fn input_desc(&self, input: usize) -> &'static str {
-                match input {
-                    #(#match_input_names)*
-                    _ => ""
+                            // Handle
+                            #[doc = #handle_struct_doc_str]
+                            #[derive(Copy, Clone, Debug)]
+                            pub struct #handle_name {
+                                node_id: knyst::prelude::NodeId,
+                            }
+                            impl #handle_name {
+                                #(#handle_functions)*
+                            }
+                            impl knyst::handles::HandleData for #handle_name {
+                fn out_channels(&self) -> knyst::handles::ChannelIter {
+                    knyst::handles::ChannelIter::single_node_id(
+                        self.node_id,
+                        #num_outputs,
+                    )
                 }
-            }
-            fn output_desc(&self, output: usize) -> &'static str {
-                match output {
-                    #(#match_output_names)*
-                    _ => ""
+
+                fn in_channels(&self) -> knyst::handles::ChannelIter {
+                    knyst::handles::ChannelIter::single_node_id(
+                        self.node_id,
+                        #num_inputs,
+                    )
                 }
-            }
-            #init_function
-            fn name(&self) -> &'static str {
-                #type_name_string
-            }
-                    }
 
-                    // Handle
-                    #[doc = #handle_struct_doc_str]
-                    #[derive(Copy, Clone, Debug)]
-                    pub struct #handle_name {
-                        node_id: knyst::prelude::NodeId,
-                    }
-                    impl #handle_name {
-                        #(#handle_functions)*
-                    }
-                    impl knyst::handles::HandleData for #handle_name {
-        fn out_channels(&self) -> knyst::handles::ChannelIter {
-            knyst::handles::ChannelIter::single_node_id(
-                self.node_id,
-                #num_outputs,
-            )
+                fn node_ids(&self) -> knyst::handles::NodeIdIter {
+                    knyst::handles::NodeIdIter::Single(self.node_id)
+                }
+
+                            }
+
+                            impl Into<knyst::handles::GenericHandle> for #handle_name {
+            fn into(self) -> knyst::handles::GenericHandle {
+                knyst::handles::GenericHandle::new(
+                    self.node_id,
+                    #num_inputs,
+                    #num_outputs,
+                )
         }
+                            }
 
-        fn in_channels(&self) -> knyst::handles::ChannelIter {
-            knyst::handles::ChannelIter::single_node_id(
-                self.node_id,
-                #num_inputs,
-            )
-        }
+                            #init_handle_fn
 
-        fn node_ids(&self) -> knyst::handles::NodeIdIter {
-            knyst::handles::NodeIdIter::Single(self.node_id)
-        }
-
-                    }
-
-                    impl Into<knyst::handles::GenericHandle> for #handle_name {
-    fn into(self) -> knyst::handles::GenericHandle {
-        knyst::handles::GenericHandle::new(
-            self.node_id,
-            #num_inputs,
-            #num_outputs,
-        )
-}
-                    }
-
-                    #init_handle_fn
-
-                    #handle_range_impl
-                })
+                            #handle_range_impl
+                        })
     }
 }
 
@@ -549,6 +553,8 @@ enum ParameterTy {
     /// Same as Input, but will create a special set function on the handle
     InputTrig,
     OutputTrig,
+    /// The NodeId of the node, only available in init
+    NodeId,
 }
 
 struct Parameter {
@@ -718,6 +724,10 @@ fn parse_parameter(param: &PatType, name: &Ident) -> Result<Parameter> {
                             ident: name.clone(),
                             _ty: ParameterTy::SampleRate,
                         }),
+                        Some("NodeId") => Ok(Parameter {
+                            ident: name.clone(),
+                            _ty: ParameterTy::NodeId,
+                        }),
                         Some("Resources") => Ok(Parameter {
                             ident: name.clone(),
                             _ty: if ty.mutability.is_some() {
@@ -754,6 +764,10 @@ fn parse_parameter(param: &PatType, name: &Ident) -> Result<Parameter> {
                 Some("BlockSize") => Ok(Parameter {
                     ident: name.clone(),
                     _ty: ParameterTy::BlockSize,
+                }),
+                Some("NodeId") => Ok(Parameter {
+                    ident: name.clone(),
+                    _ty: ParameterTy::NodeId,
                 }),
                 _ => Err(syn::Error::new(
                     param.ty.span(),

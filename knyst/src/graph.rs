@@ -584,6 +584,8 @@ unsafe impl Send for OutputTask {}
 #[allow(missing_docs)]
 #[derive(thiserror::Error, Debug)]
 pub enum PushError {
+    #[error("The graph was not started and the given start time of a Gen could therefore not be calculated: `{0:?}`.")]
+    InvalidStartTimeOnUnstartedGraph(Time),
     #[error("The target graph (`{target_graph}`) was not found. The GenOrGraph that was pushed is returned.")]
     GraphNotFound {
         g: GenOrGraphEnum,
@@ -1217,11 +1219,7 @@ impl Graph {
     }
     /// Push something implementing [`Gen`] or a [`Graph`] to self creating a
     /// new node whose address is returned. The node will start at `start_time`.
-    pub fn push_at_time(
-        &mut self,
-        to_node: impl Into<GenOrGraphEnum>,
-        start_time: Superseconds,
-    ) -> NodeId {
+    pub fn push_at_time(&mut self, to_node: impl Into<GenOrGraphEnum>, start_time: Time) -> NodeId {
         self.push_to_graph_at_time(to_node, self.id, start_time)
             .unwrap()
     }
@@ -1242,7 +1240,7 @@ impl Graph {
         &mut self,
         to_node: impl Into<GenOrGraphEnum>,
         graph_id: GraphId,
-        start_time: Superseconds,
+        start_time: Time,
     ) -> Result<NodeId, PushError> {
         let mut new_node_address = NodeId::new();
         self.push_with_existing_address_to_graph_at_time(
@@ -1270,7 +1268,7 @@ impl Graph {
         &mut self,
         to_node: impl Into<GenOrGraphEnum>,
         node_address: &mut NodeId,
-        start_time: Superseconds,
+        start_time: Time,
     ) {
         self.push_with_existing_address_to_graph_at_time(to_node, node_address, self.id, start_time)
             .unwrap()
@@ -1287,7 +1285,7 @@ impl Graph {
             to_node,
             node_address,
             graph_id,
-            Superseconds::ZERO,
+            Time::Immediately,
         )
     }
     /// Push something implementing [`Gen`] or a [`Graph`] to the graph with the
@@ -1298,21 +1296,50 @@ impl Graph {
         to_node: impl Into<GenOrGraphEnum>,
         node_address: &mut NodeId,
         graph_id: GraphId,
-        start_time: Superseconds,
+        start_time: Time,
     ) -> Result<(), PushError> {
         if graph_id == self.id {
             let (graph, gen) =
                 to_node
                     .into()
                     .components(self.block_size, self.sample_rate, self.oversampling);
+            let mut start_timestamp = 0;
+
+            let mut scheduler_ts = false;
+            if let Some(ggc) = &mut self.graph_gen_communicator {
+                if let Some(ts) = ggc.scheduler.time_to_frames_timestamp(start_time) {
+                    start_timestamp = ts;
+                    scheduler_ts = true;
+                }
+            }
+            if !scheduler_ts {
+                match start_time {
+                    Time::Beats(_) => {
+                        return Err(PushError::InvalidStartTimeOnUnstartedGraph(start_time))
+                    }
+                    Time::DurationFromNow(_) => {
+                        return Err(PushError::InvalidStartTimeOnUnstartedGraph(start_time))
+                    }
+                    Time::Superseconds(s) => {
+                        start_timestamp = s.to_samples(
+                            self.sample_rate as u64 * self.oversampling.as_usize() as u64,
+                        )
+                    }
+                    Time::Immediately => start_timestamp = 0,
+                }
+            }
+            println!("Start node at {start_timestamp}");
             let mut node = Node::new(gen.name(), gen);
-            let start_sample_time = start_time.to_samples(self.sample_rate as u64);
-            node.start_at_sample(start_sample_time);
+            node.start_at_sample(start_timestamp);
             let node_key = self.push_node(node, node_address);
             if let Some(mut graph) = graph {
                 // Important: we must start the scheduler here if the current
                 // graph is started, otherwise it will never start.
                 if let Some(ggc) = &mut self.graph_gen_communicator {
+                    if let Some(ts) = ggc.scheduler.time_to_frames_timestamp(start_time) {
+                        start_timestamp = ts;
+                    }
+
                     if let Scheduler::Running {
                         start_ts,
                         latency_in_samples,
@@ -1355,6 +1382,7 @@ impl Graph {
                         } => {
                             to_node = returned_to_node;
                         }
+                        _ => return Err(e),
                     },
                 }
             }
@@ -1917,6 +1945,7 @@ impl Graph {
     /// applied if the [`Graph`] is running and its scheduler is regularly
     /// updated.
     pub fn schedule_changes(&mut self, changes: SimultaneousChanges) -> Result<(), ScheduleError> {
+        println!("Scheduling changes");
         let mut scheduler_changes = vec![];
         for node_changes in &changes.changes {
             let node = node_changes.node;
@@ -3618,11 +3647,46 @@ impl Scheduler {
             Scheduler::Running { .. } => (),
         }
     }
+    /// Converts a [`Time`] to a number of frames from the start time of the graph
+    fn time_to_frames_timestamp(&mut self, time: Time) -> Option<u64> {
+        match self {
+            Scheduler::Stopped { scheduling_queue } => None,
+            Scheduler::Running {
+                start_ts,
+                sample_rate,
+                max_duration_to_send,
+                scheduling_queue,
+                latency_in_samples: latency,
+                musical_time_map,
+            } => {
+                Some(match time {
+                    Time::DurationFromNow(duration_from_now) => {
+                        ((start_ts.elapsed() + duration_from_now).as_secs_f64()
+                            * (*sample_rate as f64)
+                            + *latency) as u64
+                    }
+                    Time::Superseconds(superseconds) => superseconds.to_samples(*sample_rate),
+                    Time::Beats(mt) => {
+                        // TODO: Remove unwrap, return a Result
+                        let mtm = musical_time_map.read().unwrap();
+                        let duration_from_start =
+                            Duration::from_secs_f64(mtm.musical_time_to_secs_f64(mt));
+                        let mut timestamp = (duration_from_start.as_secs_f64()
+                            * (*sample_rate as f64)
+                            + *latency) as u64;
+                        timestamp
+                    }
+                    Time::Immediately => 0,
+                })
+            }
+        }
+    }
     fn schedule(
         &mut self,
         changes: Vec<(NodeKey, ScheduledChangeKind, Option<TimeOffset>)>,
         time: Time,
     ) {
+        let timestamp = self.time_to_frames_timestamp(time);
         match self {
             Scheduler::Stopped { scheduling_queue } => scheduling_queue.push((changes, time)),
             Scheduler::Running {
@@ -3633,6 +3697,8 @@ impl Scheduler {
                 latency_in_samples: latency,
                 musical_time_map,
             } => {
+                // timestamp will be Some if the Scheduler is running
+                let timestamp = timestamp.unwrap();
                 let offset_to_frames = |time_offset: Option<TimeOffset>| {
                     if let Some(to) = time_offset {
                         to.to_frames(*sample_rate)
@@ -3640,15 +3706,10 @@ impl Scheduler {
                         0
                     }
                 };
-                match time {
-                    Time::DurationFromNow(duration_from_now) => {
-                        let mut timestamp = ((start_ts.elapsed() + duration_from_now).as_secs_f64()
-                            * (*sample_rate as f64)
-                            + *latency) as u64;
-                        for (key, change_kind, time_offset) in changes {
-                            let frame_offset = offset_to_frames(time_offset);
-                            if frame_offset >= 0 {
-                                timestamp = timestamp
+                for (key, change_kind, time_offset) in changes {
+                    let frame_offset = offset_to_frames(time_offset);
+                    if frame_offset >= 0 {
+                        let timestamp = timestamp
                                     .checked_add(frame_offset as u64)
                                     .unwrap_or_else(|| {
                                         eprintln!(
@@ -3656,8 +3717,8 @@ impl Scheduler {
                                         );
                                         timestamp
                                     });
-                            } else {
-                                timestamp = timestamp
+                    } else {
+                        let timestamp = timestamp
                                     .checked_sub((frame_offset * -1) as u64)
                                     .unwrap_or_else(|| {
                                         eprintln!(
@@ -3665,110 +3726,12 @@ impl Scheduler {
                                         );
                                         timestamp
                                     });
-                            }
-                            scheduling_queue.push(ScheduledChange {
-                                timestamp,
-                                key,
-                                kind: change_kind,
-                            });
-                        }
                     }
-                    Time::Superseconds(superseconds) => {
-                        let mut timestamp = superseconds.to_samples(*sample_rate);
-                        for (key, change_kind, time_offset) in changes {
-                            let frame_offset = offset_to_frames(time_offset);
-                            if frame_offset >= 0 {
-                                timestamp = timestamp
-                                    .checked_add(frame_offset as u64)
-                                    .unwrap_or_else(|| {
-                                        eprintln!(
-                                            "Used a time offset that made the timestamp overflow: {frame_offset:?}"
-                                        );
-                                        timestamp
-                                    });
-                            } else {
-                                timestamp = timestamp
-                                    .checked_sub((frame_offset * -1) as u64)
-                                    .unwrap_or_else(|| {
-                                        eprintln!(
-                                            "Used a time offset that made the timestamp overflow: {frame_offset:?}"
-                                        );
-                                        timestamp
-                                    });
-                            }
-                            scheduling_queue.push(ScheduledChange {
-                                timestamp,
-                                key,
-                                kind: change_kind,
-                            });
-                        }
-                    }
-                    Time::Beats(mt) => {
-                        // TODO: Remove unwrap, return a Result
-                        let mtm = musical_time_map.read().unwrap();
-                        let duration_from_start =
-                            Duration::from_secs_f64(mtm.musical_time_to_secs_f64(mt));
-                        let mut timestamp = (duration_from_start.as_secs_f64()
-                            * (*sample_rate as f64)
-                            + *latency) as u64;
-                        for (key, change_kind, time_offset) in changes {
-                            let frame_offset = offset_to_frames(time_offset);
-                            if frame_offset >= 0 {
-                                timestamp = timestamp
-                                    .checked_add(frame_offset as u64)
-                                    .unwrap_or_else(|| {
-                                        eprintln!(
-                                            "Used a time offset that made the timestamp overflow: {frame_offset:?}"
-                                        );
-                                        timestamp
-                                    });
-                            } else {
-                                timestamp = timestamp
-                                    .checked_sub((frame_offset * -1) as u64)
-                                    .unwrap_or_else(|| {
-                                        eprintln!(
-                                            "Used a time offset that made the timestamp overflow: {frame_offset:?}"
-                                        );
-                                        timestamp
-                                    });
-                            }
-                            scheduling_queue.push(ScheduledChange {
-                                timestamp,
-                                key,
-                                kind: change_kind,
-                            });
-                        }
-                    }
-                    Time::Immediately => {
-                        for (key, change_kind, time_offset) in changes {
-                            let frame_offset = offset_to_frames(time_offset);
-                            let mut timestamp: u64 = 0;
-                            if frame_offset >= 0 {
-                                timestamp = timestamp
-                                    .checked_add(frame_offset as u64)
-                                    .unwrap_or_else(|| {
-                                        eprintln!(
-                                            "Used a time offset that made the timestamp overflow: {frame_offset:?}"
-                                        );
-                                        timestamp
-                                    });
-                            } else {
-                                timestamp = timestamp
-                                    .checked_sub((frame_offset * -1) as u64)
-                                    .unwrap_or_else(|| {
-                                        eprintln!(
-                                            "Used a time offset that made the timestamp overflow: {frame_offset:?}"
-                                        );
-                                        timestamp
-                                    });
-                            }
-                            scheduling_queue.push(ScheduledChange {
-                                timestamp,
-                                key,
-                                kind: change_kind,
-                            });
-                        }
-                    }
+                    scheduling_queue.push(ScheduledChange {
+                        timestamp,
+                        key,
+                        kind: change_kind,
+                    });
                 }
             }
         }
