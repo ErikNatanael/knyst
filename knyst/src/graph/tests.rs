@@ -506,6 +506,7 @@ fn scheduling() {
         .unwrap();
     graph.update();
     run_graph.process_block();
+    dbg!(run_graph.graph_output_buffers().get_channel(0));
     assert_eq!(run_graph.graph_output_buffers().read(0, 0), 4.0);
     assert_eq!(run_graph.graph_output_buffers().read(0, 1), 4.0);
     assert_eq!(run_graph.graph_output_buffers().read(0, 2), 6.0);

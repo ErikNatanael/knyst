@@ -355,7 +355,6 @@ impl KnystCommands for MultiThreadedKnystCommands {
     /// [`KnystCommands`] through `AudioBackend::start_processing` this is taken
     /// care of automatically.
     fn schedule_change(&mut self, change: ParameterChange) {
-        dbg!(self.bundle_changes);
         if self.bundle_changes {
             let change = NodeChanges {
                 node: change.input.node,
@@ -754,7 +753,7 @@ impl Controller {
                 .change_musical_time_map(change_fn)
                 .map_err(|e| From::from(e)),
             Command::ScheduleChanges(changes) => {
-                match self.top_level_graph.schedule_changes(changes) {
+                match self.top_level_graph.schedule_changes(changes.changes, changes.time) {
                     Ok(_) => Ok(()),
                     Err(e) => match e {
                         crate::graph::ScheduleError::GraphNotFound => {
@@ -779,9 +778,9 @@ impl Controller {
                         beats * Superbeats::from_beats(i)
                     }
                 };
-                println!(
-                    "New callback, current beat: {current_beats:?}, start: {start_timestamp:?}"
-                );
+                // println!(
+                //     "New callback, current beat: {current_beats:?}, start: {start_timestamp:?}"
+                // );
                 callback.next_timestamp = start_timestamp;
                 self.beat_callbacks.push(callback);
                 Ok(())
@@ -999,12 +998,6 @@ mod tests {
                 og.passthrough(3.0);
             },
         );
-        schedule_bundle(
-            crate::graph::Time::Superseconds(Superseconds::from_samples(19, sr as u64)),
-            || {
-                og.passthrough(3.0);
-            },
-        );
         // Try with the pure KnystCommands methods as well.
         knyst().start_scheduling_bundle(knyst::graph::Time::Superseconds(
             Superseconds::from_samples(20, sr as u64),
@@ -1024,6 +1017,6 @@ mod tests {
         assert_eq!(o[16], 1.0);
         assert_eq!(o[17], 3.0);
         assert_eq!(o[19], 4.0);
-        assert_eq!(o[19], 5.0);
+        assert_eq!(o[20], 5.0);
     }
 }

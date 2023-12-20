@@ -278,7 +278,14 @@ impl GenImplData {
                     let inp = #param_ident.into();
                     match inp {
                         knyst::handles::Input::Constant(v) => {
-                            knyst::modal_interface::knyst().connect(knyst::graph::connection::constant(v).to(self.node_id).to_channel(#param_string));
+                            let change = knyst::graph::ParameterChange {
+                                time: knyst::graph::Time::Immediately,
+                                input: (self.node_id, 
+                                    knyst::graph::connection::NodeChannel::Label(#param_string)).into(),
+                                value: knyst::graph::Change::Constant(v),
+                            };
+                            knyst::modal_interface::knyst().schedule_change(change);
+                            // knyst::modal_interface::knyst().connect(knyst::graph::connection::constant(v).to(self.node_id).to_channel(#param_string));
                         }
                         knyst::handles::Input::Handle { output_channels } => {
                             for (i, (node_id, chan)) in output_channels.enumerate() {
@@ -351,6 +358,16 @@ impl GenImplData {
                     fn name(&self) -> &'static str {
                         #type_name_string
                     }
+                            }
+
+                            impl #type_path {
+                                /// Upload the Gen to the currently selected Graph and return a handle
+                                pub fn upload(self) -> knyst::handles::Handle< #handle_name > {
+                use knyst::controller::KnystCommands;
+                let node_id =
+                    knyst::modal_interface::knyst().push_without_inputs(self);
+                knyst::handles::Handle::new(#handle_name{node_id})
+                                }
                             }
 
                             // Handle

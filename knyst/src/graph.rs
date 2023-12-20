@@ -326,7 +326,7 @@ impl From<f64> for Change {
 }
 
 /// A parameter (input constant) change to be scheduled on a [`Graph`].
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ParameterChange {
     /// When to apply the parameter change
     pub time: Time,
@@ -497,27 +497,29 @@ impl Task {
         }
         // Copy all inputs
         for (from, to, block_size, copy_or_add) in &self.inputs_to_copy {
-            // let from_slice = unsafe { std::slice::from_raw_parts(*from, *block_size) };
-            // let to_slice = unsafe { std::slice::from_raw_parts_mut(*to, *block_size) };
+            let from_slice = unsafe { std::slice::from_raw_parts(*from, *block_size) };
+            let to_slice = unsafe { std::slice::from_raw_parts_mut(*to, *block_size) };
 
-            // for (from, to) in from_slice.iter().zip(to_slice.iter_mut()) {
-            //     *to += *from;
-            // }
-
-            match copy_or_add {
-                CopyOrAdd::Copy => {
-                    // This is way faster, but requires a single input edge per channel
-                    unsafe { to.copy_from_nonoverlapping(*from, *block_size) };
-                }
-                CopyOrAdd::Add => {
-                    let from_slice = unsafe { std::slice::from_raw_parts(*from, *block_size) };
-                    let to_slice = unsafe { std::slice::from_raw_parts_mut(*to, *block_size) };
-
-                    for (from, to) in from_slice.iter().zip(to_slice.iter_mut()) {
-                        *to += *from;
-                    }
-                }
+            for (from, to) in from_slice.iter().zip(to_slice.iter_mut()) {
+                *to += *from;
             }
+
+            // TODO: This fails when there is one node input to a node and a constant input as 
+            // well. We need a change to allow only one input per node for this optimisation to work properly.
+            // match copy_or_add {
+            //     CopyOrAdd::Copy => {
+            //         // This is way faster, but requires a single input edge per channel
+            //         unsafe { to.copy_from_nonoverlapping(*from, *block_size) };
+            //     }
+            //     CopyOrAdd::Add => {
+            //         let from_slice = unsafe { std::slice::from_raw_parts(*from, *block_size) };
+            //         let to_slice = unsafe { std::slice::from_raw_parts_mut(*to, *block_size) };
+
+            //         for (from, to) in from_slice.iter().zip(to_slice.iter_mut()) {
+            //             *to += *from;
+            //         }
+            //     }
+            // }
         }
         if self.start_node_at_sample <= sample_time_at_block_start {
             // Process node
@@ -1328,7 +1330,6 @@ impl Graph {
                     Time::Immediately => start_timestamp = 0,
                 }
             }
-            println!("Start node at {start_timestamp}");
             let mut node = Node::new(gen.name(), gen);
             node.start_at_sample(start_timestamp);
             let node_key = self.push_node(node, node_address);
@@ -1944,10 +1945,9 @@ impl Graph {
     /// Schedule changes to input channel constants. The changes will only be
     /// applied if the [`Graph`] is running and its scheduler is regularly
     /// updated.
-    pub fn schedule_changes(&mut self, changes: SimultaneousChanges) -> Result<(), ScheduleError> {
-        println!("Scheduling changes");
+    pub fn schedule_changes(&mut self, node_changes: Vec<NodeChanges>, time: Time) -> Result<(), ScheduleError> {
         let mut scheduler_changes = vec![];
-        for node_changes in &changes.changes {
+        for node_changes in &node_changes {
             let node = node_changes.node;
             let change_pairs = &node_changes.parameters;
             let time_offset = node_changes.offset;
@@ -1961,7 +1961,8 @@ impl Graph {
                 if let Some((key, _id)) = self.node_ids.iter().find(|(_key, &id)| id == node) {
                     // Does the Node exist?
                     if !self.get_nodes_mut().contains_key(key) {
-                        return Err(ScheduleError::NodeNotFound);
+                        // TODO: Report error
+                        eprintln!("Scheduled change for a node that no longer exists");
                     }
                     for (channel, change) in change_pairs {
                         let index = match channel {
@@ -1993,9 +1994,9 @@ impl Graph {
             if !node_might_be_in_this_graph {
                 // Try to find the graph containing the node by asking all the graphs in this graph to free the node
                 for (_key, graph) in &mut self.graphs_per_node {
-                    match graph.schedule_changes(changes.clone()) {
+                    match graph.schedule_changes(vec![node_changes.clone()], time) {
                         Ok(_) => {
-                            return Ok(());
+                            break;
                         }
                         Err(e) => match e {
                             ScheduleError::GraphNotFound => (),
@@ -2009,7 +2010,7 @@ impl Graph {
             }
         }
         if let Some(ggc) = &mut self.graph_gen_communicator {
-            ggc.scheduler.schedule(scheduler_changes, changes.time);
+            ggc.scheduler.schedule(scheduler_changes, time);
         } else {
             return Err(ScheduleError::SchedulerNotCreated);
         }
@@ -3650,14 +3651,13 @@ impl Scheduler {
     /// Converts a [`Time`] to a number of frames from the start time of the graph
     fn time_to_frames_timestamp(&mut self, time: Time) -> Option<u64> {
         match self {
-            Scheduler::Stopped { scheduling_queue } => None,
+            Scheduler::Stopped { ..} => None,
             Scheduler::Running {
                 start_ts,
                 sample_rate,
-                max_duration_to_send,
-                scheduling_queue,
                 latency_in_samples: latency,
                 musical_time_map,
+                ..
             } => {
                 Some(match time {
                     Time::DurationFromNow(duration_from_now) => {
@@ -3671,7 +3671,7 @@ impl Scheduler {
                         let mtm = musical_time_map.read().unwrap();
                         let duration_from_start =
                             Duration::from_secs_f64(mtm.musical_time_to_secs_f64(mt));
-                        let mut timestamp = (duration_from_start.as_secs_f64()
+                        let timestamp = (duration_from_start.as_secs_f64()
                             * (*sample_rate as f64)
                             + *latency) as u64;
                         timestamp
@@ -3690,12 +3690,10 @@ impl Scheduler {
         match self {
             Scheduler::Stopped { scheduling_queue } => scheduling_queue.push((changes, time)),
             Scheduler::Running {
-                start_ts,
                 sample_rate,
                 max_duration_to_send: _,
                 scheduling_queue,
-                latency_in_samples: latency,
-                musical_time_map,
+                ..
             } => {
                 // timestamp will be Some if the Scheduler is running
                 let timestamp = timestamp.unwrap();
@@ -3708,8 +3706,9 @@ impl Scheduler {
                 };
                 for (key, change_kind, time_offset) in changes {
                     let frame_offset = offset_to_frames(time_offset);
+                    let mut ts = timestamp;
                     if frame_offset >= 0 {
-                        let timestamp = timestamp
+                        ts = ts 
                                     .checked_add(frame_offset as u64)
                                     .unwrap_or_else(|| {
                                         eprintln!(
@@ -3718,7 +3717,7 @@ impl Scheduler {
                                         timestamp
                                     });
                     } else {
-                        let timestamp = timestamp
+                        ts = ts 
                                     .checked_sub((frame_offset * -1) as u64)
                                     .unwrap_or_else(|| {
                                         eprintln!(
@@ -3728,7 +3727,7 @@ impl Scheduler {
                                     });
                     }
                     scheduling_queue.push(ScheduledChange {
-                        timestamp,
+                        timestamp: ts,
                         key,
                         kind: change_kind,
                     });

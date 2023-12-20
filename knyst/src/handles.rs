@@ -14,9 +14,9 @@
 //! # Example
 //! ```
 //! use knyst::prelude::*;
-//! use knyst::test_utils::*;
+//! use knyst::offline::*;
 //!
-//! let mut kt = init_knyst_test(128, 64, 0, 1);
+//! let mut kt = KnystOffline::new(128, 64, 0, 1);
 //!
 //! // Upload a wavetable oscillator to the current graph and set its inputs.
 //! let sig = oscillator(WavetableId::cos()).freq(440.);
@@ -42,7 +42,7 @@ use std::{
 };
 
 use crate::{
-    graph::{Change, Connection, GraphId, ParameterChange},
+    graph::{Change, Connection, GraphId, ParameterChange, SimultaneousChanges},
     prelude::{PowfGen, SubGen},
     Sample,
 };
@@ -128,31 +128,37 @@ impl<A: Copy + HandleData> Handle<A> {
         })
         .exponent(exponent)
     }
-    /// Remove all connections to inputs to this handle
-    pub fn clear_input_connections(self) {
-        for id in self.node_ids() {
-            knyst().connect(Connection::clear_to_nodes(id));
-        }
-    }
-    /// Remove all connections from outputs from this handle
-    pub fn clear_output_connections(self) {
-        for id in self.node_ids() {
-            knyst().connect(Connection::clear_from_nodes(id));
-        }
-    }
-    /// Free the node(s) this handle is pointing to
-    pub fn free(self) {
-        for id in self.node_ids() {
-            knyst().free_node(id);
-        }
-    }
-    /// Returns a handle to a single channel from this Handle (not type checked)
-    pub fn out(self, channel: impl Into<NodeChannel>) -> Handle<OutputChannelHandle> {
+    /// The non-typed way to set an input channel's value
+    pub fn set(self, channel: impl Into<NodeChannel>, input: impl Into<Input>) -> Handle<A> {
+        let inp = input.into();
         let channel = channel.into();
-        Handle::new(OutputChannelHandle {
-            node_id: self.node_ids().next().unwrap(),
-            channel,
-        })
+        match inp {
+            Input::Constant(v) => {
+                for id in self.node_ids() {
+                    let change = ParameterChange::now(id.input(channel), Change::Constant(v));
+                    knyst().schedule_change(change);
+                }
+            }
+            Input::Handle { output_channels } => {
+                for (node_id, chan) in output_channels {
+                    for id in self.node_ids() {
+                        knyst().connect(node_id.to(id).from_channel(chan).to_channel(channel));
+                    }
+                }
+            }
+        }
+        self
+    }
+    /// The non-typed way to send a trigger to an input channel
+    pub fn trig(self, channel: impl Into<NodeChannel>) -> Handle<A> {
+        let channel = channel.into();
+        // TODO: better way to send a trigger
+        let mut changes = SimultaneousChanges::now();
+        for id in self.node_ids() {
+            changes.push(id.change().trigger(channel.clone()));
+        }
+        knyst().schedule_changes(changes);
+        self
     }
 }
 impl<H: HandleData + Copy> HandleData for Handle<H> {
@@ -379,6 +385,57 @@ pub trait HandleData {
     fn in_channels(&self) -> ChannelIter;
     /// All `NodeIds` referenced by this `Handle` in any order
     fn node_ids(&self) -> NodeIdIter;
+
+    /// Remove all connections from this handle to any graph output
+    fn clear_graph_output_connections(&self) {
+        for id in self.node_ids() {
+            knyst().connect(Connection::clear_to_graph_outputs(id));
+        }
+    }
+    /// Remove all connections from the graph to this handle
+    fn clear_graph_input_connections(&self) {
+        for id in self.node_ids() {
+            knyst().connect(Connection::clear_from_graph_inputs(id));
+        }
+    }
+    /// Remove all connections to inputs to this handle
+    fn clear_input_connections(&self) {
+        for id in self.node_ids() {
+            knyst().connect(Connection::clear_to_nodes(id));
+        }
+    }
+    /// Remove all connections from outputs from this handle
+    fn clear_output_connections(&self) {
+        for id in self.node_ids() {
+            knyst().connect(Connection::clear_from_nodes(id));
+        }
+    }
+    /// Free the node(s) this handle is pointing to
+    fn free(&self) {
+        for id in self.node_ids() {
+            knyst().free_node(id);
+        }
+    }
+    /// Returns a handle to a single channel from this Handle (not type checked)
+    fn out(&self, channel: impl Into<NodeChannel>) -> Handle<OutputChannelHandle> {
+        let channel = channel.into();
+        match channel {
+            NodeChannel::Index(i) => {
+                let (source, chan) = self.out_channels().nth(i).unwrap();
+                match source {
+                    Source::GraphInput => todo!(),
+                    Source::Gen(node_id) => Handle::new(OutputChannelHandle {
+                        node_id,
+                        channel: chan,
+                    }),
+                }
+            }
+            NodeChannel::Label(_name) => Handle::new(OutputChannelHandle {
+                node_id: self.node_ids().next().unwrap(),
+                channel,
+            }),
+        }
+    }
 }
 /// Iterator of `NodeId`s, e.g. for freeing a handle.
 #[derive(Clone)]
@@ -971,6 +1028,40 @@ pub struct AnyNodeHandle {
     in_channel_iter: ChannelIter,
     out_channel_iter: ChannelIter,
     node_ids: NodeIdIter,
+}
+impl AnyNodeHandle {
+    /// The non-typed way to set an input channel's value
+    pub fn set(&self, channel: impl Into<NodeChannel>, input: impl Into<Input>) -> &Self {
+        let inp = input.into();
+        let channel = channel.into();
+        match inp {
+            Input::Constant(v) => {
+                for id in self.node_ids() {
+                    let change = ParameterChange::now(id.input(channel), Change::Constant(v));
+                    knyst().schedule_change(change);
+                }
+            }
+            Input::Handle { output_channels } => {
+                for (node_id, chan) in output_channels {
+                    for id in self.node_ids() {
+                        knyst().connect(node_id.to(id).from_channel(chan).to_channel(channel));
+                    }
+                }
+            }
+        }
+        self
+    }
+    /// The non-typed way to send a trigger to an input channel
+    pub fn trig(&self, channel: impl Into<NodeChannel>) -> &Self {
+        let channel = channel.into();
+        // TODO: better way to send a trigger
+        let mut changes = SimultaneousChanges::now();
+        for id in self.node_ids() {
+            changes.push(id.change().trigger(channel.clone()));
+        }
+        knyst().schedule_changes(changes);
+        self
+    }
 }
 
 impl<H: Copy + HandleData + 'static> From<Handle<H>> for AnyNodeHandle {
