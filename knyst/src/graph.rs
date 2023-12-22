@@ -504,7 +504,7 @@ impl Task {
                 *to += *from;
             }
 
-            // TODO: This fails when there is one node input to a node and a constant input as 
+            // TODO: This fails when there is one node input to a node and a constant input as
             // well. We need a change to allow only one input per node for this optimisation to work properly.
             // match copy_or_add {
             //     CopyOrAdd::Copy => {
@@ -626,7 +626,11 @@ pub enum ScheduleError {
     #[error("A lock for writing to the MusicalTimeMap cannot be acquired.")]
     MusicalTimeMapCannotBeWrittenTo,
     #[error("Tried to schedule change `{change:?}` to non existing input `{channel:?}` for node `{node_name}`")]
-    InputOutOfRange{node_name: String, channel: NodeChannel, change: Change},
+    InputOutOfRange {
+        node_name: String,
+        channel: NodeChannel,
+        change: Change,
+    },
 }
 
 /// Holds either a boxed [`Gen`] or a [`Graph`]
@@ -1102,7 +1106,10 @@ pub struct Graph {
     max_node_inputs: usize,
     graph_gen_communicator: Option<GraphGenCommunicator>,
     /// For storing changes made before the graph is started. When the GraphGen is created, the changes will be scheduled on the scheduler.
-    scheduled_changes_queue: Vec<(Vec<(NodeKey, ScheduledChangeKind, Option<TimeOffset>)>, Time)>,
+    scheduled_changes_queue: Vec<(
+        Vec<(NodeKey, ScheduledChangeKind, Option<TimeOffset>)>,
+        Time,
+    )>,
 }
 
 impl Default for Graph {
@@ -1950,7 +1957,11 @@ impl Graph {
     /// Schedule changes to input channel constants. The changes will only be
     /// applied if the [`Graph`] is running and its scheduler is regularly
     /// updated.
-    pub fn schedule_changes(&mut self, node_changes: Vec<NodeChanges>, time: Time) -> Result<(), ScheduleError> {
+    pub fn schedule_changes(
+        &mut self,
+        node_changes: Vec<NodeChanges>,
+        time: Time,
+    ) -> Result<(), ScheduleError> {
         let mut scheduler_changes = vec![];
         for node_changes in &node_changes {
             let node = node_changes.node;
@@ -1982,9 +1993,13 @@ impl Graph {
                             }
                             NodeChannel::Index(index) => *index,
                         };
-                if index >= self.node_input_index_to_name[key].len() {
-                    return Err(ScheduleError::InputOutOfRange{node_name: self.get_nodes()[key].name.to_string(), channel: channel.clone(), change: change.clone()});
-                }
+                        if index >= self.node_input_index_to_name[key].len() {
+                            return Err(ScheduleError::InputOutOfRange {
+                                node_name: self.get_nodes()[key].name.to_string(),
+                                channel: channel.clone(),
+                                change: change.clone(),
+                            });
+                        }
 
                         let change_kind = match change {
                             Change::Constant(value) => ScheduledChangeKind::Constant {
@@ -2001,20 +2016,24 @@ impl Graph {
             }
             if !node_might_be_in_this_graph {
                 // Try to find the graph containing the node by asking all the graphs in this graph to free the node
+                let mut found_graph = false;
                 for (_key, graph) in &mut self.graphs_per_node {
                     match graph.schedule_changes(vec![node_changes.clone()], time) {
                         Ok(_) => {
+                            found_graph = true;
                             break;
                         }
                         Err(e) => match e {
-                            ScheduleError::GraphNotFound{..} => (),
+                            ScheduleError::GraphNotFound { .. } => (),
                             _ => {
                                 return Err(e);
                             }
                         },
                     }
                 }
-                return Err(ScheduleError::GraphNotFound(node_changes.node));
+                if !found_graph {
+                    eprintln!("{}", ScheduleError::GraphNotFound(node_changes.node));
+                }
             }
         }
         if let Some(ggc) = &mut self.graph_gen_communicator {
@@ -2051,17 +2070,22 @@ impl Graph {
                     NodeChannel::Index(i) => i,
                 };
                 if index >= self.node_input_index_to_name[key].len() {
-                    return Err(ScheduleError::InputOutOfRange{node_name: self.get_nodes()[key].name.to_string(), channel: change.input.channel, change: change.value});
+                    return Err(ScheduleError::InputOutOfRange {
+                        node_name: self.get_nodes()[key].name.to_string(),
+                        channel: change.input.channel,
+                        change: change.value,
+                    });
                 }
-                    let change_kind = match change.value {
-                        Change::Constant(c) => ScheduledChangeKind::Constant { index, value: c },
-                        Change::Trigger => ScheduledChangeKind::Trigger { index },
-                    };
+                let change_kind = match change.value {
+                    Change::Constant(c) => ScheduledChangeKind::Constant { index, value: c },
+                    Change::Trigger => ScheduledChangeKind::Trigger { index },
+                };
                 if let Some(ggc) = &mut self.graph_gen_communicator {
                     ggc.scheduler
                         .schedule(vec![(key, change_kind, None)], change.time);
                 } else {
-                    self.scheduled_changes_queue.push((vec![(key, change_kind, None)], change.time));
+                    self.scheduled_changes_queue
+                        .push((vec![(key, change_kind, None)], change.time));
                 }
             }
         }
@@ -2176,7 +2200,12 @@ impl Graph {
                     0
                 };
                 // Alternative way to get the num_inputs without accessing the node
-                if channels + to_index > self.node_output_index_to_name.get(source_key).unwrap().len()
+                if channels + to_index
+                    > self
+                        .node_output_index_to_name
+                        .get(source_key)
+                        .unwrap()
+                        .len()
                 {
                     return Err(ConnectionError::SourceChannelOutOfBounds);
                 }
@@ -2815,10 +2844,10 @@ impl Graph {
                 } else {
                     0
                 };
-                if channels + from_index > self.num_inputs{
+                if channels + from_index > self.num_inputs {
                     return Err(ConnectionError::SourceChannelOutOfBounds);
                 }
-                if channels + to_index > self.node_input_index_to_name[sink_key].len(){
+                if channels + to_index > self.node_input_index_to_name[sink_key].len() {
                     return Err(ConnectionError::DestinationChannelOutOfBounds);
                 }
                 for i in 0..channels {
@@ -3673,7 +3702,7 @@ impl Scheduler {
     /// Converts a [`Time`] to a number of frames from the start time of the graph
     fn time_to_frames_timestamp(&mut self, time: Time) -> Option<u64> {
         match self {
-            Scheduler::Stopped { ..} => None,
+            Scheduler::Stopped { .. } => None,
             Scheduler::Running {
                 start_ts,
                 sample_rate,
@@ -3693,8 +3722,7 @@ impl Scheduler {
                         let mtm = musical_time_map.read().unwrap();
                         let duration_from_start =
                             Duration::from_secs_f64(mtm.musical_time_to_secs_f64(mt));
-                        let timestamp = (duration_from_start.as_secs_f64()
-                            * (*sample_rate as f64)
+                        let timestamp = (duration_from_start.as_secs_f64() * (*sample_rate as f64)
                             + *latency) as u64;
                         timestamp
                     }
@@ -3730,7 +3758,7 @@ impl Scheduler {
                     let frame_offset = offset_to_frames(time_offset);
                     let mut ts = timestamp;
                     if frame_offset >= 0 {
-                        ts = ts 
+                        ts = ts
                                     .checked_add(frame_offset as u64)
                                     .unwrap_or_else(|| {
                                         eprintln!(
@@ -3739,7 +3767,7 @@ impl Scheduler {
                                         timestamp
                                     });
                     } else {
-                        ts = ts 
+                        ts = ts
                                     .checked_sub((frame_offset * -1) as u64)
                                     .unwrap_or_else(|| {
                                         eprintln!(
