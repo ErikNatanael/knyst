@@ -7,7 +7,7 @@ use knyst_macro::impl_gen;
 
 use crate::Sample;
 #[allow(unused)]
-use crate::{self as knyst, SampleRate, gen::Gen};
+use crate::{self as knyst, gen::Gen, SampleRate};
 
 use super::GenState;
 
@@ -33,9 +33,7 @@ pub fn next_randomness_seed() -> u64 {
 impl RandomLin {
     /// Create a new RandomLin, seeding it from the global atomic seed.
     pub fn new() -> Self {
-        let mut rng = fastrand::Rng::with_seed(
-            next_randomness_seed() * 94 + 53,
-        );
+        let mut rng = fastrand::Rng::with_seed(next_randomness_seed() * 94 + 53);
         Self {
             current_value: rng.f32() as Sample,
             phase: 0.0,

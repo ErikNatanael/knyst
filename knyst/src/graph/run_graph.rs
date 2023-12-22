@@ -8,18 +8,18 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::resources::{ResourcesCommand, ResourcesResponse};
-use rtrb::RingBuffer;
 #[allow(unused)]
 use crate::controller::Controller;
 #[allow(unused)]
-use crate::graph::Connection;
-#[allow(unused)]
 use crate::controller::KnystCommands;
+#[allow(unused)]
+use crate::graph::Connection;
+use crate::resources::{ResourcesCommand, ResourcesResponse};
+use rtrb::RingBuffer;
 
 use crate::{scheduling::MusicalTimeMap, Resources};
 
-use super::{node::Node, Graph, NodeBufferRef, Sample, NodeId};
+use super::{node::Node, Graph, NodeBufferRef, NodeId, Sample};
 
 /// Wrapper around a [`Graph`] `Node` with convenience methods to run the
 /// Graph, either from an audio thread or for non-real time purposes.

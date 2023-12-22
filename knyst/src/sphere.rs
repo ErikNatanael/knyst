@@ -2,12 +2,12 @@
 //! create multiple [`KnystSphere`]s in one program and switch between them using
 //! [`set_active_sphere`], but most use cases require only one [`KnystSphere`].
 
-use std::time::Duration;
+use crate::controller::Controller;
 #[allow(unused)]
 use crate::controller::KnystCommands;
 use crate::KnystError;
-use crate::controller::Controller;
 use crate::{resources::ResourcesSettings, Resources, Sample};
+use std::time::Duration;
 
 use crate::{
     graph::{Graph, GraphSettings, RunGraphSettings},
@@ -67,7 +67,7 @@ impl KnystSphere {
         backend: &mut B,
         settings: SphereSettings,
         error_handler: impl FnMut(KnystError) + Send + 'static,
-    ) -> Result<(SphereId, Controller), SphereError>{
+    ) -> Result<(SphereId, Controller), SphereError> {
         let resources = Resources::new(settings.resources_settings);
         let graph_settings = GraphSettings {
             name: settings.name.clone(),
@@ -114,11 +114,11 @@ pub struct SphereSettings {
     pub name: String,
     /// Settings for initialising the internal [`Resources`]
     pub resources_settings: ResourcesSettings,
-    /// num inputs if determinable by the user (e.g. in the JACK backend). If the [`AudioBackend`] 
+    /// num inputs if determinable by the user (e.g. in the JACK backend). If the [`AudioBackend`]
     /// provides a native number of inputs that number is chosen instead.
     pub num_inputs: usize,
     /// num outputs if determinable by the user (e.g. in the JACK backend)
-    /// If the [`AudioBackend`] 
+    /// If the [`AudioBackend`]
     /// provides a native number of outputs that number is chosen instead.
     pub num_outputs: usize,
     /// The latency added for time scheduled changes to the audio thread to allow enough time for events to take place.

@@ -13,9 +13,7 @@
 //! may take longer to perform since they involve the audio thread.
 
 use crate::{
-    controller::Controller,
-    graph::RunGraphSettings,
-    prelude::MultiThreadedKnystCommands,
+    controller::Controller, graph::RunGraphSettings, prelude::MultiThreadedKnystCommands,
     KnystError,
 };
 #[allow(unused)]
@@ -106,8 +104,8 @@ mod jack_backend {
     use crate::audio_backend::{AudioBackend, AudioBackendError};
     use crate::controller::Controller;
     use crate::graph::{RunGraph, RunGraphSettings};
-    use crate::{KnystError, Sample};
     use crate::{graph::Graph, Resources};
+    use crate::{KnystError, Sample};
     use assert_no_alloc::*;
     enum JackClient {
         Passive(jack::Client),

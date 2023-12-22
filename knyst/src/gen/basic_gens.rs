@@ -8,12 +8,11 @@ use crate::{
     BlockSize, Resources, Sample,
 };
 
-
 /// SubGen(num out channels, or number of pairs of inputs) - subtraction
 ///
 /// Variable number channel Sub Gen. Every pair of inputs are subtracted input0 - input1 into one output.
 pub struct SubGen(pub usize);
-impl Gen for SubGen{
+impl Gen for SubGen {
     fn process(&mut self, ctx: GenContext, _resources: &mut Resources) -> GenState {
         let block_size = ctx.block_size();
         let mut out_bufs = ctx.outputs.iter_mut();

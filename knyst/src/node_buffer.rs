@@ -1,15 +1,15 @@
-//! Knyst uses its own wrapper around a buffer allocation: [`NodeBufferRef`]. Buffers are only 
+//! Knyst uses its own wrapper around a buffer allocation: [`NodeBufferRef`]. Buffers are only
 //! dropped from a non-audio thread once no pointers to the allocation persist using an
 //! application specific atomic flag mechanism.
-//! 
+//!
 //! You should avoid manually interacting with the NodeBufferRef if you can, e.g. by
 //! using the [`impl_gen`] macro instead of a manual [`Gen`] implementation.
-//! 
+//!
 #[allow(unused)]
 use crate::gen::Gen;
+use crate::Sample;
 #[allow(unused)]
 use knyst_macro::impl_gen;
-use crate::Sample;
 
 /// Wrapper around a buffer of output samples. Panics at improper usage.
 ///

@@ -12,8 +12,9 @@ use slotmap::SlotMap;
 use crate::{internal_filter::hiir::StandardDownsampler2X, Resources};
 
 use super::{
-    node::{Node, self}, Gen, GenContext, GenState, NodeBufferRef, NodeKey, Oversampling, OwnedRawBuffer,
-    Sample, ScheduleReceiver, TaskData, NodeId,
+    node::{self, Node},
+    Gen, GenContext, GenState, NodeBufferRef, NodeId, NodeKey, Oversampling, OwnedRawBuffer,
+    Sample, ScheduleReceiver, TaskData,
 };
 
 pub(super) fn make_graph_gen(
@@ -284,7 +285,8 @@ impl Gen for GraphBlockConverterGen {
     }
 
     fn init(&mut self, _block_size: usize, sample_rate: Sample, node_id: NodeId) {
-        self.graph_gen_node.init(self.inner_block_size, sample_rate, node_id);
+        self.graph_gen_node
+            .init(self.inner_block_size, sample_rate, node_id);
     }
 
     fn input_desc(&self, input: usize) -> &'static str {

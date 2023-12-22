@@ -1,6 +1,6 @@
 use crate::{node_buffer::NodeBufferRef, Resources, Sample};
 
-use super::{Gen, GenContext, GenState, NodeKey, Task, CopyOrAdd, NodeId};
+use super::{CopyOrAdd, Gen, GenContext, GenState, NodeId, NodeKey, Task};
 
 /// Node is a very unsafe struct. Be very careful when changing it.
 ///

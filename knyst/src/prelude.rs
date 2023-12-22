@@ -2,10 +2,10 @@
 
 pub use crate::audio_backend::AudioBackend;
 pub use crate::buffer::{Buffer, BufferKey};
+pub use crate::controller::upload_graph;
 pub use crate::controller::{CallbackHandle, KnystCommands, MultiThreadedKnystCommands};
 pub use crate::gen::*;
 pub use crate::gen::{Gen, GenContext, GenState, StopAction};
-pub use crate::controller::upload_graph;
 pub use crate::graph::{
     connection::constant,
     connection::{ConnectionBundle, InputBundle},

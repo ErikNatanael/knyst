@@ -6,6 +6,12 @@
 
 use std::{fs::File, path::PathBuf};
 
+#[allow(unused)]
+use crate::gen::BufferReader;
+#[allow(unused)]
+use crate::gen::BufferReaderMulti;
+#[allow(unused)]
+use crate::graph::Graph;
 use slotmap::new_key_type;
 use symphonia::core::errors::Error as SymphoniaError;
 use symphonia::core::{
@@ -16,12 +22,6 @@ use symphonia::core::{
     meta::MetadataOptions,
     probe::Hint,
 };
-#[allow(unused)]
-use crate::gen::BufferReader;
-#[allow(unused)]
-use crate::gen::BufferReaderMulti;
-#[allow(unused)]
-use crate::graph::Graph;
 
 use crate::SampleRate;
 

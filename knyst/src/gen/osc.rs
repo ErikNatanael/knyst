@@ -554,16 +554,16 @@ mod tests {
         graph_output(0, p);
         kt.process_block();
         let output = kt.output_channel(0).unwrap();
-        dbg!(1.0/128.0);
+        dbg!(1.0 / 128.0);
         assert_eq!(output[0], 0.0);
-        assert!((output[63]-1.0).abs() < 0.1, "{}", output[63]);
+        assert!((output[63] - 1.0).abs() < 0.1, "{}", output[63]);
         // Test that it keeps in phase over time
         kt.process_block();
         kt.process_block();
         kt.process_block();
         let output = kt.output_channel(0).unwrap();
-        assert!((output[0]).abs() < 0.1, "{}",  output[0]);
-        assert!((output[63]-1.0).abs() < 0.1, "{}", output[63]);
+        assert!((output[0]).abs() < 0.1, "{}", output[0]);
+        assert!((output[63] - 1.0).abs() < 0.1, "{}", output[63]);
     }
     #[test]
     fn saw_test() {
@@ -577,13 +577,13 @@ mod tests {
         assert!((output[7] - 0.5).abs() < 0.1, "{}", output[7]);
         assert!((output[15] - 1.0).abs() < 0.1, "{}", output[15]);
         assert!((output[16] + 1.0).abs() < 0.1, "{}", output[16]);
-        assert!(output[31].abs() < 0.1 , "{}", output[31]);
+        assert!(output[31].abs() < 0.1, "{}", output[31]);
         kt.process_block();
         let output = kt.output_channel(0).unwrap();
         assert!((output[0]).abs() < 0.1);
         assert!((output[7] - 0.5).abs() < 0.1, "{}", output[7]);
         assert!((output[15] - 1.0).abs() < 0.1, "{}", output[15]);
         assert!((output[16] + 1.0).abs() < 0.1, "{}", output[16]);
-        assert!(output[31].abs() < 0.1 , "{}", output[31]);
+        assert!(output[31].abs() < 0.1, "{}", output[31]);
     }
 }
