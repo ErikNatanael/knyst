@@ -302,7 +302,7 @@ impl NodeChanges {
         self
     }
 }
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 /// Types of changes that can be scheduled for a node in a Graph.
 pub enum Change {
     /// Change an input constant to a new value. This value will be added to any
@@ -609,12 +609,12 @@ pub enum FreeError {
     ConnectionError(#[from] Box<connection::ConnectionError>),
 }
 #[allow(missing_docs)]
-#[derive(thiserror::Error, Debug, PartialEq, Eq)]
+#[derive(thiserror::Error, Debug, PartialEq)]
 pub enum ScheduleError {
     #[error(
-        "The graph containing the NodeAdress provided was not found. The node itself may or may not exist."
+        "The graph containing the NodeId provided was not found. The node itself may or may not exist."
     )]
-    GraphNotFound,
+    GraphNotFound(NodeId),
     #[error("The NodeId does not exist. The Node may have been freed already.")]
     NodeNotFound,
     #[error("The input label specified was not registered for the node: `{0}`")]
@@ -625,6 +625,8 @@ pub enum ScheduleError {
     SchedulerNotCreated,
     #[error("A lock for writing to the MusicalTimeMap cannot be acquired.")]
     MusicalTimeMapCannotBeWrittenTo,
+    #[error("Tried to schedule change `{change:?}` to non existing input `{channel:?}` for node `{node_name}`")]
+    InputOutOfRange{node_name: String, channel: NodeChannel, change: Change},
 }
 
 /// Holds either a boxed [`Gen`] or a [`Graph`]
@@ -1099,6 +1101,8 @@ pub struct Graph {
     inputs_buffers_ptr: Arc<OwnedRawBuffer>,
     max_node_inputs: usize,
     graph_gen_communicator: Option<GraphGenCommunicator>,
+    /// For storing changes made before the graph is started. When the GraphGen is created, the changes will be scheduled on the scheduler.
+    scheduled_changes_queue: Vec<(Vec<(NodeKey, ScheduledChangeKind, Option<TimeOffset>)>, Time)>,
 }
 
 impl Default for Graph {
@@ -1168,6 +1172,7 @@ impl Graph {
             buffers_to_free_when_safe: vec![],
             new_inputs_buffers_ptr: false,
             graph_input_to_output_edges,
+            scheduled_changes_queue: vec![],
         }
     }
     /// Create a node that will run this graph. This will fail if a Node or Gen has already been created from the Graph since only one Gen is allowed to exist per Graph.
@@ -1977,6 +1982,9 @@ impl Graph {
                             }
                             NodeChannel::Index(index) => *index,
                         };
+                if index >= self.node_input_index_to_name[key].len() {
+                    return Err(ScheduleError::InputOutOfRange{node_name: self.get_nodes()[key].name.to_string(), channel: channel.clone(), change: change.clone()});
+                }
 
                         let change_kind = match change {
                             Change::Constant(value) => ScheduledChangeKind::Constant {
@@ -1999,20 +2007,20 @@ impl Graph {
                             break;
                         }
                         Err(e) => match e {
-                            ScheduleError::GraphNotFound => (),
+                            ScheduleError::GraphNotFound{..} => (),
                             _ => {
                                 return Err(e);
                             }
                         },
                     }
                 }
-                return Err(ScheduleError::GraphNotFound);
+                return Err(ScheduleError::GraphNotFound(node_changes.node));
             }
         }
         if let Some(ggc) = &mut self.graph_gen_communicator {
             ggc.scheduler.schedule(scheduler_changes, time);
         } else {
-            return Err(ScheduleError::SchedulerNotCreated);
+            self.scheduled_changes_queue.push((scheduler_changes, time));
         }
         Ok(())
     }
@@ -2042,15 +2050,18 @@ impl Graph {
                     }
                     NodeChannel::Index(i) => i,
                 };
-                if let Some(ggc) = &mut self.graph_gen_communicator {
+                if index >= self.node_input_index_to_name[key].len() {
+                    return Err(ScheduleError::InputOutOfRange{node_name: self.get_nodes()[key].name.to_string(), channel: change.input.channel, change: change.value});
+                }
                     let change_kind = match change.value {
                         Change::Constant(c) => ScheduledChangeKind::Constant { index, value: c },
                         Change::Trigger => ScheduledChangeKind::Trigger { index },
                     };
+                if let Some(ggc) = &mut self.graph_gen_communicator {
                     ggc.scheduler
                         .schedule(vec![(key, change_kind, None)], change.time);
                 } else {
-                    return Err(ScheduleError::SchedulerNotCreated);
+                    self.scheduled_changes_queue.push((vec![(key, change_kind, None)], change.time));
                 }
             }
         }
@@ -2062,14 +2073,14 @@ impl Graph {
                         return Ok(());
                     }
                     Err(e) => match e {
-                        ScheduleError::GraphNotFound => (),
+                        ScheduleError::GraphNotFound(_) => (),
                         _ => {
                             return Err(e);
                         }
                     },
                 }
             }
-            return Err(ScheduleError::GraphNotFound);
+            return Err(ScheduleError::GraphNotFound(change.input.node));
         }
         Ok(())
     }
@@ -2164,6 +2175,11 @@ impl Graph {
                 } else {
                     0
                 };
+                // Alternative way to get the num_inputs without accessing the node
+                if channels + to_index > self.node_output_index_to_name.get(source_key).unwrap().len()
+                {
+                    return Err(ConnectionError::SourceChannelOutOfBounds);
+                }
                 let from_index = if from_index.is_some() {
                     if let Some(i) = from_index {
                         i
@@ -2187,7 +2203,7 @@ impl Graph {
                 // Alternative way to get the num_inputs without accessing the node
                 if channels + to_index > self.node_input_index_to_name.get(sink_key).unwrap().len()
                 {
-                    return Err(ConnectionError::ChannelOutOfBounds);
+                    return Err(ConnectionError::DestinationChannelOutOfBounds);
                 }
                 if !feedback {
                     let edge_list = &mut self.node_input_edges[sink_key];
@@ -2328,7 +2344,7 @@ impl Graph {
                     return Err(ConnectionError::NodeNotFound);
                 }
                 if channels + to_index > self.num_outputs {
-                    return Err(ConnectionError::ChannelOutOfBounds);
+                    return Err(ConnectionError::DestinationChannelOutOfBounds);
                 }
 
                 let from_index = if from_index.is_some() {
@@ -2408,7 +2424,7 @@ impl Graph {
                     0
                 };
                 if channels + to_index > self.num_outputs {
-                    return Err(ConnectionError::ChannelOutOfBounds);
+                    return Err(ConnectionError::DestinationChannelOutOfBounds);
                 }
                 let edge_list = &mut self.graph_input_edges[sink_key];
                 let mut i = 0;
@@ -2799,8 +2815,11 @@ impl Graph {
                 } else {
                     0
                 };
-                if channels + to_index > self.num_outputs {
-                    return Err(ConnectionError::ChannelOutOfBounds);
+                if channels + from_index > self.num_inputs{
+                    return Err(ConnectionError::SourceChannelOutOfBounds);
+                }
+                if channels + to_index > self.node_input_index_to_name[sink_key].len(){
+                    return Err(ConnectionError::DestinationChannelOutOfBounds);
                 }
                 for i in 0..channels {
                     self.graph_input_edges[sink_key].push(Edge {
@@ -3320,7 +3339,10 @@ impl Graph {
             RingBuffer::<TaskData>::new(self.ring_buffer_size);
         let (task_data_to_be_dropped_producer, task_data_to_be_dropped_consumer) =
             RingBuffer::<TaskData>::new(self.ring_buffer_size);
-        let scheduler = Scheduler::new();
+        let mut scheduler = Scheduler::new();
+        for (schedule_changes, time) in self.scheduled_changes_queue.drain(..) {
+            scheduler.schedule(schedule_changes, time);
+        }
 
         let scheduler_buffer_size = self.ring_buffer_size;
         let (scheduled_change_producer, rb_consumer) = RingBuffer::new(scheduler_buffer_size);

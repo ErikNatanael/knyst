@@ -208,15 +208,11 @@ impl KnystCommands for MultiThreadedKnystCommands {
             let local_node_id = LOCAL_GRAPH.with_borrow_mut(|g| {
                 if let Some(g) = g.last_mut() {
                     let mut node_id = NodeId::new();
-                    if let Err(e) = g.push_with_existing_address_to_graph_at_time(
+                    g.push_with_existing_address_at_time(
                         gen_or_graph,
                         &mut node_id,
-                        g.id(),
                         self.changes_bundle_time,
-                    ) {
-                        // TODO: report error
-                        eprintln!("{e:?}");
-                    }
+                    );
                     Ok(node_id)
                 } else {
                     Err(gen_or_graph)
@@ -296,7 +292,15 @@ impl KnystCommands for MultiThreadedKnystCommands {
             if let Some(g) = g.last_mut() {
                 match g.connect(connection.clone()) {
                     Ok(()) => true,
-                    Err(_e) => false,
+                    Err(e) => match e {
+                        ConnectionError::GraphNotFound(_) => false,
+                        _ => {
+                            // TODO: Report this error
+                            eprintln!("Error: {e:?}");
+                            // We found the correct graph, but there was a different error
+                            true
+                        }
+                    },
                 }
             } else {
                 false
@@ -363,7 +367,18 @@ impl KnystCommands for MultiThreadedKnystCommands {
             };
             self.changes_bundle.push(change);
         } else {
-            self.sender.send(Command::ScheduleChange(change)).unwrap();
+            LOCAL_GRAPH.with_borrow_mut(|g| {
+                if let Some(g) = g.last_mut() {
+                    if let Err(e) = g.schedule_change(change) {
+                        // TODO: report error
+                        // TODO: recover the gen_or_graph from the PushError
+                        eprintln!("{e:?}");
+                    }
+                } else {
+                    // There is no local graph
+                    self.sender.send(Command::ScheduleChange(change)).unwrap();
+                }
+            });
         }
     }
     /// Schedule multiple changes to be made.
@@ -376,7 +391,18 @@ impl KnystCommands for MultiThreadedKnystCommands {
         if self.bundle_changes {
             self.changes_bundle.extend(changes.changes);
         } else {
-            self.sender.send(Command::ScheduleChanges(changes)).unwrap();
+            LOCAL_GRAPH.with_borrow_mut(|g| {
+                if let Some(g) = g.last_mut() {
+                    if let Err(e) = g.schedule_changes(changes.changes, changes.time) {
+                        // TODO: report error
+                        // TODO: recover the gen_or_graph from the PushError
+                        eprintln!("{e:?}");
+                    }
+                } else {
+                    // There is no local graph
+                    self.sender.send(Command::ScheduleChanges(changes)).unwrap();
+                }
+            });
         }
     }
     /// Inserts a new buffer in the [`Resources`] and returns an id which can be
@@ -464,7 +490,9 @@ impl KnystCommands for MultiThreadedKnystCommands {
             let num_inputs = g.num_inputs();
             let num_outputs = g.num_outputs();
             let graph_id = g.id();
-            let id = self.push_to_graph_without_inputs(g, self.selected_graph_remote_graph);
+
+            let id = self.push_without_inputs(g);
+            println!("Uploaded graph: {id:?}");
             Handle::new(GraphHandle::new(id, graph_id, num_inputs, num_outputs))
         } else {
             eprintln!("No local graph found");
@@ -753,10 +781,13 @@ impl Controller {
                 .change_musical_time_map(change_fn)
                 .map_err(|e| From::from(e)),
             Command::ScheduleChanges(changes) => {
-                match self.top_level_graph.schedule_changes(changes.changes, changes.time) {
+                match self
+                    .top_level_graph
+                    .schedule_changes(changes.changes, changes.time)
+                {
                     Ok(_) => Ok(()),
                     Err(e) => match e {
-                        crate::graph::ScheduleError::GraphNotFound => {
+                        crate::graph::ScheduleError::GraphNotFound(_node) => {
                             // println!("Didn't find graph for:");
                             // println!("{changes_clone:?}");
                             Err(e.into())

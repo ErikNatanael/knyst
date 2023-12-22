@@ -563,7 +563,9 @@ pub enum ConnectionError {
     #[error("The sink node for the connection is not set and is required.")]
     SinkNotSet,
     #[error("You are trying to connect to channels that don't exist, either through direct indexing or a too high `channels` value for the input.")]
-    ChannelOutOfBounds,
+    SourceChannelOutOfBounds,
+    #[error("You are trying to connect to channels that don't exist, either through direct indexing or a too high `channels` value for the input.")]
+    DestinationChannelOutOfBounds,
     #[error("You are referencing a node which has not yet been pushed to a graph and therefore cannot be found.")]
     SourceNodeNotPushed,
     #[error("You are referencing a node which has not yet been pushed to a graph and therefore cannot be found.")]
@@ -574,7 +576,7 @@ pub enum ConnectionError {
 
 /// Describe a node's input or output channel by index or label
 #[allow(missing_docs)]
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NodeChannel {
     Label(&'static str),
     Index(usize),
