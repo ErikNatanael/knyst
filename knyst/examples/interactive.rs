@@ -13,13 +13,13 @@ use anyhow::Result;
 use knyst::{
     audio_backend::{CpalBackend, CpalBackendOptions},
     envelope::{envelope_gen, Envelope, EnvelopeGenHandle},
+    gen::delay::{allpass_feedback_delay, static_sample_delay},
     graph::{Mult, NodeId},
     handles::{AnyNodeHandle, HandleData},
     inputs, knyst,
     prelude::*,
     trig::once_trig,
 };
-use knyst_reverb::galactic::galactic;
 use rand::{seq::SliceRandom, thread_rng, Rng};
 use std::{
     io::Write,
@@ -34,9 +34,8 @@ static ROOT_FREQ: Sample = 200.;
 
 struct State {
     potential_reverb_inputs: Vec<AnyNodeHandle>,
-    reverb_node: Option<AnyNodeHandle>,
+    delay_node: Option<AnyNodeHandle>,
     harmony_wavetable_id: WavetableId,
-    block_size: usize,
     tokio_trigger: Arc<AtomicBool>,
     lead_env: Handle<EnvelopeGenHandle>,
     error_strings: Vec<String>,
@@ -51,7 +50,6 @@ fn main() -> Result<()> {
 
     let mut backend = CpalBackend::new(CpalBackendOptions::default())?;
     // let mut backend = JackBackend::new("Knyst<3JACK")?;
-    let block_size = backend.block_size().unwrap_or(64);
     let _sphere = KnystSphere::start(
         &mut backend,
         SphereSettings {
@@ -93,7 +91,7 @@ fn main() -> Result<()> {
     graph_output(0, sub_graph);
 
     // Store the nodes that would be connected to the reverb if it's toggled on.
-    let potential_reverb_inputs: Vec<AnyNodeHandle> = vec![sub_graph.into(), node0.into()];
+    let potential_delay_inputs: Vec<AnyNodeHandle> = vec![sub_graph.into(), node.into()];
 
     let mut k = knyst();
     let mut harmony_wavetable = Wavetable::sine();
@@ -170,9 +168,8 @@ fn main() -> Result<()> {
         std::thread::spawn(move || tokio_knyst(trigger));
     }
     let mut state = State {
-        potential_reverb_inputs,
-        reverb_node: None,
-        block_size,
+        potential_reverb_inputs: potential_delay_inputs,
+        delay_node: None,
         harmony_wavetable_id,
         tokio_trigger,
         lead_env: env.into(),
@@ -320,14 +317,13 @@ fn handle_special_keys(c: char, state: &mut State) -> bool {
         }
         'n' => {
             // Toggle the fundsp reverb on or off
-            match state.reverb_node.take() {
+            match state.delay_node.take() {
                 Some(reverb_node) => {
                     k.free_node_mend_connections(reverb_node.node_ids().next().unwrap())
                 }
                 None => {
-                    let reverb_node =
-                        insert_reverb(&state.potential_reverb_inputs, state.block_size);
-                    state.reverb_node = Some(reverb_node);
+                    let delay_node = insert_delay(&state.potential_reverb_inputs);
+                    state.delay_node = Some(delay_node);
                 }
             }
             true
@@ -383,28 +379,28 @@ fn handle_special_keys(c: char, state: &mut State) -> bool {
     }
 }
 
-fn insert_reverb(inputs: &[AnyNodeHandle], _block_size: usize) -> AnyNodeHandle {
-    let reverb = galactic()
-        .size(0.5)
-        .brightness(0.9)
-        .detune(0.2)
-        .mix(0.2)
-        .replace(0.7);
-    graph_output(0, reverb);
+fn insert_delay(inputs: &[AnyNodeHandle]) -> AnyNodeHandle {
+    let delay = allpass_feedback_delay(48000).feedback(0.5).delay_time(0.3);
+    graph_output(0, delay);
+    graph_output(1, static_sample_delay(62).input(delay));
     for input in inputs {
         // Clear all connections from this node to the outputs of the graph it is in.
         knyst().disconnect(Connection::clear_to_graph_outputs(
             input.node_ids().next().unwrap(),
         ));
         // Connect the node to the newly created reverb instead
-        reverb.left(input);
-        reverb.right(input);
+        delay.input(input);
     }
-    reverb.into()
+    delay.into()
 }
 
 // Start a tokio async runtime to demonstrate that it works. This is an
 // alternative to using standard threads.
+//
+// When using a multi threaded async runtime, it's important to keep in mind to activate
+// the correct graph you want to push to after every `await` since, if it is scheduled
+// on a new thread, that thread will have thread locals with different graph settings.
+// `await`ing inside of building a local graph or scheduling a bundle is also very likely to break.
 #[tokio::main]
 async fn tokio_knyst(mut trigger: Arc<AtomicBool>) {
     let mut rng = thread_rng();

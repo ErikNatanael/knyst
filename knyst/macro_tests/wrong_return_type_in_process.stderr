@@ -1,5 +1,5 @@
 error: #[process] method needs to return a GenState
-  --> tests/wrong_return_type_in_process.rs:12:86
+  --> macro_tests/wrong_return_type_in_process.rs:12:86
    |
 12 |     fn process(&mut self, freq: &[Sample], phase: &[Sample], out0: &mut [Sample]) -> f32 {
    |                                                                                      ^^^

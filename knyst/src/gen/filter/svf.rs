@@ -205,3 +205,42 @@ impl SvfFilter {
         GenState::Continue
     }
 }
+
+/// Svf high shelf filter with controllable settings.
+///
+/// Uses the [`SvfFilter`] under the hood, but allows for setting the filter parameters at block rate
+pub struct SvfHighShelf {
+    svf: SvfFilter,
+    last_cutoff: Sample,
+    last_gain: Sample,
+    last_q: Sample,
+}
+#[impl_gen]
+impl SvfHighShelf {
+    #[allow(missing_docs)]
+    pub fn new() -> Self {
+        Self {
+            svf: SvfFilter::new(SvfFilterType::HighShelf, 20000., 1.0, 0.0),
+            last_cutoff: 20000.,
+            last_gain: 0.0,
+            last_q: 1.0,
+        }
+    }
+    #[allow(missing_docs)]
+    pub fn process(
+        &mut self,
+        input: &[Sample],
+        cutoff_freq: &[Sample],
+        gain: &[Sample],
+        q: &[Sample],
+        output: &mut [Sample],
+        sample_rate: SampleRate,
+    ) -> GenState {
+        if cutoff_freq[0] != self.last_cutoff || gain[0] != self.last_gain || q[0] != self.last_q {
+            self.svf
+                .set_coeffs(cutoff_freq[0], q[0], gain[0], *sample_rate);
+        }
+        self.svf.process(input, output);
+        GenState::Continue
+    }
+}

@@ -2199,16 +2199,6 @@ impl Graph {
                 } else {
                     0
                 };
-                // Alternative way to get the num_inputs without accessing the node
-                if channels + to_index
-                    > self
-                        .node_output_index_to_name
-                        .get(source_key)
-                        .unwrap()
-                        .len()
-                {
-                    return Err(ConnectionError::SourceChannelOutOfBounds);
-                }
                 let from_index = if from_index.is_some() {
                     if let Some(i) = from_index {
                         i
@@ -2229,6 +2219,17 @@ impl Graph {
                 } else {
                     0
                 };
+
+                // Alternative way to get the num_inputs without accessing the node
+                if channels + from_index
+                    > self
+                        .node_output_index_to_name
+                        .get(source_key)
+                        .unwrap()
+                        .len()
+                {
+                    return Err(ConnectionError::SourceChannelOutOfBounds);
+                }
                 // Alternative way to get the num_inputs without accessing the node
                 if channels + to_index > self.node_input_index_to_name.get(sink_key).unwrap().len()
                 {

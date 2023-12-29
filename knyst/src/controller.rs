@@ -492,7 +492,6 @@ impl KnystCommands for MultiThreadedKnystCommands {
             let graph_id = g.id();
 
             let id = self.push_without_inputs(g);
-            println!("Uploaded graph: {id:?}");
             Handle::new(GraphHandle::new(id, graph_id, num_inputs, num_outputs))
         } else {
             eprintln!("No local graph found");

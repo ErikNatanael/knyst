@@ -164,6 +164,7 @@ impl AllpassDelay {
 pub struct AllpassFeedbackDelay {
     /// The feedback value of the delay. Can be set directly.
     pub feedback: f64,
+    previous_delay_time: Sample,
     allpass_delay: AllpassDelay,
 }
 #[impl_gen]
@@ -175,6 +176,7 @@ impl AllpassFeedbackDelay {
         let s = Self {
             feedback: 0.,
             allpass_delay,
+            previous_delay_time: max_delay_samples as Sample,
         };
         s
     }
@@ -205,9 +207,20 @@ impl AllpassFeedbackDelay {
         &mut self,
         input: &[Sample],
         feedback: &[Sample],
+        delay_time: &[Sample],
         output: &mut [Sample],
+        sample_rate: SampleRate,
     ) -> GenState {
-        for ((&input, &feedback), output) in input.iter().zip(feedback).zip(output.iter_mut()) {
+        for (((&input, &feedback), &delay_time), output) in input
+            .iter()
+            .zip(feedback)
+            .zip(delay_time)
+            .zip(output.iter_mut())
+        {
+            if delay_time != self.previous_delay_time {
+                self.set_delay_in_frames(delay_time as f64 * sample_rate.to_f64());
+                self.previous_delay_time = delay_time;
+            }
             self.feedback = f64::from(feedback);
             *output = self.process_sample(f64::from(input)) as Sample;
         }
