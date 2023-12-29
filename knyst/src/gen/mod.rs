@@ -2,6 +2,7 @@
 //!
 //! The best way of implementing [`Gen`] on your own type is using the [`impl_gen`] macro.
 mod basic_gens;
+pub mod dynamics;
 pub mod noise;
 pub use noise::*;
 pub mod random;
