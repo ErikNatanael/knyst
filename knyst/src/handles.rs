@@ -388,8 +388,19 @@ pub trait HandleData {
 
     /// Remove all connections from this handle to any graph output
     fn clear_graph_output_connections(&self) {
-        for id in self.node_ids() {
-            knyst().connect(Connection::clear_to_graph_outputs(id));
+        // TODO: Apply only to the selected channels
+        for (source, _channel) in self.out_channels() {
+            match source {
+                Source::GraphInput(graph_id) => {
+                    knyst().connect(Connection::ClearGraphInputToOutput {
+                        graph_id,
+                        from_input_channel: None,
+                        to_output_channel: None,
+                        channels: None,
+                    })
+                }
+                Source::Gen(id) => knyst().connect(Connection::clear_to_graph_outputs(id)),
+            }
         }
     }
     /// Remove all connections from the graph to this handle
@@ -423,7 +434,7 @@ pub trait HandleData {
             NodeChannel::Index(i) => {
                 let (source, chan) = self.out_channels().nth(i).unwrap();
                 match source {
-                    Source::GraphInput => todo!(),
+                    Source::GraphInput(_graph_id) => todo!(),
                     Source::Gen(node_id) => Handle::new(OutputChannelHandle {
                         node_id,
                         channel: chan,
@@ -492,6 +503,8 @@ pub enum ChannelIter {
     /// Channels from a graph input
     GraphInput {
         #[allow(missing_docs)]
+        graph_id: GraphId,
+        #[allow(missing_docs)]
         start_index: usize,
         #[allow(missing_docs)]
         num_channels: usize,
@@ -534,7 +547,7 @@ impl ChannelIter {
 #[derive(Copy, Clone, Debug)]
 pub enum Source {
     #[allow(missing_docs)]
-    GraphInput,
+    GraphInput(GraphId),
     #[allow(missing_docs)]
     Gen(NodeId),
 }
@@ -543,7 +556,7 @@ impl Source {
     #[must_use]
     pub fn to(self, other: NodeId) -> Connection {
         match self {
-            Source::GraphInput => Connection::graph_input(other),
+            Source::GraphInput(_graph_id) => Connection::graph_input(other),
             Source::Gen(node) => node.to(other),
         }
     }
@@ -551,7 +564,8 @@ impl Source {
     #[must_use]
     pub fn to_graph_out(self) -> Connection {
         match self {
-            Source::GraphInput => Connection::GraphInputToOutput {
+            Source::GraphInput(graph_id) => Connection::GraphInputToOutput {
+                graph_id,
                 from_input_channel: 0,
                 to_output_channel: 0,
                 channels: 1,
@@ -614,6 +628,7 @@ impl Iterator for ChannelIter {
             }
             ChannelIter::None => None,
             ChannelIter::GraphInput {
+                graph_id,
                 start_index,
                 num_channels,
                 current_channel,
@@ -623,7 +638,7 @@ impl Iterator for ChannelIter {
                 } else {
                     *current_channel += 1;
                     Some((
-                        Source::GraphInput,
+                        Source::GraphInput(*graph_id),
                         NodeChannel::Index(*start_index + *current_channel - 1),
                     ))
                 }
@@ -1208,6 +1223,7 @@ impl<H: HandleData + Copy + HandleNormalRange> Handle<H> {
 /// Handle for a Graph input, usually acquired through the `graph_input` function.
 #[derive(Copy, Clone, Debug)]
 pub struct GraphInputHandle {
+    graph_id: GraphId,
     start_index: usize,
     num_channels: usize,
 }
@@ -1215,6 +1231,7 @@ pub struct GraphInputHandle {
 impl HandleData for GraphInputHandle {
     fn out_channels(&self) -> ChannelIter {
         ChannelIter::GraphInput {
+            graph_id: self.graph_id,
             start_index: self.start_index,
             num_channels: self.num_channels,
             current_channel: 0,
@@ -1236,6 +1253,7 @@ pub fn graph_input(index: usize, num_channels: usize) -> Handle<GraphInputHandle
     Handle::new(GraphInputHandle {
         start_index: index,
         num_channels,
+        graph_id: knyst().current_graph(),
     })
 }
 

@@ -322,6 +322,16 @@ impl KnystCommands for UnifiedKnystCommands {
             UnifiedKnystCommands::Dummy(kc) => kc.report_dummy(),
         }
     }
+
+    fn current_graph(&self) -> crate::graph::GraphId {
+        match self {
+            UnifiedKnystCommands::Real(kc) => kc.borrow_mut().current_graph(),
+            UnifiedKnystCommands::Dummy(kc) => {
+                kc.report_dummy();
+                u64::MAX
+            }
+        }
+    }
     // fn push(&mut self) {
     //     match self {
     //         UnifiedKnystCommands::Real(kc) => kc.borrow_mut().push(),

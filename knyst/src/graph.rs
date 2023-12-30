@@ -496,7 +496,7 @@ impl Task {
             }
         }
         // Copy all inputs
-        for (from, to, block_size, copy_or_add) in &self.inputs_to_copy {
+        for (from, to, block_size, _copy_or_add) in &self.inputs_to_copy {
             let from_slice = unsafe { std::slice::from_raw_parts(*from, *block_size) };
             let to_slice = unsafe { std::slice::from_raw_parts_mut(*to, *block_size) };
 
@@ -1349,10 +1349,6 @@ impl Graph {
                 // Important: we must start the scheduler here if the current
                 // graph is started, otherwise it will never start.
                 if let Some(ggc) = &mut self.graph_gen_communicator {
-                    if let Some(ts) = ggc.scheduler.time_to_frames_timestamp(start_time) {
-                        start_timestamp = ts;
-                    }
-
                     if let Scheduler::Running {
                         start_ts,
                         latency_in_samples,
@@ -2478,9 +2474,38 @@ impl Graph {
                 from_input_channel,
                 to_output_channel,
                 channels,
+                graph_id,
             } => {
+                if graph_id != self.id {
+                    return try_disconnect_in_child_graphs(connection.clone());
+                }
                 // input/output are confusing here, use from and to for guidance
-                for i in (self.graph_input_to_output_edges.len() - 1)..=0 {
+                for i in (0..self.graph_input_to_output_edges.len()).rev() {
+                    let edge = self.graph_input_to_output_edges[i];
+                    if edge.from_output_index >= from_input_channel
+                        && edge.from_output_index < (from_input_channel + channels)
+                        && edge.to_input_index >= to_output_channel
+                        && edge.to_input_index < (to_output_channel + channels)
+                    {
+                        self.graph_input_to_output_edges.remove(i);
+                        self.recalculation_required = true;
+                    }
+                }
+            }
+            Connection::ClearGraphInputToOutput {
+                graph_id,
+                from_input_channel,
+                to_output_channel,
+                channels,
+            } => {
+                if graph_id != self.id {
+                    return try_disconnect_in_child_graphs(connection.clone());
+                }
+                let from_input_channel = from_input_channel.unwrap_or(0);
+                let to_output_channel = to_output_channel.unwrap_or(0);
+                let channels = channels.unwrap_or(self.num_inputs.max(self.num_outputs));
+                // input/output are confusing here, use from and to for guidance
+                for i in (0..self.graph_input_to_output_edges.len()).rev() {
                     let edge = self.graph_input_to_output_edges[i];
                     if edge.from_output_index >= from_input_channel
                         && edge.from_output_index < (from_input_channel + channels)
@@ -3039,10 +3064,14 @@ impl Graph {
                 }
             }
             Connection::GraphInputToOutput {
+                graph_id,
                 from_input_channel,
                 to_output_channel,
                 channels,
             } => {
+                if graph_id != self.id {
+                    return try_connect_to_graphs(connection.clone());
+                }
                 // TODO Check for duplicates
                 for i in 0..channels {
                     self.graph_input_to_output_edges.push(InterGraphEdge {
@@ -3053,6 +3082,7 @@ impl Graph {
 
                 self.recalculation_required = true;
             }
+            Connection::ClearGraphInputToOutput { .. } => self.disconnect(connection.clone())?,
         }
         Ok(())
     }

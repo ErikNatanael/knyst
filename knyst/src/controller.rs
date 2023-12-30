@@ -151,7 +151,8 @@ pub trait KnystCommands {
     fn to_graph(&mut self, graph_id: GraphId);
     /// Set knyst commands on the current thread to use the top level GraphId by default
     fn to_top_level_graph(&mut self);
-
+    /// Get the id of the currently active graph
+    fn current_graph(&self) -> GraphId;
     /// Creates a new local graph and sets it as the default graph
     fn init_local_graph(&mut self, settings: GraphSettings) -> GraphId;
     /// Upload the local graph to the previously default graph and restore the default graph to that previous default graph.
@@ -534,6 +535,16 @@ impl KnystCommands for MultiThreadedKnystCommands {
         self.schedule_changes(changes);
         self.changes_bundle.clear();
         self.changes_bundle_time = Time::Immediately;
+    }
+
+    fn current_graph(&self) -> GraphId {
+        LOCAL_GRAPH.with_borrow_mut(|g| {
+            if let Some(g) = g.last_mut() {
+                g.id()
+            } else {
+                self.selected_graph_remote_graph
+            }
+        })
     }
     // /// Create a new Self which pushes to the selected GraphId by default
     // fn to_graph(&self, graph_id: GraphId) -> Self {

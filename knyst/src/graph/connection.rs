@@ -4,7 +4,7 @@
 //! convenient and ergonomic.
 use std::fmt::Display;
 
-use super::{FreeError, NodeId, Sample};
+use super::{FreeError, GraphId, NodeId, Sample};
 #[allow(unused)]
 use crate::gen::Gen;
 #[allow(unused)]
@@ -125,12 +125,25 @@ pub enum Connection {
     },
     /// Connect between a graph input and its output directly
     GraphInputToOutput {
+        /// Which graph to operate on
+        graph_id: GraphId,
         /// The index of the first input channel to connect from
         from_input_channel: usize,
         /// The index of the first output channel to connect to
         to_output_channel: usize,
         /// How many channels to connect
         channels: usize,
+    },
+    /// Clear all or specific connection(s) from a input to output within the same graph
+    ClearGraphInputToOutput {
+        /// Which graph to operate on
+        graph_id: GraphId,
+        /// The index of the first input channel to connect from. If None, disconnect all.
+        from_input_channel: Option<usize>,
+        /// The index of the first output channel to connect to. If None, disconnect all.
+        to_output_channel: Option<usize>,
+        /// How many channels to connect
+        channels: Option<usize>,
     },
 }
 impl Display for Connection {
@@ -186,10 +199,14 @@ impl Display for Connection {
                 write!(f, "Connection::Clear {:?} {input_nodes}{input_constants}{output_nodes}{graph_outputs}{graph_inputs}{channel:?}", node)
             },
             Connection::GraphInputToOutput {
+                graph_id,
                 from_input_channel,
                 to_output_channel,
                 channels,
-            } => write!(f, "Connection::GraphInputToOutput {from_input_channel} -> {to_output_channel} {channels} channels"),
+            } => write!(f, "Connection::GraphInputToOutput {from_input_channel} -> {to_output_channel} {channels} channels on graph {graph_id}"),
+            Connection::ClearGraphInputToOutput { graph_id, from_input_channel, to_output_channel, channels } => {
+                write!(f, "Connection::ClearGraphInputToOutput {from_input_channel:?} -> {to_output_channel:?} {channels:?} channels on graph {graph_id}")
+            },
         }
     }
 }
@@ -298,6 +315,7 @@ impl Connection {
             }
             Connection::Clear { .. } => {}
             Connection::GraphInputToOutput { .. } => {}
+            Connection::ClearGraphInputToOutput { .. } => {}
         }
         self
     }
@@ -317,6 +335,7 @@ impl Connection {
             Connection::GraphOutput { .. } => {}
             Connection::Clear { .. } => {}
             Connection::GraphInputToOutput { .. } => {}
+            Connection::ClearGraphInputToOutput { .. } => {}
         }
         self
     }
@@ -348,6 +367,7 @@ impl Connection {
                 *to_index = None;
             }
             Connection::Clear { channel, .. } => *channel = Some(NodeChannel::Label(label)),
+            Connection::ClearGraphInputToOutput { .. } => {}
         }
         self
     }
@@ -369,6 +389,9 @@ impl Connection {
             Connection::GraphInputToOutput {
                 to_output_channel, ..
             } => *to_output_channel = index,
+            Connection::ClearGraphInputToOutput {
+                to_output_channel, ..
+            } => *to_output_channel = Some(index),
             Connection::Constant {
                 to_index: input_index,
                 ..
@@ -399,6 +422,9 @@ impl Connection {
             Connection::GraphInputToOutput {
                 from_input_channel, ..
             } => Some(*from_input_channel),
+            Connection::ClearGraphInputToOutput {
+                from_input_channel, ..
+            } => *from_input_channel,
         }
     }
     /// Get the sink channel index of the [`Connection`] if one is set
@@ -416,6 +442,9 @@ impl Connection {
             Connection::GraphInputToOutput {
                 to_output_channel, ..
             } => Some(*to_output_channel),
+            Connection::ClearGraphInputToOutput {
+                to_output_channel, ..
+            } => *to_output_channel,
             Connection::Clear { .. } => None,
             Connection::GraphInput { to_index, .. } => *to_index,
         }
@@ -465,6 +494,9 @@ impl Connection {
             Connection::GraphInputToOutput {
                 from_input_channel, ..
             } => *from_input_channel = index,
+            Connection::ClearGraphInputToOutput {
+                from_input_channel, ..
+            } => *from_input_channel = Some(index),
         }
         self
     }
@@ -490,6 +522,7 @@ impl Connection {
             }
             Connection::GraphInput { .. } => {}
             Connection::GraphInputToOutput { .. } => {}
+            Connection::ClearGraphInputToOutput { .. } => {}
             Connection::Clear { channel, .. } => *channel = Some(NodeChannel::Label(label)),
         }
         self
@@ -513,6 +546,9 @@ impl Connection {
             Connection::GraphInputToOutput { channels, .. } => {
                 *channels = num_channels;
             }
+            Connection::ClearGraphInputToOutput { channels, .. } => {
+                *channels = Some(num_channels);
+            }
             Connection::Clear { .. } => {}
         }
         self
@@ -527,6 +563,7 @@ impl Connection {
             Connection::GraphOutput { .. } => {}
             Connection::GraphInput { .. } => {}
             Connection::GraphInputToOutput { .. } => {}
+            Connection::ClearGraphInputToOutput { .. } => {}
             Connection::Clear { .. } => {}
         }
         self
@@ -539,7 +576,8 @@ impl Connection {
             Connection::GraphInput { .. }
             | Connection::Constant { .. }
             | Connection::Clear { .. }
-            | Connection::GraphInputToOutput { .. } => None,
+            | Connection::GraphInputToOutput { .. }
+            | Connection::ClearGraphInputToOutput { .. } => None,
         }
     }
 }
