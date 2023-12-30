@@ -18,7 +18,7 @@ use crate::{
     buffer::Buffer,
     graph::{NodeChanges, Time},
     inspection::GraphInspection,
-    knyst,
+    knyst_commands,
     resources::{BufferId, ResourcesCommand, ResourcesResponse, WavetableId},
     wavetable::Wavetable,
 };
@@ -168,16 +168,16 @@ pub fn upload_graph(
     settings: GraphSettings,
     init: impl FnOnce(),
 ) -> crate::handles::Handle<crate::handles::GraphHandle> {
-    knyst().init_local_graph(settings);
+    knyst_commands().init_local_graph(settings);
     init();
-    knyst().upload_local_graph()
+    knyst_commands().upload_local_graph()
 }
 
 /// Schedules any changes made in the closure at the given time. Currently limited to changes of constant values and spawning new nodes, not new connections.
 pub fn schedule_bundle(time: Time, c: impl FnOnce()) {
-    knyst().start_scheduling_bundle(time);
+    knyst_commands().start_scheduling_bundle(time);
     c();
-    knyst().upload_scheduling_bundle();
+    knyst_commands().upload_scheduling_bundle();
 }
 
 #[derive(Clone)]
@@ -981,7 +981,7 @@ pub fn print_error_handler(e: KnystError) {
 mod tests {
     use super::schedule_bundle;
     use crate as knyst;
-    use crate::{knyst, offline::KnystOffline, prelude::*, trig::once_trig};
+    use crate::{knyst_commands, offline::KnystOffline, prelude::*, trig::once_trig};
 
     // Outputs its input value + 1
     struct OneGen {}
@@ -1040,11 +1040,11 @@ mod tests {
             },
         );
         // Try with the pure KnystCommands methods as well.
-        knyst().start_scheduling_bundle(knyst::graph::Time::Superseconds(
+        knyst_commands().start_scheduling_bundle(knyst::graph::Time::Superseconds(
             Superseconds::from_samples(20, sr as u64),
         ));
         og.passthrough(4.0);
-        knyst().upload_scheduling_bundle();
+        knyst_commands().upload_scheduling_bundle();
         kt.process_block();
         let o = kt.output_channel(0).unwrap();
         dbg!(o);

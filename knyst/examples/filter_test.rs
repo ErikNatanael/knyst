@@ -6,7 +6,7 @@ use knyst::{
     controller::print_error_handler,
     envelope::Envelope,
     handles::{graph_output, handle, Handle},
-    modal_interface::knyst,
+    modal_interface::knyst_commands,
     prelude::{delay::static_sample_delay, *},
     sphere::{KnystSphere, SphereSettings},
 };

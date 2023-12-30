@@ -426,7 +426,7 @@ pub fn set_active_sphere(id: SphereId) -> Result<(), SphereError> {
 
 // Return impl KnystCommands to avoid committing to a return type and being able to change the return type through conditional compilation for different platforms
 /// Returns an implementor of [`KnystCommands`] which allows interacting with Knyst
-pub fn knyst() -> impl KnystCommands {
+pub fn knyst_commands() -> impl KnystCommands {
     if let Some(kc) = ACTIVE_KNYST_SPHERE_COMMANDS.with(|aksc| aksc.borrow().clone()) {
         UnifiedKnystCommands::Real(kc)
     } else {

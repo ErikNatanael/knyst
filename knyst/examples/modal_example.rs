@@ -6,7 +6,7 @@ use knyst::{
     controller::print_error_handler,
     envelope::Envelope,
     handles::{graph_output, handle, Handle},
-    modal_interface::knyst,
+    modal_interface::knyst_commands,
     prelude::{delay::static_sample_delay, *},
     sphere::{KnystSphere, SphereSettings},
 };
@@ -28,7 +28,7 @@ fn main() -> Result<()> {
     // Output delay with a small additional delay to create a rudimentary stereo illusion
     graph_output(0, (delay + static_sample_delay(87).input(delay)) * 0.5);
     graph_output(1, (delay + static_sample_delay(62).input(delay)) * 0.5);
-    let outer_graph = upload_graph(knyst().default_graph_settings(), || {});
+    let outer_graph = upload_graph(knyst_commands().default_graph_settings(), || {});
     delay.input(outer_graph);
     outer_graph.activate();
 
@@ -58,19 +58,22 @@ fn main() -> Result<()> {
         outer_graph.activate();
         for &ratio in [1.0, 1.5, 5. / 4.].iter().cycle() {
             // new graph
-            let graph = upload_graph(knyst().default_graph_settings().num_inputs(1), || {
-                // Since freq_var is in a different graph we can pipe it in via a graph input
-                let freq_var = graph_input(0, 1);
-                let sig = sine().freq(freq_var * ratio).out("sig") * 0.25;
-                let env = Envelope {
-                    points: vec![(1.0, 0.005), (0.0, 0.5)],
-                    stop_action: StopAction::FreeGraph,
-                    ..Default::default()
-                };
-                let sig = sig * handle(env.to_gen());
-                // let sig = sig * handle(env.to_gen());
-                graph_output(0, sig.repeat_outputs(1));
-            });
+            let graph = upload_graph(
+                knyst_commands().default_graph_settings().num_inputs(1),
+                || {
+                    // Since freq_var is in a different graph we can pipe it in via a graph input
+                    let freq_var = graph_input(0, 1);
+                    let sig = sine().freq(freq_var * ratio).out("sig") * 0.25;
+                    let env = Envelope {
+                        points: vec![(1.0, 0.005), (0.0, 0.5)],
+                        stop_action: StopAction::FreeGraph,
+                        ..Default::default()
+                    };
+                    let sig = sig * handle(env.to_gen());
+                    // let sig = sig * handle(env.to_gen());
+                    graph_output(0, sig.repeat_outputs(1));
+                },
+            );
             // Make sure we also pass the freq_var signal in
             graph.set(0, freq_var);
             outer_graph.activate();
@@ -89,19 +92,22 @@ fn main() -> Result<()> {
         loop {
             for &ratio in [1.0, 5. / 4., 1.5, 7. / 4., 2., 17. / 8.].iter() {
                 // new graph
-                let graph = upload_graph(knyst().default_graph_settings().num_inputs(1), || {
-                    // Since freq_var is in a different graph we can pipe it in via a graph input
-                    let freq_var = graph_input(0, 1);
-                    let sig = sine().freq(freq_var * ratio).out("sig") * 0.25;
-                    let env = Envelope {
-                        points: vec![(1.0, 0.005), (0.0, 0.5)],
-                        stop_action: StopAction::FreeGraph,
-                        ..Default::default()
-                    };
-                    let sig = sig * handle(env.to_gen());
-                    // let sig = sig * handle(env.to_gen());
-                    graph_output(0, sig.repeat_outputs(1));
-                });
+                let graph = upload_graph(
+                    knyst_commands().default_graph_settings().num_inputs(1),
+                    || {
+                        // Since freq_var is in a different graph we can pipe it in via a graph input
+                        let freq_var = graph_input(0, 1);
+                        let sig = sine().freq(freq_var * ratio).out("sig") * 0.25;
+                        let env = Envelope {
+                            points: vec![(1.0, 0.005), (0.0, 0.5)],
+                            stop_action: StopAction::FreeGraph,
+                            ..Default::default()
+                        };
+                        let sig = sig * handle(env.to_gen());
+                        // let sig = sig * handle(env.to_gen());
+                        graph_output(0, sig.repeat_outputs(1));
+                    },
+                );
                 // Make sure we also pass the freq_var signal in
                 graph.set(0, freq_var);
                 outer_graph.activate();

@@ -16,7 +16,7 @@ use knyst::{
     gen::delay::{allpass_feedback_delay, static_sample_delay},
     graph::{Mult, NodeId},
     handles::{AnyNodeHandle, HandleData},
-    inputs, knyst,
+    inputs, knyst_commands,
     prelude::*,
     trig::once_trig,
 };
@@ -81,7 +81,7 @@ fn main() -> Result<()> {
     graph_output(0, node.repeat_outputs(1));
 
     let sub_graph = upload_graph(
-        knyst()
+        knyst_commands()
             .default_graph_settings()
             .oversampling(knyst::graph::Oversampling::X2),
         || {},
@@ -93,7 +93,7 @@ fn main() -> Result<()> {
     // Store the nodes that would be connected to the reverb if it's toggled on.
     let potential_delay_inputs: Vec<AnyNodeHandle> = vec![sub_graph.into(), node.into()];
 
-    let mut k = knyst();
+    let mut k = knyst_commands();
     let mut harmony_wavetable = Wavetable::sine();
     harmony_wavetable.add_odd_harmonics(8, 1.3);
     harmony_wavetable.normalize();
@@ -110,7 +110,7 @@ fn main() -> Result<()> {
             vec![0, 9, 22],
         ];
         std::thread::spawn(move || {
-            let mut k = knyst();
+            let mut k = knyst_commands();
             let mut rng = thread_rng();
             let harmony_nodes: Vec<NodeId> = (0..chords[0].len())
                 .map(|i| {
@@ -293,7 +293,7 @@ fn character_to_hz(c: char) -> Sample {
 
 /// Perform different actions depending on the key
 fn handle_special_keys(c: char, state: &mut State) -> bool {
-    let mut k = knyst();
+    let mut k = knyst_commands();
     match c {
         'm' => {
             // Load a buffer and play it back
@@ -385,7 +385,7 @@ fn insert_delay(inputs: &[AnyNodeHandle]) -> AnyNodeHandle {
     graph_output(1, static_sample_delay(62).input(delay));
     for input in inputs {
         // Clear all connections from this node to the outputs of the graph it is in.
-        knyst().disconnect(Connection::clear_to_graph_outputs(
+        knyst_commands().disconnect(Connection::clear_to_graph_outputs(
             input.node_ids().next().unwrap(),
         ));
         // Connect the node to the newly created reverb instead
@@ -440,7 +440,7 @@ async fn play_a_little_tune(speed: Sample) {
 }
 
 async fn spawn_note(freq: Sample, length_seconds: Sample) {
-    let mut k = knyst();
+    let mut k = knyst_commands();
     let mut settings = k.default_graph_settings();
     settings.num_outputs = 1;
     settings.num_inputs = 0;
