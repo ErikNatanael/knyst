@@ -280,7 +280,7 @@ impl GenImplData {
                         knyst::handles::Input::Constant(v) => {
                             let change = knyst::graph::ParameterChange {
                                 time: knyst::graph::Time::Immediately,
-                                input: (self.node_id, 
+                                input: (self.node_id,
                                     knyst::graph::connection::NodeChannel::Label(#param_string)).into(),
                                 value: knyst::graph::Change::Constant(v),
                             };
