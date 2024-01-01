@@ -33,7 +33,7 @@ use termion::raw::IntoRawMode;
 static ROOT_FREQ: Sample = 200.;
 
 struct State {
-    potential_reverb_inputs: Vec<AnyNodeHandle>,
+    potential_delay_inputs: Vec<AnyNodeHandle>,
     delay_node: Option<AnyNodeHandle>,
     harmony_wavetable_id: WavetableId,
     tokio_trigger: Arc<AtomicBool>,
@@ -73,7 +73,7 @@ fn main() -> Result<()> {
 
     let env = envelope_gen(
         0.0,
-        vec![(0.25, 0.02), (0.125, 0.1), (0.0, 0.5)],
+        vec![(0.25, 0.02), (0.125, 0.1), (0.0, 2.5)],
         knyst::envelope::SustainMode::NoSustain,
         StopAction::Continue,
     );
@@ -90,7 +90,7 @@ fn main() -> Result<()> {
     let sub_graph_id = sub_graph.graph_id();
     graph_output(0, sub_graph);
 
-    // Store the nodes that would be connected to the reverb if it's toggled on.
+    // Store the nodes that would be connected to the delay if it's toggled on.
     let potential_delay_inputs: Vec<AnyNodeHandle> = vec![sub_graph.into(), node.into()];
 
     let mut k = knyst_commands();
@@ -168,7 +168,7 @@ fn main() -> Result<()> {
         std::thread::spawn(move || tokio_knyst(trigger));
     }
     let mut state = State {
-        potential_reverb_inputs: potential_delay_inputs,
+        potential_delay_inputs,
         delay_node: None,
         harmony_wavetable_id,
         tokio_trigger,
@@ -188,7 +188,7 @@ fn main() -> Result<()> {
         "a-ä and w-å: trigger a new note on the monophonic synth",
         "q: quit",
         "m: load and play sound file",
-        "n: toggle reverb",
+        "n: toggle delay",
         "b: replace wavetable for harmony notes",
         "v: trigger a little melody using async",
         "c: tries to allocate, in debug mode this will panic (will mess with the terminal)",
@@ -322,7 +322,7 @@ fn handle_special_keys(c: char, state: &mut State) -> bool {
                     k.free_node_mend_connections(reverb_node.node_ids().next().unwrap())
                 }
                 None => {
-                    let delay_node = insert_delay(&state.potential_reverb_inputs);
+                    let delay_node = insert_delay(&state.potential_delay_inputs);
                     state.delay_node = Some(delay_node);
                 }
             }

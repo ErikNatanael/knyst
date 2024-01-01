@@ -648,12 +648,16 @@ impl Gen for GraphGen {
                 // until there is a crash.
                 let mut i = 0;
                 while i < changes.len() {
-                    let change = &changes[i];
+                    let change = &mut changes[i];
                     if change.timestamp < self.sample_counter {
-                        changes.remove(i);
-                    } else {
-                        i += 1;
+                        change.removal_countdown += 1;
+                        if change.removal_countdown >= 10 {
+                            let change = changes.remove(i);
+                            eprintln!("Removed scheduled change: {change:?}");
+                            continue;
+                        }
                     }
+                    i += 1;
                 }
 
                 // Set the output of the graph

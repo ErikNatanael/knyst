@@ -1,3 +1,5 @@
+use std::f32::consts::TAU;
+
 use anyhow::Result;
 use knyst::audio_backend::{CpalBackend, CpalBackendOptions};
 use knyst::controller::print_error_handler;
@@ -10,7 +12,7 @@ struct NaiveSine {
 }
 impl NaiveSine {
     pub fn update_freq(&mut self, freq: Sample, sample_rate: Sample) {
-        self.phase_step = freq / sample_rate;
+        self.phase_step = (freq * TAU) / sample_rate;
     }
 }
 
@@ -34,13 +36,12 @@ impl NaiveSine {
     ) -> GenState {
         for i in 0..*block_size {
             let freq = freq[i];
-            let amp = amp[i];
+            self.amp = amp[i];
             self.update_freq(freq, *sample_rate);
-            self.amp = amp;
             sig[i] = self.phase.cos() * self.amp;
             self.phase += self.phase_step;
-            if self.phase > 1.0 {
-                self.phase -= 1.0;
+            if self.phase > TAU {
+                self.phase -= TAU;
             }
         }
         GenState::Continue
@@ -58,7 +59,14 @@ fn main() -> Result<()> {
         },
         print_error_handler,
     );
+
+    // std::thread::sleep(std::time::Duration::from_millis(1000));
     // Play our NaiveSine
-    graph_output(0, naive_sine() * 0.5);
+    graph_output(0, naive_sine().freq(300.).amp(0.3).channels(2));
+    println!("Playing a sine wave at 300 Hz and an amplitude of 0.3");
+    println!("Press [ENTER] to exit");
+    // Wait for new line
+    let mut s = String::new();
+    let _ = std::io::stdin().read_line(&mut s);
     Ok(())
 }

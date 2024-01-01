@@ -580,6 +580,14 @@ struct OutputTask {
     input_index: usize,
     graph_output_index: usize,
 }
+impl std::fmt::Debug for OutputTask {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OutputTask")
+            .field("input_index", &self.input_index)
+            .field("graph_output_index", &self.graph_output_index)
+            .finish()
+    }
+}
 unsafe impl Send for OutputTask {}
 
 /// Error pushing a new node (Gen or Graph) to a Graph
@@ -3496,13 +3504,13 @@ impl Graph {
 
     /// This function needs to be run regularly to be sure that scheduled changes are carried out.
     pub fn update(&mut self) {
+        self.commit_changes();
         if let Some(ggc) = &mut self.graph_gen_communicator {
             ggc.update();
         }
         for (_key, graph) in &mut self.graphs_per_node {
             graph.update();
         }
-        self.commit_changes();
     }
 
     /// Check if there are any old nodes or other resources that have been
@@ -3610,6 +3618,10 @@ struct ScheduledChange {
     timestamp: u64,
     key: NodeKey,
     kind: ScheduledChangeKind,
+    /// If a change is unable to be applied on the audio thread for many
+    /// blocks it has to be removed to make space. This counter counts the blocks
+    /// since the change first expired.
+    removal_countdown: u8,
 }
 #[derive(Clone, Copy, Debug)]
 enum ScheduledChangeKind {
@@ -3811,6 +3823,7 @@ impl Scheduler {
                         timestamp: ts,
                         key,
                         kind: change_kind,
+                        removal_countdown: 0,
                     });
                 }
             }

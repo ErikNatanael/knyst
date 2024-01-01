@@ -56,6 +56,42 @@ enum Command {
     ScheduleBeatCallback(BeatCallback, StartBeat),
     RequestInspection(std::sync::mpsc::SyncSender<GraphInspection>),
 }
+impl std::fmt::Debug for Command {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Push {
+                gen_or_graph,
+                node_address,
+                graph_id,
+                start_time,
+            } => f
+                .debug_struct("Push")
+                .field("gen_or_graph", gen_or_graph)
+                .field("node_address", node_address)
+                .field("graph_id", graph_id)
+                .field("start_time", start_time)
+                .finish(),
+            Self::Connect(arg0) => f.debug_tuple("Connect").field(arg0).finish(),
+            Self::Disconnect(arg0) => f.debug_tuple("Disconnect").field(arg0).finish(),
+            Self::FreeNode(arg0) => f.debug_tuple("FreeNode").field(arg0).finish(),
+            Self::FreeNodeMendConnections(arg0) => f
+                .debug_tuple("FreeNodeMendConnections")
+                .field(arg0)
+                .finish(),
+            Self::ScheduleChange(arg0) => f.debug_tuple("ScheduleChange").field(arg0).finish(),
+            Self::ScheduleChanges(arg0) => f.debug_tuple("ScheduleChanges").field(arg0).finish(),
+            Self::FreeDisconnectedNodes => write!(f, "FreeDisconnectedNodes"),
+            Self::ResourcesCommand(_arg0) => f.debug_tuple("ResourcesCommand").finish(),
+            Self::ChangeMusicalTimeMap(_arg0) => f.debug_tuple("ChangeMusicalTimeMap").finish(),
+            Self::ScheduleBeatCallback(_arg0, _arg1) => {
+                f.debug_tuple("ScheduleBeatCallback").finish()
+            }
+            Self::RequestInspection(arg0) => {
+                f.debug_tuple("RequestInspection").field(arg0).finish()
+            }
+        }
+    }
+}
 
 /// [`KnystCommands`] sends commands to the [`Controller`] which should hold the
 /// top level [`Graph`]. The API is as close as possible to that of an owned
@@ -848,6 +884,7 @@ impl Controller {
     fn receive_and_apply_commands(&mut self, max_commands: usize) -> bool {
         let mut i = 0;
         while let Ok(command) = self.command_receiver.try_recv() {
+            // println!("Received command in controller: {:?}", &command);
             self.apply_command(command);
             i += 1;
             if i >= max_commands {

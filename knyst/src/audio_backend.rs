@@ -409,7 +409,7 @@ pub mod cpal_backend {
                 panic!("CpalBackend expects a graph with the same number of outputs as the device. Check CpalBackend::channels().")
             }
             if graph.num_inputs() > 0 {
-                eprintln!("Warning: CpalBackend currently does not support inputs into Graphs.")
+                eprintln!("Warning: CpalBackend currently does not support inputs into the top level Graph.")
             }
             let (run_graph, resources_command_sender, resources_command_receiver) =
                 RunGraph::new(&mut graph, resources, run_graph_settings)?;
@@ -465,7 +465,7 @@ pub mod cpal_backend {
         mut run_graph: RunGraph,
     ) -> Result<cpal::Stream, AudioBackendError>
     where
-        T: cpal::Sample + cpal::FromSample<Sample> + cpal::SizedSample,
+        T: cpal::Sample + cpal::FromSample<Sample> + cpal::SizedSample + std::fmt::Display,
     {
         let channels = config.channels as usize;
 
@@ -474,6 +474,7 @@ pub mod cpal_backend {
 
         let mut sample_counter = 0;
         let graph_block_size = run_graph.block_size();
+        run_graph.run_resources_communication(50);
         run_graph.process_block();
         let stream = device.build_output_stream(
             config,
@@ -487,6 +488,7 @@ pub mod cpal_backend {
                             sample_counter = 0;
                         }
                         let buffer = run_graph.graph_output_buffers();
+                        // println!("{}", T::from_sample(buffer.read(0, sample_counter)));
                         for (channel_i, out) in frame.iter_mut().enumerate() {
                             let value: T = T::from_sample(buffer.read(channel_i, sample_counter));
                             *out = value;
