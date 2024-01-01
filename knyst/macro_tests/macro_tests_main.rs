@@ -1,4 +1,5 @@
 #[test]
+#[cfg_attr(miri, ignore)]
 fn tests() {
     let t = trybuild::TestCases::new();
     t.pass("macro_tests/generate_compiling_code.rs");
