@@ -10,7 +10,6 @@ cargo run --release --example interactive --features cpal
 
 This example aims to provide an overview of different ways that Knyst can be used. The example currently demonstrates:
 
-- using fundsp within a Gen and passing Knyst audio through it
 - async using tokio
 - interactivity using the keyboard to play pitches monophonically
 - sound file playback
