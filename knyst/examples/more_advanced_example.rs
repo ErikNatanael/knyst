@@ -29,10 +29,14 @@ fn main() -> Result<()> {
     graph_output(0, (delay + static_sample_delay(87).input(delay)) * 0.5);
     graph_output(1, (delay + static_sample_delay(62).input(delay)) * 0.5);
     let outer_graph = upload_graph(knyst_commands().default_graph_settings(), || {});
+    // Nothing is passed into the delay until now. Pass any output of the "outer_graph" into the delay.
     delay.input(outer_graph);
+    // Make the "outer_graph" the active graph, meaning any new nodes are pushed to it.
     outer_graph.activate();
 
     let mut rng = thread_rng();
+    // Create a node for the frequency value so that this value can be changed once and
+    // propagated to many other nodes.
     let freq_var = bus(1).set(0, 440.);
     for _ in 0..10 {
         let freq = (sine().freq(
@@ -45,7 +49,6 @@ fn main() -> Result<()> {
                 .range(0.0, 400.),
         ) * 100.0)
             + freq_var;
-        // let freq = sine().freq(0.5).range(200.0, 200.0 * 9.0 / 8.0);
         let node0 = sine();
         node0.freq(freq);
         let modulator = sine();

@@ -276,6 +276,15 @@ impl BufferReaderMulti {
         self.read_pointer = new_pointer_pos;
         self.finished = false;
     }
+    /// Upload to the current graph, returning a handle to the new node
+    pub fn upload(self) -> knyst::handles::Handle<BufferReaderMultiHandle> {
+        let num_channels = self.num_channels;
+        let id = knyst::prelude::KnystCommands::push_without_inputs(&mut knyst_commands(), self);
+        knyst::handles::Handle::new(BufferReaderMultiHandle {
+            node_id: id,
+            num_channels,
+        })
+    }
 }
 
 impl Gen for BufferReaderMulti {
