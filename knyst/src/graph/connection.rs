@@ -42,6 +42,9 @@ pub enum Connection {
         ///
         /// Either to_index or to_label can be used, but index takes precedence if both are set.
         to_label: Option<&'static str>,
+        /// An offset to the destination, useful if targeting a labelled channel and wanting to
+        /// connect multiple channels in a row.
+        to_index_offset: usize,
         /// How many channels to connect. Channels will wrap if this value is
         /// larger than the number of channels on the sink and/or source nodes. Default: 1.
         channels: usize,
@@ -102,6 +105,9 @@ pub enum Connection {
         /// Either to_index or to_label can be used, but index takes precedence if both are set.
         /// if input_index and input_label are both None, the default is index 0
         to_label: Option<&'static str>,
+        /// An offset to the destination, useful if targeting a labelled channel and wanting to
+        /// connect multiple channels in a row.
+        to_index_offset: usize,
         /// How many channels to connect. Channels will wrap if this value is
         /// larger than the number of channels on the sink and/or source nodes. Default: 1.
         channels: usize,
@@ -158,9 +164,11 @@ impl Display for Connection {
                 to_label,
                 channels,
                 feedback,
+                to_index_offset,
             } => {
                 let feedback = if *feedback { "feedback"} else {""};
-                write!(f, "Connection::Node {feedback} {:?}:{from_index:?}/{from_label:?} -> {:?}:{to_index:?}/{to_label:?} {channels} channels", source, sink)
+                let offset = if *to_index_offset > 0 {format!("+{to_index_offset}")} else {String::new()};
+                write!(f, "Connection::Node {feedback} {:?}:{from_index:?}/{from_label:?} -> {:?}:{to_index:?}/{to_label:?}{offset} {channels} channels", source, sink)
             },
             Connection::Constant {
                 value,
@@ -181,7 +189,12 @@ impl Display for Connection {
                 to_index,
                 to_label,
                 channels,
-            } => write!(f, "Connection::GraphInput  {from_index:?} -> {:?}:{to_index:?}/{to_label:?} {channels} channels", sink),
+                to_index_offset,
+            } => {
+
+                let offset = if *to_index_offset > 0 {format!("+{to_index_offset}")} else {String::new()};
+                write!(f, "Connection::GraphInput  {from_index:?} -> {:?}:{to_index:?}/{to_label:?}{offset} {channels} channels", sink)
+            }
             Connection::Clear {
                 node,
                 input_nodes,
@@ -239,6 +252,7 @@ impl Connection {
             to_index: None,
             to_label: None,
             channels: 1,
+            to_index_offset: 0,
         }
     }
     /// Clear input constants of `node`
@@ -467,6 +481,23 @@ impl Connection {
             NodeChannel::Label(label) => self.to_label(label),
         }
     }
+    /// Set the sink channel offset
+    pub fn to_channel_offset(mut self, offset: usize) -> Self {
+        match &mut self {
+            Connection::Node {
+                to_index_offset, ..
+            } => *to_index_offset = offset,
+            Connection::GraphInput {
+                to_index_offset, ..
+            } => *to_index_offset = offset,
+            Connection::Constant { .. }
+            | Connection::GraphOutput { .. }
+            | Connection::Clear { .. }
+            | Connection::GraphInputToOutput { .. }
+            | Connection::ClearGraphInputToOutput { .. } => (),
+        };
+        self
+    }
     /// Set the source channel by index
     pub fn from_index(mut self, index: usize) -> Self {
         match &mut self {
@@ -680,6 +711,7 @@ impl NodeOutput {
             to_label: None,
             channels: 1,
             feedback: false,
+            to_index_offset: 0,
         };
         match self.from_channel {
             NodeChannel::Label(label) => connection.from_label(label),

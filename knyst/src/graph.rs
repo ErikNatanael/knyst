@@ -164,6 +164,7 @@ impl NodeId {
             to_label: None,
             channels: 1,
             feedback: false,
+            to_index_offset: 0,
         }
     }
     /// Create a [`Connection`] from `self` to a graph output.
@@ -187,6 +188,7 @@ impl NodeId {
             to_label: None,
             channels: 1,
             feedback: true,
+            to_index_offset: 0,
         }
     }
     /// Create a NodeChanges for setting parameters or triggers. Use in
@@ -207,6 +209,7 @@ impl GraphInput {
             to_index: None,
             to_label: None,
             channels: 1,
+            to_index_offset: 0,
         }
     }
 }
@@ -1561,6 +1564,7 @@ impl Graph {
                         to_label: None,
                         channels: 1,
                         feedback: false,
+                        to_index_offset: 0,
                     });
                 }
             }
@@ -1602,6 +1606,7 @@ impl Graph {
                     to_index: Some(graph_input.to_input_index),
                     to_label: None,
                     channels: 1,
+                    to_index_offset: 0,
                 });
             }
         }
@@ -2148,6 +2153,7 @@ impl Graph {
                 to_label: input_label,
                 channels,
                 feedback,
+                to_index_offset,
             } => {
                 match (source.graph_id(), sink.graph_id()) {
                     (Some(g0), Some(g1)) => {
@@ -2202,7 +2208,7 @@ impl Graph {
                     }
                 } else {
                     0
-                };
+                } + to_index_offset;
                 let from_index = if from_index.is_some() {
                     if let Some(i) = from_index {
                         i
@@ -2422,6 +2428,7 @@ impl Graph {
                 to_index,
                 to_label,
                 channels,
+                to_index_offset,
             } => {
                 if let Some(graph_id) = sink.graph_id() {
                     if graph_id != self.id {
@@ -2456,7 +2463,7 @@ impl Graph {
                     }
                 } else {
                     0
-                };
+                } + to_index_offset;
                 if channels + to_index > self.num_outputs {
                     return Err(ConnectionError::DestinationChannelOutOfBounds);
                 }
@@ -2582,6 +2589,7 @@ impl Graph {
                 to_label: input_label,
                 channels,
                 feedback,
+                to_index_offset,
             } => {
                 match (source.graph_id(), sink.graph_id()) {
                     (Some(g0), Some(g1)) => {
@@ -2638,7 +2646,7 @@ impl Graph {
                     }
                 } else {
                     0
-                };
+                } + to_index_offset;
                 let from_index = if from_index.is_some() {
                     if let Some(i) = from_index {
                         i
@@ -2841,6 +2849,7 @@ impl Graph {
                 to_index,
                 to_label,
                 channels,
+                to_index_offset,
             } => {
                 if let Some(sink_graph_id) = sink.graph_id() {
                     if sink_graph_id != self.id {
@@ -2877,7 +2886,7 @@ impl Graph {
                     }
                 } else {
                     0
-                };
+                } + to_index_offset;
                 if channels + from_index > self.num_inputs {
                     return Err(ConnectionError::SourceChannelOutOfBounds);
                 }

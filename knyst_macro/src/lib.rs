@@ -289,7 +289,8 @@ impl GenImplData {
                         }
                         knyst::handles::Input::Handle { output_channels } => {
                             for (i, (node_id, chan)) in output_channels.enumerate() {
-                            knyst::modal_interface::knyst_commands().connect(node_id.to(self.node_id).from_channel(chan).to_channel(#param_string));
+                            knyst::modal_interface::knyst_commands()
+                                .connect(node_id.to(self.node_id).from_channel(chan).to_channel(#param_string));
                             }
                         }
                     }
@@ -380,15 +381,15 @@ impl GenImplData {
                                 #(#handle_functions)*
                             }
                             impl knyst::handles::HandleData for #handle_name {
-                fn out_channels(&self) -> knyst::handles::ChannelIter {
-                    knyst::handles::ChannelIter::single_node_id(
+                fn out_channels(&self) -> knyst::handles::SourceChannelIter {
+                    knyst::handles::SourceChannelIter::single_node_id(
                         self.node_id,
                         #num_outputs,
                     )
                 }
 
-                fn in_channels(&self) -> knyst::handles::ChannelIter {
-                    knyst::handles::ChannelIter::single_node_id(
+                fn in_channels(&self) -> knyst::handles::SinkChannelIter {
+                    knyst::handles::SinkChannelIter::single_node_id(
                         self.node_id,
                         #num_inputs,
                     )

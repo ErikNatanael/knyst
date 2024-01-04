@@ -386,12 +386,12 @@ pub struct BufferReaderMultiHandle {
     num_channels: usize,
 }
 impl HandleData for BufferReaderMultiHandle {
-    fn out_channels(&self) -> knyst::handles::ChannelIter {
-        knyst::handles::ChannelIter::single_node_id(self.node_id, self.num_channels)
+    fn out_channels(&self) -> knyst::handles::SourceChannelIter {
+        knyst::handles::SourceChannelIter::single_node_id(self.node_id, self.num_channels)
     }
 
-    fn in_channels(&self) -> knyst::handles::ChannelIter {
-        todo!()
+    fn in_channels(&self) -> knyst::handles::SinkChannelIter {
+        knyst::handles::SinkChannelIter::None
     }
 
     fn node_ids(&self) -> knyst::handles::NodeIdIter {
