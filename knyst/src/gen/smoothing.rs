@@ -62,6 +62,7 @@ pub struct Ramp {
     current_value: Sample,
     step: Sample,
     sample_rate: Sample,
+    num_steps_to_go: usize,
 }
 
 impl Ramp {}
@@ -96,12 +97,15 @@ impl Ramp {
             if recalculate {
                 let num_samples = (t * self.sample_rate).floor();
                 self.step = (v - self.current_value) / num_samples;
+                self.num_steps_to_go = num_samples as usize;
             }
-            if (self.current_value - v).abs() < 0.0001 {
+            if self.num_steps_to_go == 0 {
                 self.current_value = v;
                 self.step = 0.0;
+            } else {
+                self.current_value += self.step;
+                self.num_steps_to_go -= 1;
             }
-            self.current_value += self.step;
             ramped_value[i] = self.current_value;
         }
         GenState::Continue
