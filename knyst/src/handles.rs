@@ -50,7 +50,7 @@ use crate::{
 use crate::{
     graph::{connection::NodeChannel, GenOrGraph, NodeId},
     modal_interface::knyst_commands,
-    prelude::{Bus, KnystCommands, MulGen, RampGen},
+    prelude::{Bus, KnystCommands, MulGen, RangeGen},
 };
 
 #[allow(unused)]
@@ -1449,7 +1449,7 @@ impl<H: HandleData + Copy + HandleNormalRange> Handle<H> {
         // Convert to the correct range for the RangeGen
         let input = self * 0.5 + 0.5;
         let num_out_channels = input.out_channels().collect::<Vec<_>>().len();
-        let node_id = knyst_commands().push_without_inputs(RampGen(num_out_channels));
+        let node_id = knyst_commands().push_without_inputs(RangeGen(num_out_channels));
         match min.into() {
             Input::Constant(c) => {
                 knyst_commands().connect(

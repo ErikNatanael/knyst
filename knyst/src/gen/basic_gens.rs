@@ -192,16 +192,16 @@ impl Gen for Bus {
     }
 }
 
-/// RampGen is used when calling `.ramp` on a Handle. Remaps each input from 0..=1 to min..=max. Unusually, the first input is not the signal processed, but the min and max values.
+/// RangeGen is used when calling `.range(min, max)` on a Handle. Remaps each input from 0..=1 to min..=max. Unusually, the first input is not the signal processed, but the min and max values.
 ///
-/// The number of channels of this Gen is determined at instantiation, i.e. when calling `.ramp`.
+/// The number of channels of this Gen is determined at instantiation, i.e. when calling `.range`.
 ///
 /// *inputs*
 /// 0. "min": The output min value
 /// 1. "max": The output max value
 /// 2..N: The input channels
-pub struct RampGen(pub usize);
-impl Gen for RampGen {
+pub struct RangeGen(pub usize);
+impl Gen for RangeGen {
     fn process(&mut self, ctx: GenContext, _resources: &mut Resources) -> GenState {
         let block_size = ctx.block_size();
         let mut out_bufs = ctx.outputs.iter_mut();
@@ -229,7 +229,7 @@ impl Gen for RampGen {
     }
 
     fn name(&self) -> &'static str {
-        "RampGen"
+        "RangeGen"
     }
 }
 
