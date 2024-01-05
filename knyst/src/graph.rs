@@ -622,9 +622,7 @@ pub enum FreeError {
 #[allow(missing_docs)]
 #[derive(thiserror::Error, Debug, PartialEq)]
 pub enum ScheduleError {
-    #[error(
-        "The graph containing the NodeId provided was not found. The node itself may or may not exist."
-    )]
+    #[error("The graph containing the NodeId provided was not found: `{0:?}`")]
     GraphNotFound(NodeId),
     #[error("The NodeId does not exist. The Node may have been freed already.")]
     NodeNotFound,
@@ -1864,7 +1862,7 @@ impl Graph {
                 name: node.name.to_string(),
                 address: self.node_ids
                     .get(node_key)
-                    .expect("All nodes should have their addresses stored.")
+                    .expect("All nodes should have their ids stored.")
                     .clone(),
                 input_channels: self.node_input_index_to_name
                     .get(node_key)
