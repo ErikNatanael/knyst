@@ -271,6 +271,43 @@ impl HandleData for OutputChannelHandle {
     }
 }
 
+/// Handle to a single output channel from a node.
+#[derive(Copy, Clone, Debug)]
+pub struct InputChannelHandle {
+    source: Sink,
+    channel: NodeChannel,
+}
+impl HandleData for InputChannelHandle {
+    fn out_channels(&self) -> SourceChannelIter {
+        SourceChannelIter::None
+    }
+
+    fn in_channels(&self) -> SinkChannelIter {
+        match self.source {
+            Sink::GraphOutput(graph_id) => {
+                let start_index = match self.channel {
+                    NodeChannel::Index(index) => index,
+                    NodeChannel::Label(_) => unreachable!(),
+                };
+                SinkChannelIter::GraphOutput {
+                    graph_id,
+                    start_index,
+                    num_channels: 1,
+                    current_channel: 0,
+                }
+            }
+            Sink::Gen(node_id) => SinkChannelIter::single_channel(node_id, self.channel),
+        }
+    }
+
+    fn node_ids(&self) -> NodeIdIter {
+        match self.source {
+            Sink::GraphOutput(_graph_id) => NodeIdIter::None,
+            Sink::Gen(node_id) => NodeIdIter::Single(node_id),
+        }
+    }
+}
+
 /// Handle for a [`Handle::channels`]. Cycles the outputs from the source handle to return a given number of handles.
 ///
 /// # Examples
@@ -477,6 +514,26 @@ pub trait HandleData {
             }
             NodeChannel::Label(_name) => Handle::new(OutputChannelHandle {
                 node_id: self.node_ids().next().unwrap(),
+                channel,
+            }),
+        }
+    }
+    /// Returns a handle to a single channel from this Handle (not type checked)
+    fn input_handle(&self, channel: impl Into<NodeChannel>) -> Handle<InputChannelHandle> {
+        let channel = channel.into();
+        match channel {
+            NodeChannel::Index(i) => {
+                let (source, chan) = self.out_channels().nth(i).unwrap();
+                match source {
+                    Source::GraphInput(_graph_id) => todo!(),
+                    Source::Gen(node_id) => Handle::new(InputChannelHandle {
+                        source: Sink::Gen(node_id),
+                        channel: chan,
+                    }),
+                }
+            }
+            NodeChannel::Label(_name) => Handle::new(InputChannelHandle {
+                source: Sink::Gen(self.node_ids().next().unwrap()),
                 channel,
             }),
         }
@@ -1506,6 +1563,13 @@ pub fn graph_output(index: usize, input: impl Into<Input>) {
         }
     }
 }
+/// Get a handle to a single graph output
+pub fn graph_output_handle(index: usize) -> Handle<InputChannelHandle> {
+    Handle::new(InputChannelHandle {
+        source: Sink::GraphOutput(knyst_commands().current_graph()),
+        channel: index.into(),
+    })
+}
 
 /// A handle type that can refer to any Gen and still be Copy. It knows only how many output/input channels the Gen has, not their labels. You can still use labels via the `set` method.
 #[derive(Copy, Clone, Debug)]
@@ -1595,7 +1659,7 @@ pub fn handle(gen: impl GenOrGraph) -> Handle<GenericHandle> {
 }
 
 /// A `Handle` to a `Graph`
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct GraphHandle {
     node_id: NodeId,
     graph_id: GraphId,
