@@ -61,7 +61,6 @@ pub struct Ramp {
     last_time: Sample,
     current_value: Sample,
     step: Sample,
-    sample_rate: Sample,
     num_steps_to_go: usize,
 }
 
@@ -71,8 +70,14 @@ impl Ramp {
     #[new]
     #[allow(missing_docs)]
     #[must_use]
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(start_value: Sample) -> Self {
+        Self {
+            last_value: start_value,
+            last_time: 1.0,
+            current_value: start_value,
+            step: 0.,
+            num_steps_to_go: 0,
+        }
     }
     #[process]
     fn process(
@@ -81,6 +86,7 @@ impl Ramp {
         time: &[Sample],
         ramped_value: &mut [Sample],
         block_size: BlockSize,
+        sample_rate: SampleRate,
     ) -> GenState {
         for i in 0..*block_size {
             let mut recalculate = false;
@@ -95,7 +101,7 @@ impl Ramp {
                 recalculate = true;
             }
             if recalculate {
-                let num_samples = (t * self.sample_rate).floor();
+                let num_samples = (t * *sample_rate).floor();
                 self.step = (v - self.current_value) / num_samples;
                 self.num_steps_to_go = num_samples as usize;
             }
@@ -112,7 +118,7 @@ impl Ramp {
     }
 
     #[init]
-    fn init(&mut self, sample_rate: SampleRate) {
-        self.sample_rate = *sample_rate;
+    fn init(&mut self) {
+        self.num_steps_to_go = 0;
     }
 }

@@ -1,6 +1,6 @@
 //! Includes basic `Gen`s such as `Mul` and `Range`
 
-use crate as knyst;
+use crate::{self as knyst, prelude::Superseconds, SampleRate};
 use knyst_macro::impl_gen;
 
 use crate::{
@@ -312,5 +312,169 @@ impl PanMonoToStereo {
             right[i] = signal * right_gain;
         }
         GenState::Continue
+    }
+}
+
+/// A linear interpolation between two numbers over some time
+pub struct LineSegment {
+    start: Sample,
+    end: Sample,
+    dur: Superseconds,
+    num_samples_left: usize,
+    current_value: f64,
+    step: f64,
+}
+#[impl_gen]
+impl LineSegment {
+    #[allow(missing_docs)]
+    #[new]
+    #[must_use]
+    pub fn new(start: Sample, end: Sample, dur: Superseconds) -> Self {
+        Self {
+            start,
+            end,
+            dur,
+            num_samples_left: 0,
+            current_value: start as f64,
+            step: 0.,
+        }
+    }
+    fn init(&mut self, sample_rate: SampleRate) {
+        self.num_samples_left = self.dur.to_samples(*sample_rate as u64) as usize;
+        self.step = (self.end as f64 - self.start as f64) / self.num_samples_left as f64;
+        self.current_value = self.start as f64;
+    }
+    #[allow(missing_docs)]
+    #[process]
+    pub fn process(&mut self, output: &mut [Sample], block_size: BlockSize) -> GenState {
+        if self.num_samples_left == 0 {
+            output.fill(self.end);
+        } else if self.num_samples_left < block_size.0 {
+            for out in output {
+                *out = self.current_value as Sample;
+                if self.num_samples_left == 0 {
+                    self.step = 0.;
+                    self.current_value = self.end as f64;
+                } else {
+                    self.current_value += self.step;
+                    self.num_samples_left -= 1;
+                }
+            }
+        } else {
+            for out in output.iter_mut() {
+                *out = self.current_value as Sample;
+                self.current_value += self.step;
+            }
+            self.num_samples_left -= output.len();
+        }
+        GenState::Continue
+    }
+}
+
+/// A linear interpolation between two numbers over some time
+pub struct ExpLineSegment {
+    start: Sample,
+    end: Sample,
+    dur: Superseconds,
+    num_samples_left: usize,
+    current_value: f64,
+    coeff: f64,
+}
+#[impl_gen]
+impl ExpLineSegment {
+    #[allow(missing_docs)]
+    #[new]
+    #[must_use]
+    pub fn new(start: Sample, end: Sample, dur: Superseconds) -> Self {
+        Self {
+            start,
+            end,
+            dur,
+            num_samples_left: 0,
+            current_value: start as f64,
+            coeff: 0.,
+        }
+    }
+    fn init(&mut self, sample_rate: SampleRate) {
+        self.num_samples_left = self.dur.to_samples(*sample_rate as u64) as usize;
+        self.coeff = ((self.end / self.start) as f64).powf(1. / self.num_samples_left as f64);
+        self.current_value = self.start as f64;
+    }
+    #[allow(missing_docs)]
+    #[process]
+    pub fn process(&mut self, output: &mut [Sample], block_size: BlockSize) -> GenState {
+        if self.num_samples_left == 0 {
+            output.fill(self.end);
+        } else if self.num_samples_left < block_size.0 {
+            for out in output {
+                *out = self.current_value as Sample;
+                if self.num_samples_left == 0 {
+                    self.coeff = 1.;
+                    self.current_value = self.end as f64;
+                } else {
+                    self.current_value *= self.coeff;
+                    self.num_samples_left -= 1;
+                }
+            }
+        } else {
+            for out in output.iter_mut() {
+                *out = self.current_value as Sample;
+                self.current_value *= self.coeff;
+            }
+            self.num_samples_left -= output.len();
+        }
+        GenState::Continue
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{handles::graph_output, offline::KnystOffline, prelude::Superseconds};
+
+    use super::{exp_line_segment, line_segment};
+
+    #[test]
+    fn line_segment_test() {
+        let mut kt = KnystOffline::new(8, 8, 0, 1);
+        graph_output(
+            0,
+            line_segment(1.0, 2.0, Superseconds::from_seconds_f64(1.0)),
+        );
+        kt.process_block();
+        let output = kt.output_channel(0).unwrap();
+        for i in 0..8 {
+            assert_eq!(output[i], 1.0 + (i as f32 / 8.));
+        }
+        kt.process_block();
+        let output = kt.output_channel(0).unwrap();
+        for i in 0..8 {
+            assert_eq!(output[i], 2.);
+        }
+    }
+    #[test]
+    fn exp_line_segment_test() {
+        let sr = 192000;
+        let mut kt = KnystOffline::new(sr, sr, 0, 1);
+        graph_output(
+            0,
+            exp_line_segment(1.0, 2.0, Superseconds::from_seconds_f64(1.0)),
+        );
+        kt.process_block();
+        let output = kt.output_channel(0).unwrap();
+        assert_eq!(output[0], 1.0);
+        dbg!(output);
+        let mut diff = output[1] - output[0];
+        for i in 1..sr - 1 {
+            let new_diff = output[i + 1] - output[0];
+            assert!(new_diff > diff);
+            diff = new_diff;
+            // assert_eq!(output[i], 1.0 + (i as f32 / 8.));
+        }
+        assert!(output[sr - 1] < 2.0);
+        kt.process_block();
+        let output = kt.output_channel(0).unwrap();
+        for i in 0..32 {
+            assert_eq!(output[i], 2.);
+        }
     }
 }
