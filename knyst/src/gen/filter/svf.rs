@@ -245,7 +245,7 @@ impl SvfHighShelf {
     }
 }
 
-/// Svf bandpass filter with controllable settings.
+/// Svf filter with controllable settings.
 ///
 /// Uses the [`SvfFilter`] under the hood, but allows for setting the filter parameters at block rate
 pub struct SvfDynamic {
@@ -276,8 +276,16 @@ impl SvfDynamic {
         sample_rate: SampleRate,
     ) -> GenState {
         if cutoff_freq[0] != self.last_cutoff || gain[0] != self.last_gain || q[0] != self.last_q {
+            // A q value of 0.0 will result in NaN
+            let mut q = q[0];
+            if q <= 0.0 {
+                q = f32::MIN;
+            }
             self.svf
-                .set_coeffs(cutoff_freq[0], q[0], gain[0], *sample_rate);
+                .set_coeffs(cutoff_freq[0], q, gain[0], *sample_rate);
+            self.last_cutoff = cutoff_freq[0];
+            self.last_gain = gain[0];
+            self.last_q = q;
         }
         self.svf.process(input, output);
         GenState::Continue
