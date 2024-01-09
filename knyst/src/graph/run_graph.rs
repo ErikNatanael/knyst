@@ -57,7 +57,7 @@ impl RunGraph {
         // Create a new dummy NodeId since it doesn't matter; we know
         // that the Graph will not do anything with its NodeId in its init function
         // and the top level graph doesn't have a NodeId anyway.
-        match graph.split_and_create_top_level_node(NodeId::new()) {
+        match graph.split_and_create_top_level_node(NodeId::new(u64::MAX)) {
             Ok(graph_node) => {
                 let input_buffer_length = graph_node.num_inputs() * graph_node.block_size;
                 let input_buffer_ptr = if input_buffer_length != 0 {

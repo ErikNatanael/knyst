@@ -54,7 +54,7 @@ impl KnystCommands for UnifiedKnystCommands {
             UnifiedKnystCommands::Real(kc) => kc.borrow_mut().push_without_inputs(gen_or_graph),
             UnifiedKnystCommands::Dummy(kc) => {
                 kc.report_dummy();
-                NodeId::new()
+                NodeId::new(u64::MAX)
             }
         }
     }
@@ -68,7 +68,7 @@ impl KnystCommands for UnifiedKnystCommands {
             UnifiedKnystCommands::Real(kc) => kc.borrow_mut().push(gen_or_graph, inputs),
             UnifiedKnystCommands::Dummy(kc) => {
                 kc.report_dummy();
-                NodeId::new()
+                NodeId::new(u64::MAX)
             }
         }
     }
@@ -84,7 +84,7 @@ impl KnystCommands for UnifiedKnystCommands {
                 .push_to_graph_without_inputs(gen_or_graph, graph_id),
             UnifiedKnystCommands::Dummy(kc) => {
                 kc.report_dummy();
-                NodeId::new()
+                NodeId::new(u64::MAX)
             }
         }
     }
@@ -102,7 +102,7 @@ impl KnystCommands for UnifiedKnystCommands {
             }
             UnifiedKnystCommands::Dummy(kc) => {
                 kc.report_dummy();
-                NodeId::new()
+                NodeId::new(u64::MAX)
             }
         }
     }
@@ -273,12 +273,12 @@ impl KnystCommands for UnifiedKnystCommands {
         }
     }
 
-    fn upload_local_graph(&mut self) -> Handle<GraphHandle> {
+    fn upload_local_graph(&mut self) -> Option<Handle<GraphHandle>> {
         match self {
             UnifiedKnystCommands::Real(kc) => kc.borrow_mut().upload_local_graph(),
             UnifiedKnystCommands::Dummy(kc) => {
                 kc.report_dummy();
-                Handle::new(GraphHandle::new(NodeId::new(), 0, 0, 0))
+                None
             }
         }
     }

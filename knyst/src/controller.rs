@@ -192,7 +192,8 @@ pub trait KnystCommands {
     /// Creates a new local graph and sets it as the default graph
     fn init_local_graph(&mut self, settings: GraphSettings) -> GraphId;
     /// Upload the local graph to the previously default graph and restore the default graph to that previous default graph.
-    fn upload_local_graph(&mut self) -> crate::handles::Handle<crate::handles::GraphHandle>;
+    fn upload_local_graph(&mut self)
+        -> Option<crate::handles::Handle<crate::handles::GraphHandle>>;
     /// Start a scheduling bundle, meaning any change scheduled will not be applied until [`KnystCommands::upload_scheduling_bundle`] is called. Prefer using [`schedule_bundle`] as it is more difficult to misuse.
     fn start_scheduling_bundle(&mut self, time: Time);
     /// Uploads scheduled changes to the graph and schedules them for the time specified in [`KnystCommands::start_scheduling_bundle`]. Prefer [`schedule_bundle`] to help reinforce scoping and potential thread switches.
@@ -206,7 +207,9 @@ pub fn upload_graph(
 ) -> crate::handles::Handle<crate::handles::GraphHandle> {
     knyst_commands().init_local_graph(settings);
     init();
-    knyst_commands().upload_local_graph()
+    knyst_commands()
+        .upload_local_graph()
+        .expect("`upload_graph` initiated a local graph so it should exist")
 }
 
 /// Schedules any changes made in the closure at the given time. Currently limited to changes of constant values and spawning new nodes, not new connections.
@@ -244,7 +247,7 @@ impl KnystCommands for MultiThreadedKnystCommands {
         let node_id = {
             let local_node_id = LOCAL_GRAPH.with_borrow_mut(|g| {
                 if let Some(g) = g.last_mut() {
-                    let mut node_id = NodeId::new();
+                    let mut node_id = NodeId::new(g.id());
                     g.push_with_existing_address_at_time(
                         gen_or_graph,
                         &mut node_id,
@@ -276,7 +279,7 @@ impl KnystCommands for MultiThreadedKnystCommands {
         let found_in_local = LOCAL_GRAPH.with_borrow_mut(|g| {
             if let Some(g) = g.last_mut() {
                 if g.id() == graph_id {
-                    let mut node_id = NodeId::new();
+                    let mut node_id = NodeId::new(graph_id);
                     if let Err(e) =
                         g.push_with_existing_address_to_graph(gen_or_graph, &mut node_id, g.id())
                     {
@@ -297,7 +300,7 @@ impl KnystCommands for MultiThreadedKnystCommands {
         match found_in_local {
             Ok(node_id) => node_id,
             Err(gen_or_graph) => {
-                let mut new_node_address = NodeId::new();
+                let new_node_address = NodeId::new(graph_id);
                 let command = Command::Push {
                     gen_or_graph,
                     node_address: new_node_address,
@@ -305,7 +308,6 @@ impl KnystCommands for MultiThreadedKnystCommands {
                     start_time: self.changes_bundle_time,
                 };
                 self.sender.send(command).unwrap();
-                new_node_address.set_graph_id(graph_id);
                 new_node_address
             }
         }
@@ -428,18 +430,45 @@ impl KnystCommands for MultiThreadedKnystCommands {
         if self.bundle_changes {
             self.changes_bundle.extend(changes.changes);
         } else {
-            LOCAL_GRAPH.with_borrow_mut(|g| {
-                if let Some(g) = g.last_mut() {
-                    if let Err(e) = g.schedule_changes(changes.changes, changes.time) {
-                        // TODO: report error
-                        // TODO: recover the gen_or_graph from the PushError
-                        eprintln!("{e:?}");
-                    }
-                } else {
-                    // There is no local graph
-                    self.sender.send(Command::ScheduleChanges(changes)).unwrap();
+            let mut all_node_graphs = vec![];
+            let time = changes.time;
+            for c in &changes.changes {
+                if !all_node_graphs.contains(&c.node.graph_id()) {
+                    all_node_graphs.push(c.node.graph_id());
                 }
-            });
+            }
+            let change_bundles_per_graph = if all_node_graphs.len() < 2 {
+                vec![changes.changes]
+            } else {
+                let mut per_graph = vec![vec![]; all_node_graphs.len()];
+                for change in changes.changes {
+                    let i = all_node_graphs
+                        .iter()
+                        .position(|graph| *graph == change.node.graph_id())
+                        .unwrap();
+                    per_graph[i].push(change);
+                }
+                per_graph
+            };
+            for changes in change_bundles_per_graph {
+                LOCAL_GRAPH.with_borrow_mut(|g| {
+                    if let Some(g) = g.last_mut() {
+                        if let Err(e) = g.schedule_changes(changes, time) {
+                            // TODO: report error
+                            // TODO: recover the gen_or_graph from the PushError
+                            eprintln!("Local graph schedule_changes error: {e:?}");
+                        }
+                    } else {
+                        // There is no local graph
+                        self.sender
+                            .send(Command::ScheduleChanges(SimultaneousChanges {
+                                time,
+                                changes,
+                            }))
+                            .unwrap();
+                    }
+                });
+            }
         }
     }
     /// Inserts a new buffer in the [`Resources`] and returns an id which can be
@@ -521,7 +550,7 @@ impl KnystCommands for MultiThreadedKnystCommands {
         graph_id
     }
 
-    fn upload_local_graph(&mut self) -> Handle<GraphHandle> {
+    fn upload_local_graph(&mut self) -> Option<Handle<GraphHandle>> {
         let graph_to_upload = LOCAL_GRAPH.with_borrow_mut(|g| g.pop());
         if let Some(g) = graph_to_upload {
             let num_inputs = g.num_inputs();
@@ -529,10 +558,14 @@ impl KnystCommands for MultiThreadedKnystCommands {
             let graph_id = g.id();
 
             let id = self.push_without_inputs(g);
-            Handle::new(GraphHandle::new(id, graph_id, num_inputs, num_outputs))
+            Some(Handle::new(GraphHandle::new(
+                id,
+                graph_id,
+                num_inputs,
+                num_outputs,
+            )))
         } else {
-            eprintln!("No local graph found");
-            Handle::new(GraphHandle::new(NodeId::new(), 0, 0, 0))
+            None
         }
     }
 
@@ -827,6 +860,8 @@ impl Controller {
                 .change_musical_time_map(change_fn)
                 .map_err(|e| From::from(e)),
             Command::ScheduleChanges(changes) => {
+                let changes_clone = changes.clone();
+                println!("Scheduling changes: {changes:?}");
                 match self
                     .top_level_graph
                     .schedule_changes(changes.changes, changes.time)
@@ -835,7 +870,7 @@ impl Controller {
                     Err(e) => match e {
                         crate::graph::ScheduleError::GraphNotFound(_node) => {
                             // println!("Didn't find graph for:");
-                            // println!("{changes_clone:?}");
+                            println!("Failed to schedule {changes_clone:?}");
                             Err(e.into())
                         }
                         _ => Err(e.into()),
@@ -1068,6 +1103,84 @@ mod tests {
             crate::graph::Time::Superseconds(Superseconds::from_samples(17, sr as u64)),
             || {
                 og.passthrough(2.0);
+            },
+        );
+        schedule_bundle(
+            crate::graph::Time::Superseconds(Superseconds::from_samples(19, sr as u64)),
+            || {
+                og.passthrough(3.0);
+            },
+        );
+        // Try with the pure KnystCommands methods as well.
+        knyst_commands().start_scheduling_bundle(knyst::graph::Time::Superseconds(
+            Superseconds::from_samples(20, sr as u64),
+        ));
+        og.passthrough(4.0);
+        knyst_commands().upload_scheduling_bundle();
+        kt.process_block();
+        let o = kt.output_channel(0).unwrap();
+        dbg!(o);
+        assert_eq!(o[0], 1.0);
+        assert_eq!(o[1], 0.0);
+        assert_eq!(o[4], 0.0);
+        assert_eq!(o[5], 1.0);
+        assert_eq!(o[6], 0.0);
+        assert_eq!(o[10], 1.0);
+        assert_eq!(o[11], 0.0);
+        assert_eq!(o[16], 1.0);
+        assert_eq!(o[17], 3.0);
+        assert_eq!(o[19], 4.0);
+        assert_eq!(o[20], 5.0);
+    }
+
+    #[test]
+    fn schedule_bundle_inner_graph_test() {
+        let sr = 44100;
+        let mut kt = KnystOffline::new(sr, 64, 0, 1);
+        // We create a first graph so that the top graph will try to schedule on this one first and fail.
+        let mut ignored_graph_node = None;
+        let _ignored_graph = upload_graph(knyst_commands().default_graph_settings(), || {
+            ignored_graph_node = Some(one_gen());
+        });
+        let mut inner_graph = None;
+        let graph = upload_graph(knyst_commands().default_graph_settings(), || {
+            let g = upload_graph(knyst_commands().default_graph_settings(), || ());
+            graph_output(0, g);
+            inner_graph = Some(g);
+        });
+        graph_output(0, graph);
+        inner_graph.unwrap().activate();
+        schedule_bundle(crate::graph::Time::Immediately, || {
+            graph_output(0, once_trig());
+        });
+        schedule_bundle(
+            crate::graph::Time::Superseconds(Superseconds::from_samples(5, sr as u64)),
+            || {
+                graph_output(0, once_trig());
+            },
+        );
+        schedule_bundle(
+            crate::graph::Time::Superseconds(Superseconds::from_samples(10, sr as u64)),
+            || {
+                graph_output(0, once_trig());
+            },
+        );
+        let mut og = None;
+        schedule_bundle(
+            crate::graph::Time::Superseconds(Superseconds::from_samples(16, sr as u64)),
+            || {
+                og = Some(one_gen());
+                graph_output(0, og.unwrap());
+            },
+        );
+        let og = og.unwrap();
+        schedule_bundle(
+            crate::graph::Time::Superseconds(Superseconds::from_samples(17, sr as u64)),
+            || {
+                og.passthrough(2.0);
+
+                // This will set a value of a node in a different graph, but won't change the output
+                ignored_graph_node.unwrap().passthrough(10.);
             },
         );
         schedule_bundle(

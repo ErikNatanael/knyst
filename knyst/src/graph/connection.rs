@@ -1116,15 +1116,15 @@ mod tests {
         struct DNode;
         fn push_node(_node: DNode, defaults: impl Into<InputBundle>) -> NodeId {
             let _d = defaults.into();
-            NodeId::new()
+            NodeId::new(0)
         }
         fn connect(b: impl Into<InputBundle>) {
             let b = b.into();
-            let target_node = NodeId::new();
+            let target_node = NodeId::new(0);
             b.to(target_node).as_connections();
         }
 
-        let node = NodeId::new();
+        let node = NodeId::new(0);
         let _c: InputBundle = ("freq", 440.0, [node.out(0)]).into();
         let _c: InputBundle = [("freq", 440.0, [node.out(0)])].into();
         connect(vec![

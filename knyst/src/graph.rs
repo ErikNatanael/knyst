@@ -102,7 +102,7 @@ pub struct RawNodeAddress {
 pub struct NodeId {
     unique_id: u64,
     /// If the graph_id is not set, every graph needs to search for the node id.
-    graph_id: Option<GraphId>,
+    graph_id: GraphId,
     // graph_id: Arc<RwLock<Option<GraphId>>>,
     // node_key: Arc<RwLock<Option<NodeKey>>>,
 }
@@ -122,18 +122,18 @@ impl std::hash::Hash for NodeId {
 
 impl NodeId {
     /// Create a new [`Self`] not yet connected to a specific node, but with a unique id.
-    pub fn new() -> Self {
+    pub fn new(graph_id: GraphId) -> Self {
         Self {
             unique_id: NEXT_ADDRESS_ID.fetch_add(1, Ordering::Relaxed),
-            graph_id: None,
+            graph_id,
         }
     }
-    /// Set the graph id of this NodeId. If you don't know the GraphId yet you can leave it unset. Setting it may speed up edits to the node routing, especially if the node is in a deep graph.
-    pub fn set_graph_id(&mut self, id: GraphId) {
-        self.graph_id = Some(id);
-    }
+    // /// Set the graph id of this NodeId. If you don't know the GraphId yet you can leave it unset. Setting it may speed up edits to the node routing, especially if the node is in a deep graph.
+    // pub fn set_graph_id(&mut self, id: GraphId) {
+    //     self.graph_id = Some(id);
+    // }
     /// Retreive [`GraphId`] if one is set.
-    pub fn graph_id(&self) -> Option<GraphId> {
+    pub fn graph_id(&self) -> GraphId {
         self.graph_id
     }
     /// Create a [`NodeOutput`] based on `self` and a specific channel.
@@ -261,8 +261,8 @@ impl SimultaneousChanges {
 /// # Example
 /// ```rust
 /// use knyst::graph::{NodeChanges, NodeId, SimultaneousChanges};
-/// // In reality, use a NodeAddress that points to a node.
-/// let my_node= NodeId::new();
+/// // In reality, use a real NodeAddress that points to a node.
+/// let my_node = NodeId::new(0);
 /// let node_changes = NodeChanges::new(my_node).set("freq", 442.0).set("amp", 0.5).trigger("reset");
 /// // equivalent to:
 /// // let node_changes = my_node.change().set("freq", 442.0).set("amp", 0.5).trigger("reset");
@@ -622,6 +622,8 @@ pub enum FreeError {
 #[allow(missing_docs)]
 #[derive(thiserror::Error, Debug, PartialEq)]
 pub enum ScheduleError {
+    #[error("Changes for nodes in different graphs were attempted to be scheduled together.`")]
+    DifferentGraphs,
     #[error("The graph containing the NodeId provided was not found: `{0:?}`")]
     GraphNotFound(NodeId),
     #[error("The NodeId does not exist. The Node may have been freed already.")]
@@ -1253,7 +1255,7 @@ impl Graph {
         to_node: impl Into<GenOrGraphEnum>,
         graph_id: GraphId,
     ) -> Result<NodeId, PushError> {
-        let mut new_node_address = NodeId::new();
+        let mut new_node_address = NodeId::new(graph_id);
         self.push_with_existing_address_to_graph(to_node, &mut new_node_address, graph_id)?;
         Ok(new_node_address)
     }
@@ -1265,7 +1267,7 @@ impl Graph {
         graph_id: GraphId,
         start_time: Time,
     ) -> Result<NodeId, PushError> {
-        let mut new_node_address = NodeId::new();
+        let mut new_node_address = NodeId::new(graph_id);
         self.push_with_existing_address_to_graph_at_time(
             to_node,
             &mut new_node_address,
@@ -1382,13 +1384,18 @@ impl Graph {
                 }
                 self.graphs_per_node.insert(node_key, graph);
             }
-            node_address.graph_id = Some(self.id);
+            node_address.graph_id = self.id;
             Ok(())
         } else {
             // Try to find the graph containing the node by asking all the graphs in this graph to free the node
             let mut to_node = to_node.into();
             for (_key, graph) in &mut self.graphs_per_node {
-                match graph.push_with_existing_address_to_graph(to_node, node_address, graph_id) {
+                match graph.push_with_existing_address_to_graph_at_time(
+                    to_node,
+                    node_address,
+                    graph_id,
+                    start_time,
+                ) {
                     Ok(_) => {
                         return Ok(());
                     }
@@ -1448,10 +1455,8 @@ impl Graph {
     /// Making it not public means Graphs cannot be accidentally added, but a
     /// Node<Graph> can still be created for the top level one if preferred.
     fn push_node(&mut self, mut node: Node, node_id: &mut NodeId) -> NodeKey {
-        if let Some(node_graph_id) = node_id.graph_id() {
-            if node_graph_id != self.id {
-                eprintln!("Warning: Pushing node to NodeId with a GraphId matching a different Graph than the current Graph.")
-            }
+        if node_id.graph_id() != self.id {
+            eprintln!("Warning: Pushing node to NodeId with a GraphId matching a different Graph than the current Graph.")
         }
         if node.num_inputs() > self.max_node_inputs {
             self.increase_max_node_inputs(node.num_inputs());
@@ -1462,7 +1467,6 @@ impl Graph {
                 "Error: Trying to push a node into a Graph that is at capacity. Try increasing the number of node slots and make sure you free the nodes you don't need."
             );
         }
-        node_id.set_graph_id(self.id);
         self.recalculation_required = true;
         let input_index_to_name = node.input_indices_to_names();
         let input_name_to_index = input_index_to_name
@@ -1657,10 +1661,8 @@ impl Graph {
         // is conencted to node4input3.
         //
         let mut node_might_be_in_graph = true;
-        if let Some(graph) = node.graph_id() {
-            if graph != self.id {
-                node_might_be_in_graph = false;
-            }
+        if node.graph_id != self.id {
+            node_might_be_in_graph = false;
         }
         if node_might_be_in_graph {
             if let Some((node_key, _id)) = self.node_ids.iter().find(|(_key, &id)| node == id) {
@@ -1777,10 +1779,8 @@ impl Graph {
     /// Remove the node and any edges to/from the node. This may lead to other nodes being disconnected from the output and therefore not be run, but they will not be freed.
     pub fn free_node(&mut self, node: NodeId) -> Result<(), FreeError> {
         let mut node_might_be_in_graph = true;
-        if let Some(graph) = node.graph_id() {
-            if graph != self.id {
-                node_might_be_in_graph = false;
-            }
+        if node.graph_id() != self.id {
+            node_might_be_in_graph = false;
         }
         if node_might_be_in_graph {
             if let Some((node_key, _id)) = self.node_ids.iter().find(|(_key, &id)| node == id) {
@@ -1963,22 +1963,32 @@ impl Graph {
 
     /// Schedule changes to input channel constants. The changes will only be
     /// applied if the [`Graph`] is running and its scheduler is regularly
-    /// updated.
+    /// updated. [`NodeChanges`] must all be in the same Graph. If you want to
+    /// schedule chagnes to nodes in multiple graphs, separate them and call
+    /// [`Graph::schedule_changes`] multiple times.
     pub fn schedule_changes(
         &mut self,
         node_changes: Vec<NodeChanges>,
         time: Time,
     ) -> Result<(), ScheduleError> {
+        // assert all changes are for the same graph
+        if node_changes.is_empty() {
+            return Ok(());
+        }
+        let first_graph = node_changes[0].node.graph_id();
+        for nc in &node_changes {
+            if nc.node.graph_id() != first_graph {
+                return Err(ScheduleError::DifferentGraphs);
+            }
+        }
         let mut scheduler_changes = vec![];
         for node_changes in &node_changes {
             let node = node_changes.node;
             let change_pairs = &node_changes.parameters;
             let time_offset = node_changes.offset;
             let mut node_might_be_in_this_graph = true;
-            if let Some(node_graph) = node.graph_id() {
-                if node_graph != self.id {
-                    node_might_be_in_this_graph = false;
-                }
+            if node.graph_id() != self.id {
+                node_might_be_in_this_graph = false;
             }
             if node_might_be_in_this_graph {
                 if let Some((key, _id)) = self.node_ids.iter().find(|(_key, &id)| id == node) {
@@ -2039,7 +2049,7 @@ impl Graph {
                     }
                 }
                 if !found_graph {
-                    eprintln!("{}", ScheduleError::GraphNotFound(node_changes.node));
+                    return Err(ScheduleError::GraphNotFound(node_changes.node));
                 }
             }
         }
@@ -2055,10 +2065,8 @@ impl Graph {
     /// updated.
     pub fn schedule_change(&mut self, change: ParameterChange) -> Result<(), ScheduleError> {
         let mut node_might_be_in_this_graph = true;
-        if let Some(node_graph) = change.input.node.graph_id() {
-            if node_graph != self.id {
-                node_might_be_in_this_graph = false;
-            }
+        if change.input.node.graph_id() != self.id {
+            node_might_be_in_this_graph = false;
         }
         if node_might_be_in_this_graph {
             if let Some(key) = Self::key_from_id(&self.node_ids, change.input.node) {
@@ -2153,18 +2161,11 @@ impl Graph {
                 feedback,
                 to_index_offset,
             } => {
-                match (source.graph_id(), sink.graph_id()) {
-                    (Some(g0), Some(g1)) => {
-                        if g0 != g1 {
-                            return Err(ConnectionError::DifferentGraphs);
-                        }
-                    }
-                    _ => (),
+                if source.graph_id() != sink.graph_id() {
+                    return Err(ConnectionError::DifferentGraphs);
                 }
-                if let Some(source_graph_id) = source.graph_id() {
-                    if source_graph_id != self.id {
-                        return try_disconnect_in_child_graphs(connection.clone());
-                    }
+                if source.graph_id() != self.id {
+                    return try_disconnect_in_child_graphs(connection.clone());
                 }
                 let Some(source_key) = Self::key_from_id(&self.node_ids, *source) else {
                     return try_disconnect_in_child_graphs(connection.clone());
@@ -2305,10 +2306,8 @@ impl Graph {
                 to_label: input_label,
             } => {
                 if let Some(sink) = sink {
-                    if let Some(graph_id) = sink.graph_id() {
-                        if graph_id != self.id {
-                            return try_disconnect_in_child_graphs(connection.clone());
-                        }
+                    if sink.graph_id() != self.id {
+                        return try_disconnect_in_child_graphs(connection.clone());
                     }
                     let Some(sink_key) = Self::key_from_id(&self.node_ids, *sink) else {
                         return try_disconnect_in_child_graphs(connection.clone());
@@ -2366,10 +2365,8 @@ impl Graph {
                 to_index,
                 channels,
             } => {
-                if let Some(graph_id) = source.graph_id() {
-                    if graph_id != self.id {
-                        return try_disconnect_in_child_graphs(connection.clone());
-                    }
+                if source.graph_id != self.id {
+                    return try_disconnect_in_child_graphs(connection.clone());
                 }
                 let Some((source_key, _)) = self.node_ids.iter().find(|(_key, &id)| id == *source)
                 else {
@@ -2428,10 +2425,8 @@ impl Graph {
                 channels,
                 to_index_offset,
             } => {
-                if let Some(graph_id) = sink.graph_id() {
-                    if graph_id != self.id {
-                        return try_disconnect_in_child_graphs(connection.clone());
-                    }
+                if sink.graph_id != self.id {
+                    return try_disconnect_in_child_graphs(connection.clone());
                 }
                 let Some((sink_key, _)) = self.node_ids.iter().find(|(_key, &id)| id == *sink)
                 else {
@@ -2589,18 +2584,11 @@ impl Graph {
                 feedback,
                 to_index_offset,
             } => {
-                match (source.graph_id(), sink.graph_id()) {
-                    (Some(g0), Some(g1)) => {
-                        if g0 != g1 {
-                            return Err(ConnectionError::DifferentGraphs);
-                        }
-                    }
-                    _ => (),
+                if source.graph_id() != sink.graph_id() {
+                    return Err(ConnectionError::DifferentGraphs);
                 }
-                if let Some(source_graph_id) = source.graph_id() {
-                    if source_graph_id != self.id {
-                        return try_connect_to_graphs(connection.clone());
-                    }
+                if source.graph_id != self.id {
+                    return try_connect_to_graphs(connection.clone());
                 }
                 let Some((source_key, _)) = self.node_ids.iter().find(|(_key, &id)| id == *source)
                 else {
@@ -2689,7 +2677,7 @@ impl Graph {
                             index
                         } else {
                             let feedback_node = FeedbackGen::node(num_source_outputs);
-                            let mut feedback_node_address = NodeId::new();
+                            let mut feedback_node_address = NodeId::new(self.id);
                             let key = self.push_node(feedback_node, &mut feedback_node_address);
                             self.feedback_node_indices.push(key);
                             self.node_feedback_node_key.insert(source_key, key);
@@ -2726,10 +2714,8 @@ impl Graph {
                 to_label: input_label,
             } => {
                 if let Some(sink) = sink {
-                    if let Some(sink_graph_id) = sink.graph_id() {
-                        if sink_graph_id != self.id {
-                            return try_connect_to_graphs(connection.clone());
-                        }
+                    if sink.graph_id != self.id {
+                        return try_connect_to_graphs(connection.clone());
                     }
                     let Some((sink_key, _)) = self.node_ids.iter().find(|(_key, &id)| id == *sink)
                     else {
@@ -2788,10 +2774,8 @@ impl Graph {
                 to_index,
                 channels,
             } => {
-                if let Some(source_graph_id) = source.graph_id() {
-                    if source_graph_id != self.id {
-                        return try_connect_to_graphs(connection.clone());
-                    }
+                if source.graph_id != self.id {
+                    return try_connect_to_graphs(connection.clone());
                 }
                 let Some((source_key, _)) = self.node_ids.iter().find(|(_key, &id)| id == *source)
                 else {
@@ -2849,10 +2833,8 @@ impl Graph {
                 channels,
                 to_index_offset,
             } => {
-                if let Some(sink_graph_id) = sink.graph_id() {
-                    if sink_graph_id != self.id {
-                        return try_connect_to_graphs(connection.clone());
-                    }
+                if sink.graph_id != self.id {
+                    return try_connect_to_graphs(connection.clone());
                 }
                 let Some((sink_key, _)) = self.node_ids.iter().find(|(_key, &id)| id == *sink)
                 else {
@@ -2910,10 +2892,8 @@ impl Graph {
                 graph_inputs,
                 channel,
             } => {
-                if let Some(node_graph_id) = node.graph_id() {
-                    if node_graph_id != self.id {
-                        return try_connect_to_graphs(connection.clone());
-                    }
+                if node.graph_id != self.id {
+                    return try_connect_to_graphs(connection.clone());
                 }
                 let Some((node_key, _)) = self.node_ids.iter().find(|(_key, &id)| id == *node)
                 else {

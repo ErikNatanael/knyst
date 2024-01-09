@@ -89,7 +89,7 @@ impl Handle<GenericHandle> {
     /// Create a dummy handle pointing to nothing.
     pub fn void() -> Handle<GenericHandle> {
         Self::new(GenericHandle {
-            node_id: NodeId::new(),
+            node_id: NodeId::new(u64::MAX),
             num_inputs: 0,
             num_outputs: 0,
         })
