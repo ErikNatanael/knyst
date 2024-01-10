@@ -292,6 +292,10 @@ impl Buffer {
     pub fn num_channels(&self) -> usize {
         self.num_channels
     }
+    /// The sample rate of the buffer. This depends on the loaded sound file or generated buffer and may be different from the sample rate of a graph playing the buffer.
+    pub fn sample_rate(&self) -> usize {
+        self.sample_rate as usize
+    }
     /// Returns the length of the buffer in seconds
     pub fn length_seconds(&self) -> f64 {
         self.num_frames / self.sample_rate

@@ -16,7 +16,7 @@ pub static SUBBEAT_TESIMALS_PER_BEAT: u32 = 1_476_034_560;
 /// "tesimal" is a made up word to refer to a very short amount of time.
 ///
 /// Inspired by BillyDM's blog post https://billydm.github.io/blog/time-keeping/
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde-derive", derive(serde::Serialize, serde::Deserialize))]
 pub struct Superseconds {
     seconds: u32,
@@ -157,6 +157,36 @@ impl ops::Mul<Superseconds> for Superseconds {
             subsample_tesimals %= SUBSAMPLE_TESIMALS_PER_SECOND as u64;
         }
         Superseconds::new(seconds, subsample_tesimals as u32)
+    }
+}
+impl ops::Mul<f64> for Superseconds {
+    type Output = Self;
+
+    fn mul(self, rhs: f64) -> Self::Output {
+        let seconds = self.to_seconds_f64() * rhs;
+        Superseconds::from_seconds_f64(seconds)
+    }
+}
+impl ops::Mul<Superseconds> for f64 {
+    type Output = Superseconds;
+
+    fn mul(self, rhs: Superseconds) -> Self::Output {
+        rhs * self
+    }
+}
+impl ops::Mul<f32> for Superseconds {
+    type Output = Self;
+
+    fn mul(self, rhs: f32) -> Self::Output {
+        let seconds = self.to_seconds_f64() as f32 * rhs;
+        Superseconds::from_seconds_f64(seconds as f64)
+    }
+}
+impl ops::Mul<Superseconds> for f32 {
+    type Output = Superseconds;
+
+    fn mul(self, rhs: Superseconds) -> Self::Output {
+        rhs * self
     }
 }
 impl ops::MulAssign<Superseconds> for Superseconds {

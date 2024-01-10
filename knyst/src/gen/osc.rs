@@ -5,6 +5,7 @@ use crate::buffer::Buffer;
 use crate::{
     buffer::BufferKey,
     gen::{Gen, GenContext, GenState, StopAction},
+    prelude::Superseconds,
     resources::{BufferId, IdOrKey, WavetableId, WavetableKey},
     wavetable::{Wavetable, WavetablePhase, FRACTIONAL_PART, TABLE_SIZE},
     Resources, Sample, SampleRate,
@@ -131,6 +132,7 @@ pub struct BufferReader {
     /// true if the [`BufferReader`] should loop the buffer
     pub looping: bool,
     stop_action: StopAction,
+    start_time: Superseconds,
 }
 
 #[impl_gen]
@@ -146,21 +148,27 @@ impl BufferReader {
         BufferReader {
             buffer_key: buffer.into(),
             read_pointer: 0.0,
-            base_rate: 0.0, // initialise to the correct value the first time process() is called
+            base_rate: 0.0,
             rate,
             finished: false,
             looping,
             stop_action,
+            start_time: Superseconds::ZERO,
         }
     }
     /// Jump back to the start of the buffer
-    pub fn reset(&mut self) {
+    fn reset(&mut self) {
         self.jump_to(0.0);
     }
     /// Jump to a specific point in the buffer in samples
-    pub fn jump_to(&mut self, new_pointer_pos: f64) {
+    fn jump_to(&mut self, new_pointer_pos: f64) {
         self.read_pointer = new_pointer_pos;
         self.finished = false;
+    }
+    /// Jump to a specific point in the buffer in samples. Has to be called before processing starts.
+    pub fn start_at(mut self, start_time: Superseconds) -> Self {
+        self.start_time = start_time;
+        self
     }
     /// Process block
     pub fn process(
@@ -180,15 +188,15 @@ impl BufferReader {
             if let IdOrKey::Key(buffer_key) = self.buffer_key {
                 if let Some(buffer) = &mut resources.buffer(buffer_key) {
                     // Initialise the base rate if it hasn't been set
+                    // TODO: Move this to init? Would require the buffer to be inserted though, i.e. no inserting the buffer late.
                     if self.base_rate == 0.0 {
                         self.base_rate = buffer.buf_rate_scale(sample_rate);
+                        // Also init start time since this would be the first block
+                        let start_frame = self.start_time.to_samples(buffer.sample_rate() as u64);
+                        self.jump_to(start_frame as f64);
                     }
 
                     for (i, o) in out.iter_mut().enumerate() {
-                        let samples = buffer.get_interleaved((self.read_pointer) as usize);
-                        *o = samples[0];
-                        // println!("out: {}", sample);
-                        self.read_pointer += self.base_rate * self.rate;
                         if self.read_pointer >= buffer.num_frames() {
                             self.finished = true;
                             if self.looping {
@@ -196,9 +204,13 @@ impl BufferReader {
                             }
                         }
                         if self.finished {
-                            stop_sample = Some(i + 1);
+                            stop_sample = Some(i);
                             break;
                         }
+                        let samples = buffer.get_interleaved((self.read_pointer) as usize);
+                        *o = samples[0];
+                        // println!("out: {}", sample);
+                        self.read_pointer += self.base_rate * self.rate;
                     }
                 } else {
                     // Output zeroes if the buffer doesn't exist.

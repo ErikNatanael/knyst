@@ -79,6 +79,7 @@ impl KnystSphere {
                 .unwrap_or(settings.num_outputs),
             block_size: backend.block_size().unwrap_or(64),
             sample_rate: backend.sample_rate() as Sample,
+            ring_buffer_size: settings.scheduling_ring_buffer_capacity,
             ..Default::default()
         };
         let graph: Graph = Graph::new(graph_settings);
@@ -123,6 +124,8 @@ pub struct SphereSettings {
     pub num_outputs: usize,
     /// The latency added for time scheduled changes to the audio thread to allow enough time for events to take place.
     pub scheduling_latency: Duration,
+    /// The capacity of the ring buffer transferring changes to constant inputs to the audio thread.
+    pub scheduling_ring_buffer_capacity: usize,
 }
 
 impl Default for SphereSettings {
@@ -133,6 +136,7 @@ impl Default for SphereSettings {
             scheduling_latency: Duration::from_millis(100),
             num_inputs: 2,
             num_outputs: 2,
+            scheduling_ring_buffer_capacity: 1000,
         }
     }
 }
