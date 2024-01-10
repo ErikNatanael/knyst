@@ -332,6 +332,15 @@ impl KnystCommands for UnifiedKnystCommands {
             }
         }
     }
+
+    fn set_mortality(&mut self, node: NodeId, is_mortal: bool) {
+        match self {
+            UnifiedKnystCommands::Real(kc) => kc.borrow_mut().set_mortality(node, is_mortal),
+            UnifiedKnystCommands::Dummy(kc) => {
+                kc.report_dummy();
+            }
+        }
+    }
     // fn push(&mut self) {
     //     match self {
     //         UnifiedKnystCommands::Real(kc) => kc.borrow_mut().push(),

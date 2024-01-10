@@ -80,6 +80,32 @@ fn multiple_nodes() {
     assert_eq!(run_graph.graph_output_buffers().read(0, 2), 9.0);
 }
 #[test]
+fn node_mortality() {
+    let mut graph: Graph = Graph::new(GraphSettings {
+        block_size: 4,
+        ..Default::default()
+    });
+    let node1 = DummyGen { counter: 0.0 };
+    let node2 = DummyGen { counter: 0.0 };
+    let node3 = DummyGen { counter: 0.0 };
+    let node_id1 = graph.push(node1);
+    graph.set_node_mortality(node_id1, false).unwrap();
+    let node_id2 = graph.push(node2);
+    let node_id3 = graph.push(node3);
+    graph.connect(node_id2.to(node_id3)).unwrap();
+    graph.connect(Connection::graph_output(node_id3)).unwrap();
+    graph.free_disconnected_nodes().unwrap();
+    assert!(matches!(
+        graph.free_node(node_id1),
+        Err(FreeError::ImmortalNode)
+    ));
+    graph.commit_changes();
+    graph.connect(node_id1.to(node_id3)).unwrap();
+    let mut run_graph = test_run_graph(&mut graph, RunGraphSettings::default());
+    run_graph.process_block();
+    assert_eq!(run_graph.graph_output_buffers().read(0, 2), 9.0);
+}
+#[test]
 fn constant_inputs() {
     const BLOCK: usize = 16;
     let mut graph: Graph = Graph::new(GraphSettings {

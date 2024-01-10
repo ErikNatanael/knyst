@@ -16,7 +16,7 @@ use std::{
 
 use crate::{
     buffer::Buffer,
-    graph::{NodeChanges, Time},
+    graph::{NodeChanges, ScheduleError, Time},
     inspection::GraphInspection,
     knyst_commands,
     resources::{BufferId, ResourcesCommand, ResourcesResponse, WavetableId},
@@ -46,6 +46,10 @@ enum Command {
     },
     Connect(Connection),
     Disconnect(Connection),
+    SetMortality {
+        node: NodeId,
+        is_mortal: bool,
+    },
     FreeNode(NodeId),
     FreeNodeMendConnections(NodeId),
     ScheduleChange(ParameterChange),
@@ -89,6 +93,11 @@ impl std::fmt::Debug for Command {
             Self::RequestInspection(arg0) => {
                 f.debug_tuple("RequestInspection").field(arg0).finish()
             }
+            Command::SetMortality { node, is_mortal } => f
+                .debug_tuple("SetMortality")
+                .field(node)
+                .field(is_mortal)
+                .finish(),
         }
     }
 }
@@ -135,6 +144,8 @@ pub trait KnystCommands {
     ) -> CallbackHandle;
     /// Disconnect (undo) a [`Connection`]
     fn disconnect(&mut self, connection: Connection);
+    /// Sets the mortality of a node to mortal (true) or immortal (false). An immortal node cannot be freed.
+    fn set_mortality(&mut self, node: NodeId, is_mortal: bool);
     /// Free any nodes that are not currently connected to the graph's outputs
     /// via any chain of connections.
     fn free_disconnected_nodes(&mut self);
@@ -373,7 +384,28 @@ impl KnystCommands for MultiThreadedKnystCommands {
     }
     /// Disconnect (undo) a [`Connection`]
     fn disconnect(&mut self, connection: Connection) {
-        self.sender.send(Command::Disconnect(connection)).unwrap();
+        // The connection may be in our local graph or remotely. Check local first.
+        let found_in_local = LOCAL_GRAPH.with_borrow_mut(|g| {
+            if let Some(g) = g.last_mut() {
+                match g.disconnect(connection.clone()) {
+                    Ok(()) => true,
+                    Err(e) => match e {
+                        ConnectionError::GraphNotFound(_) => false,
+                        _ => {
+                            // TODO: Report this error
+                            eprintln!("Error: {e:?}");
+                            // We found the correct graph, but there was a different error
+                            true
+                        }
+                    },
+                }
+            } else {
+                false
+            }
+        });
+        if !found_in_local {
+            self.sender.send(Command::Disconnect(connection)).unwrap();
+        }
     }
     /// Free any nodes that are not currently connected to the graph's outputs
     /// via any chain of connections.
@@ -614,6 +646,33 @@ impl KnystCommands for MultiThreadedKnystCommands {
                 self.selected_graph_remote_graph
             }
         })
+    }
+
+    fn set_mortality(&mut self, node: NodeId, is_mortal: bool) {
+        // The node may be in our local graph or remotely. Check local first.
+        let found_in_local = LOCAL_GRAPH.with_borrow_mut(|g| {
+            if let Some(g) = g.last_mut() {
+                match g.set_node_mortality(node, is_mortal) {
+                    Ok(()) => true,
+                    Err(e) => match e {
+                        ScheduleError::GraphNotFound(_) => false,
+                        _ => {
+                            // TODO: Report this error
+                            eprintln!("Error: {e:?}");
+                            // We found the correct graph, but there was a different error
+                            true
+                        }
+                    },
+                }
+            } else {
+                false
+            }
+        });
+        if !found_in_local {
+            self.sender
+                .send(Command::SetMortality { node, is_mortal })
+                .unwrap();
+        }
     }
     // /// Create a new Self which pushes to the selected GraphId by default
     // fn to_graph(&self, graph_id: GraphId) -> Self {
@@ -861,7 +920,6 @@ impl Controller {
                 .map_err(|e| From::from(e)),
             Command::ScheduleChanges(changes) => {
                 let changes_clone = changes.clone();
-                println!("Scheduling changes: {changes:?}");
                 match self
                     .top_level_graph
                     .schedule_changes(changes.changes, changes.time)
@@ -904,6 +962,10 @@ impl Controller {
                     .unwrap();
                 Ok(())
             }
+            Command::SetMortality { node, is_mortal } => self
+                .top_level_graph
+                .set_node_mortality(node, is_mortal)
+                .map_err(|e| From::from(e)),
         };
 
         if let Err(e) = result {

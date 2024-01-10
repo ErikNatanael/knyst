@@ -616,6 +616,10 @@ pub enum FreeError {
     GraphNotFound,
     #[error("The NodeId does not exist. The Node may have been freed already.")]
     NodeNotFound,
+    #[error(
+        "The node you tried to free has been marked as immortal. Make it mortal before freeing."
+    )]
+    ImmortalNode,
     #[error("The free action required making a new connection, but the connection failed.")]
     ConnectionError(#[from] Box<connection::ConnectionError>),
 }
@@ -1090,6 +1094,8 @@ pub struct Graph {
     node_feedback_node_key: SecondaryMap<NodeKey, NodeKey>,
     /// Every NodeAddress is generated with a unique ID. This map can convert between NodeKeys and NodeIds.
     node_ids: SecondaryMap<NodeKey, NodeId>,
+    /// If a node can be freed or not. A node can be made immortal to avoid accidentally removing it.
+    node_mortality: SecondaryMap<NodeKey, bool>,
     node_order: Vec<NodeKey>,
     disconnected_nodes: Vec<NodeKey>,
     feedback_node_indices: Vec<NodeKey>,
@@ -1168,6 +1174,7 @@ impl Graph {
             node_feedback_node_key: SecondaryMap::with_capacity(num_nodes),
             node_feedback_edges,
             node_ids: SecondaryMap::with_capacity(num_nodes),
+            node_mortality: SecondaryMap::with_capacity(num_nodes),
             node_order: Vec::with_capacity(num_nodes),
             disconnected_nodes: vec![],
             node_keys_to_free_when_safe: vec![],
@@ -1236,6 +1243,44 @@ impl Graph {
     #[allow(missing_docs)]
     pub fn id(&self) -> GraphId {
         self.id
+    }
+    /// Set the mortality of a node. An immortal node (false) cannot be manually freed and will not be accidentally freed e.g. through [`Graph::free_disconnected_nodes`].
+    pub fn set_node_mortality(
+        &mut self,
+        node_id: NodeId,
+        is_mortal: bool,
+    ) -> Result<(), ScheduleError> {
+        let mut node_might_be_in_this_graph = true;
+        if node_id.graph_id() != self.id {
+            node_might_be_in_this_graph = false;
+        }
+        if node_might_be_in_this_graph {
+            if let Some(key) = Self::key_from_id(&self.node_ids, node_id) {
+                // Does the Node exist?
+                if !self.get_nodes_mut().contains_key(key) {
+                    return Err(ScheduleError::NodeNotFound);
+                }
+                self.node_mortality[key] = is_mortal;
+            }
+        }
+        if !node_might_be_in_this_graph {
+            // Try to find the graph containing the node by asking all the graphs in this graph to free the node
+            for (_key, graph) in &mut self.graphs_per_node {
+                match graph.set_node_mortality(node_id, is_mortal) {
+                    Ok(_) => {
+                        return Ok(());
+                    }
+                    Err(e) => match e {
+                        ScheduleError::GraphNotFound(_) => (),
+                        _ => {
+                            return Err(e);
+                        }
+                    },
+                }
+            }
+            return Err(ScheduleError::GraphNotFound(node_id));
+        }
+        Ok(())
     }
     /// Push something implementing [`Gen`] or a [`Graph`] to self creating a
     /// new node whose address is returned.
@@ -1497,6 +1542,7 @@ impl Graph {
             .insert(key, output_index_to_name);
         self.node_output_name_to_index
             .insert(key, output_name_to_index);
+        self.node_mortality.insert(key, true);
 
         self.node_ids.insert(key, node_id.clone());
         key
@@ -1515,9 +1561,12 @@ impl Graph {
         for node in disconnected_nodes {
             match self.free_node_from_key(node) {
                 Ok(_) => (),
-                Err(e) => {
-                    return Err(e);
-                }
+                Err(e) => match e {
+                    // If a node is immortal we ignore it
+                    FreeError::ImmortalNode => (),
+                    // TODO: Report error instead and continue freeing the rest of the disconnected nodes
+                    _ => return Err(e),
+                },
             }
         }
         Ok(())
@@ -1733,6 +1782,9 @@ impl Graph {
         if !self.get_nodes_mut().contains_key(node_key) {
             return Err(FreeError::NodeNotFound);
         }
+        if !self.node_mortality[node_key] {
+            return Err(FreeError::ImmortalNode);
+        }
 
         self.recalculation_required = true;
 
@@ -1911,42 +1963,35 @@ impl Graph {
                     });
                 }
             }
-            let index = node_key_processed
-                .iter()
-                .position(|&k| k == node_key)
-                .unwrap();
-            nodes[index].input_edges = input_edges;
+            if let Some(index) = node_key_processed.iter().position(|&k| k == node_key) {
+                nodes[index].input_edges = input_edges;
+            }
         }
         let mut graph_output_input_edges = Vec::new();
         for edge in &self.output_edges {
-            let index = node_key_processed
-                .iter()
-                .position(|&k| k == edge.source)
-                .unwrap();
-            graph_output_input_edges.push(EdgeInspection {
-                source: EdgeSource::Node(index),
-                from_index: edge.from_output_index,
-                to_index: edge.to_input_index,
-            });
+            if let Some(index) = node_key_processed.iter().position(|&k| k == edge.source) {
+                graph_output_input_edges.push(EdgeInspection {
+                    source: EdgeSource::Node(index),
+                    from_index: edge.from_output_index,
+                    to_index: edge.to_input_index,
+                });
+            }
         }
         let unconnected_nodes = self
             .disconnected_nodes
             .iter()
-            .map(|&disconnected_key| {
+            .filter_map(|&disconnected_key| {
                 node_key_processed
                     .iter()
                     .position(|&key| key == disconnected_key)
-                    .unwrap()
             })
             .collect();
+        // Note: keys from `node_keys_to_free_when_safe` very rarely cannot be found in the `node_key_processed`. Why?
         let nodes_pending_removal = self
             .node_keys_to_free_when_safe
             .iter()
-            .map(|&(freed_key, _)| {
-                node_key_processed
-                    .iter()
-                    .position(|&key| key == freed_key)
-                    .unwrap()
+            .filter_map(|&(freed_key, _)| {
+                node_key_processed.iter().position(|&key| key == freed_key)
             })
             .collect();
 

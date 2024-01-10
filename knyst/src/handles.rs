@@ -194,6 +194,13 @@ impl<A: Copy + HandleData> Handle<A> {
         knyst_commands().schedule_changes(changes);
         self
     }
+    /// Sets the mortality for every referenced by the Handle
+    pub fn set_mortality(self, is_mortal: bool) -> Handle<A> {
+        for id in self.node_ids() {
+            knyst_commands().set_mortality(id, is_mortal);
+        }
+        self
+    }
 }
 impl<H: HandleData + Copy> HandleData for Handle<H> {
     fn out_channels(&self) -> SourceChannelIter {
