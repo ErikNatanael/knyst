@@ -20,20 +20,20 @@ impl TempoChange {
             TempoChange::NewTempo { bpm } => (duration.as_beats_f64() * 60.) / bpm,
         }
     }
-    /// Converts a duration in seconds within this TempoChange to Superbeats
+    /// Converts a duration in seconds within this TempoChange to Beats
     pub fn secs_f64_to_beats(&self, section_duration: f64) -> Beats {
         match self {
             TempoChange::NewTempo { bpm } => Beats::from_beats_f64(*bpm * (section_duration / 60.)),
         }
     }
 }
-/// A map detailing tempo changes such that a [`Superbeats`] value can be
+/// A map detailing tempo changes such that a [`Beats`] value can be
 /// mapped to a deterministic time in seconds (wall clock time). The timestamps
-/// are stored as [`Superbeats`] in absolute time from the start (0 beats), not
+/// are stored as [`Beats`] in absolute time from the start (0 beats), not
 /// as relative section lengths.
 ///
 /// Must always have a first [`TempoChange`] at the start, otherwise it wouldn't
-/// be possible to map [`Superbeats`] to seconds. The tempo_changes must be
+/// be possible to map [`Beats`] to seconds. The tempo_changes must be
 /// sorted in ascending order.
 pub struct MusicalTimeMap {
     tempo_changes: Vec<(TempoChange, Beats)>,
@@ -50,15 +50,15 @@ impl MusicalTimeMap {
     /// # Example
     /// ```
     /// use knyst::scheduling::{MusicalTimeMap, TempoChange};
-    /// use knyst::time::Superbeats;
+    /// use knyst::time::Beats;
     /// let mut map = MusicalTimeMap::new();
-    /// map.insert(TempoChange::NewTempo { bpm: 60.0 }, Superbeats::new(999, 200000));
-    /// map.insert(TempoChange::NewTempo { bpm: 50.0 }, Superbeats::new(504, 200));
-    /// map.insert(TempoChange::NewTempo { bpm: 34.1 }, Superbeats::new(5, 200));
-    /// map.insert(TempoChange::NewTempo { bpm: 642.999 }, Superbeats::new(5, 201));
-    /// map.insert(TempoChange::NewTempo { bpm: 60.0 }, Superbeats::new(5, 200));
-    /// map.insert(TempoChange::NewTempo { bpm: 60.0 }, Superbeats::new(2000, 0));
-    /// map.insert(TempoChange::NewTempo { bpm: 80.0 }, Superbeats::new(0, 0));
+    /// map.insert(TempoChange::NewTempo { bpm: 60.0 }, Beats::new(999, 200000));
+    /// map.insert(TempoChange::NewTempo { bpm: 50.0 }, Beats::new(504, 200));
+    /// map.insert(TempoChange::NewTempo { bpm: 34.1 }, Beats::new(5, 200));
+    /// map.insert(TempoChange::NewTempo { bpm: 642.999 }, Beats::new(5, 201));
+    /// map.insert(TempoChange::NewTempo { bpm: 60.0 }, Beats::new(5, 200));
+    /// map.insert(TempoChange::NewTempo { bpm: 60.0 }, Beats::new(2000, 0));
+    /// map.insert(TempoChange::NewTempo { bpm: 80.0 }, Beats::new(0, 0));
     /// assert!(map.is_sorted());
     /// assert_eq!(map.len(), 6);
     /// ```
@@ -97,7 +97,7 @@ impl MusicalTimeMap {
             self.tempo_changes[index].0 = tempo_change;
         }
     }
-    /// Move a [`TempoChange`] to a new position in [`Superbeats`]. If the
+    /// Move a [`TempoChange`] to a new position in [`Beats`]. If the
     /// first tempo change is moved a 60 bpm tempo change will be inserted at
     /// the start.
     pub fn move_tempo_change(&mut self, index: usize, time_stamp: Beats) {
@@ -108,30 +108,30 @@ impl MusicalTimeMap {
             self.insert(TempoChange::NewTempo { bpm: 60.0 }, Beats::new(0, 0));
         }
     }
-    /// Convert a [`Superbeats`] timestamp to seconds using this map.
+    /// Convert a [`Beats`] timestamp to seconds using this map.
     ///
     /// # Example
     /// ```
     /// use knyst::scheduling::{MusicalTimeMap, TempoChange};
-    /// use knyst::time::Superbeats;
+    /// use knyst::time::Beats;
     /// let mut map = MusicalTimeMap::new();
-    /// assert_eq!(map.musical_time_to_secs_f64(Superbeats::new(0, 0)), 0.0);
+    /// assert_eq!(map.musical_time_to_secs_f64(Beats::new(0, 0)), 0.0);
     /// // Starts with a TempoChange for a constant 60 bpm per default
-    /// assert_eq!(map.musical_time_to_secs_f64(Superbeats::new(1, 0)), 1.0);
+    /// assert_eq!(map.musical_time_to_secs_f64(Beats::new(1, 0)), 1.0);
     /// map.replace(0, TempoChange::NewTempo{bpm: 120.0}); // Double the speed
-    /// assert_eq!(map.musical_time_to_secs_f64(Superbeats::new(1, 0)), 0.5);
+    /// assert_eq!(map.musical_time_to_secs_f64(Beats::new(1, 0)), 0.5);
     /// // With multiple tempo changes the accumulated time passed will be returned
     /// map.insert(
     ///     TempoChange::NewTempo { bpm: 60.0 },
-    ///     Superbeats::from_beats(16),
+    ///     Beats::from_beats(16),
     /// );
     /// map.insert(
     ///     TempoChange::NewTempo { bpm: 6000.0 },
-    ///     Superbeats::from_beats(32),
+    ///     Beats::from_beats(32),
     /// );
     ///
     /// assert_eq!(
-    ///     map.musical_time_to_secs_f64(Superbeats::from_beats(32 + 1000)),
+    ///     map.musical_time_to_secs_f64(Beats::from_beats(32 + 1000)),
     ///     16.0 * 0.5 + 16.0 * 1.0 + (1000. * 0.01)
     /// );
     /// ```
@@ -177,7 +177,7 @@ impl MusicalTimeMap {
         accumulated_seconds
     }
     /// Convert a timestamp in seconds to beats using self
-    pub fn superseconds_to_superbeats(&self, ts: Seconds) -> Beats {
+    pub fn seconds_to_beats(&self, ts: Seconds) -> Beats {
         // If we have not upheld our promise about the state of the MusicalTimeMap there is a bug
         assert!(self.tempo_changes.len() > 0);
         assert_eq!(self.tempo_changes[0].1, Beats::ZERO);
@@ -264,7 +264,7 @@ mod tests {
             5.75
         );
         assert_eq!(
-            map.superseconds_to_superbeats(Seconds::from_seconds_f64(2.)),
+            map.seconds_to_beats(Seconds::from_seconds_f64(2.)),
             Beats::from_beats(2)
         );
         map.replace(0, TempoChange::NewTempo { bpm: 120.0 });
@@ -292,7 +292,7 @@ mod tests {
             16.0 * 0.5 + 16.0 + 10.
         );
         assert_eq!(
-            map.superseconds_to_superbeats(Seconds::from_seconds_f64(2.)),
+            map.seconds_to_beats(Seconds::from_seconds_f64(2.)),
             Beats::from_beats(4)
         );
     }

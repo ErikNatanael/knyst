@@ -714,12 +714,12 @@ pub enum StartBeat {
     Multiple(Beats),
 }
 
-/// Callback that is scheduled in [`Superbeats`]. The closure inside the
-/// callback should only schedule changes in Superbeats time guided by the value
+/// Callback that is scheduled in [`Beats`]. The closure inside the
+/// callback should only schedule changes in Beats time guided by the value
 /// to start scheduling that is passed to the function.
 ///
 /// The closure takes two parameters: the time to start the next scheduling in
-/// Superbeats time and a `&mut KnystCommands` for scheduling the changes. The
+/// Beats time and a `&mut KnystCommands` for scheduling the changes. The
 /// timestamp in the first parameter is the start time of the callback plus all
 /// the returned beat intervals to wait until the next callback. The callback
 /// can return the time to wait until it gets called again or `None` to remove
@@ -1134,20 +1134,20 @@ mod tests {
             graph_output(0, once_trig());
         });
         schedule_bundle(
-            crate::graph::Time::Superseconds(Seconds::from_samples(5, sr as u64)),
+            crate::graph::Time::Seconds(Seconds::from_samples(5, sr as u64)),
             || {
                 graph_output(0, once_trig());
             },
         );
         schedule_bundle(
-            crate::graph::Time::Superseconds(Seconds::from_samples(10, sr as u64)),
+            crate::graph::Time::Seconds(Seconds::from_samples(10, sr as u64)),
             || {
                 graph_output(0, once_trig());
             },
         );
         let mut og = None;
         schedule_bundle(
-            crate::graph::Time::Superseconds(Seconds::from_samples(16, sr as u64)),
+            crate::graph::Time::Seconds(Seconds::from_samples(16, sr as u64)),
             || {
                 og = Some(one_gen());
                 graph_output(0, og.unwrap());
@@ -1155,19 +1155,19 @@ mod tests {
         );
         let og = og.unwrap();
         schedule_bundle(
-            crate::graph::Time::Superseconds(Seconds::from_samples(17, sr as u64)),
+            crate::graph::Time::Seconds(Seconds::from_samples(17, sr as u64)),
             || {
                 og.passthrough(2.0);
             },
         );
         schedule_bundle(
-            crate::graph::Time::Superseconds(Seconds::from_samples(19, sr as u64)),
+            crate::graph::Time::Seconds(Seconds::from_samples(19, sr as u64)),
             || {
                 og.passthrough(3.0);
             },
         );
         // Try with the pure KnystCommands methods as well.
-        knyst_commands().start_scheduling_bundle(knyst::graph::Time::Superseconds(
+        knyst_commands().start_scheduling_bundle(knyst::graph::Time::Seconds(
             Seconds::from_samples(20, sr as u64),
         ));
         og.passthrough(4.0);
@@ -1209,20 +1209,20 @@ mod tests {
             graph_output(0, once_trig());
         });
         schedule_bundle(
-            crate::graph::Time::Superseconds(Seconds::from_samples(5, sr as u64)),
+            crate::graph::Time::Seconds(Seconds::from_samples(5, sr as u64)),
             || {
                 graph_output(0, once_trig());
             },
         );
         schedule_bundle(
-            crate::graph::Time::Superseconds(Seconds::from_samples(10, sr as u64)),
+            crate::graph::Time::Seconds(Seconds::from_samples(10, sr as u64)),
             || {
                 graph_output(0, once_trig());
             },
         );
         let mut og = None;
         schedule_bundle(
-            crate::graph::Time::Superseconds(Seconds::from_samples(16, sr as u64)),
+            crate::graph::Time::Seconds(Seconds::from_samples(16, sr as u64)),
             || {
                 og = Some(one_gen());
                 graph_output(0, og.unwrap());
@@ -1230,7 +1230,7 @@ mod tests {
         );
         let og = og.unwrap();
         schedule_bundle(
-            crate::graph::Time::Superseconds(Seconds::from_samples(17, sr as u64)),
+            crate::graph::Time::Seconds(Seconds::from_samples(17, sr as u64)),
             || {
                 og.passthrough(2.0);
 
@@ -1239,13 +1239,13 @@ mod tests {
             },
         );
         schedule_bundle(
-            crate::graph::Time::Superseconds(Seconds::from_samples(19, sr as u64)),
+            crate::graph::Time::Seconds(Seconds::from_samples(19, sr as u64)),
             || {
                 og.passthrough(3.0);
             },
         );
         // Try with the pure KnystCommands methods as well.
-        knyst_commands().start_scheduling_bundle(knyst::graph::Time::Superseconds(
+        knyst_commands().start_scheduling_bundle(knyst::graph::Time::Seconds(
             Seconds::from_samples(20, sr as u64),
         ));
         og.passthrough(4.0);

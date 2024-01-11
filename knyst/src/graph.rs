@@ -340,7 +340,7 @@ pub struct ParameterChange {
 }
 
 impl ParameterChange {
-    /// Schedule a change at a specific time in [`Superbeats`]
+    /// Schedule a change at a specific time in [`Beats`]
     pub fn beats(channel: NodeInput, value: impl Into<Change>, beats: Beats) -> Self {
         Self {
             input: channel,
@@ -348,16 +348,12 @@ impl ParameterChange {
             time: Time::Beats(beats),
         }
     }
-    /// Schedule a change at a specific time in [`Superseconds`]
-    pub fn superseconds(
-        channel: NodeInput,
-        value: impl Into<Change>,
-        superseconds: Seconds,
-    ) -> Self {
+    /// Schedule a change at a specific time in [`Seconds`]
+    pub fn seconds(channel: NodeInput, value: impl Into<Change>, seconds: Seconds) -> Self {
         Self {
             input: channel,
             value: value.into(),
-            time: Time::Superseconds(superseconds),
+            time: Time::Seconds(seconds),
         }
     }
     /// Schedule a change at a duration from right now.
@@ -388,7 +384,7 @@ impl ParameterChange {
 pub enum Time {
     Beats(Beats),
     DurationFromNow(Duration),
-    Superseconds(Seconds),
+    Seconds(Seconds),
     Immediately,
 }
 
@@ -397,7 +393,7 @@ pub enum Time {
 #[derive(Clone, Copy, Debug)]
 pub enum TimeOffset {
     Frames(i64),
-    Superseconds(Relative<Seconds>),
+    Seconds(Relative<Seconds>),
 }
 
 impl TimeOffset {
@@ -405,7 +401,7 @@ impl TimeOffset {
     pub fn to_frames(&self, sample_rate: u64) -> i64 {
         match self {
             TimeOffset::Frames(frame_offset) => *frame_offset,
-            TimeOffset::Superseconds(relative_supserseconds) => match relative_supserseconds {
+            TimeOffset::Seconds(relative_supserseconds) => match relative_supserseconds {
                 Relative::Before(s) => (s.to_samples(sample_rate) as i64) * -1,
                 Relative::After(s) => s.to_samples(sample_rate) as i64,
             },
@@ -1390,7 +1386,7 @@ impl Graph {
                     Time::DurationFromNow(_) => {
                         return Err(PushError::InvalidStartTimeOnUnstartedGraph(start_time))
                     }
-                    Time::Superseconds(s) => {
+                    Time::Seconds(s) => {
                         start_timestamp = s.to_samples(
                             self.sample_rate as u64 * self.oversampling.as_usize() as u64,
                         )
@@ -1884,7 +1880,7 @@ impl Graph {
             graph.start_scheduler(latency, start_ts, clock_update, musical_time_map);
         }
     }
-    /// Returns the current audio thread time in Superbeats based on the
+    /// Returns the current audio thread time in Beats based on the
     /// MusicalTimeMap, or None if it is not available (e.g. if the Graph has
     /// not been started yet).
     pub fn get_current_time_musical(&self) -> Option<Beats> {
@@ -1892,7 +1888,7 @@ impl Graph {
             let ts_samples = ggc.timestamp.load(Ordering::Relaxed);
             let seconds = (ts_samples as f64) / (self.sample_rate as f64);
             ggc.scheduler
-                .seconds_to_musical_time_superbeats(Seconds::from_seconds_f64(seconds))
+                .seconds_to_musical_time_beats(Seconds::from_seconds_f64(seconds))
         } else {
             None
         }
@@ -3791,7 +3787,7 @@ impl Scheduler {
                             * (*sample_rate as f64)
                             + *latency) as u64
                     }
-                    Time::Superseconds(superseconds) => superseconds.to_samples(*sample_rate),
+                    Time::Seconds(seconds) => seconds.to_samples(*sample_rate),
                     Time::Beats(mt) => {
                         // TODO: Remove unwrap, return a Result
                         let mtm = musical_time_map.read().unwrap();
@@ -3912,14 +3908,14 @@ impl Scheduler {
             }
         }
     }
-    fn seconds_to_musical_time_superbeats(&self, ts: Seconds) -> Option<Beats> {
+    fn seconds_to_musical_time_beats(&self, ts: Seconds) -> Option<Beats> {
         match self {
             Scheduler::Stopped { .. } => None,
             Scheduler::Running {
                 musical_time_map, ..
             } => {
                 let mtm = musical_time_map.read().unwrap();
-                Some(mtm.superseconds_to_superbeats(ts))
+                Some(mtm.seconds_to_beats(ts))
             }
         }
     }

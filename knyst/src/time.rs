@@ -63,7 +63,7 @@ impl Seconds {
         self.seconds as f64
             + (self.subsample_tesimals as f64 / SUBSAMPLE_TESIMALS_PER_SECOND as f64)
     }
-    /// Convert a number of samples at a given sample rate to a `Superseconds`
+    /// Convert a number of samples at a given sample rate to a `Seconds`
     pub fn from_samples(samples: u64, sample_rate: u64) -> Self {
         let seconds = (samples / sample_rate) as u32;
         let subsample_tesimals =
@@ -220,7 +220,7 @@ impl Beats {
             beats,
         }
     }
-    /// Returns Superbeats with `beats` beats and 0 tesimals
+    /// Returns Beats with `beats` beats and 0 tesimals
     pub fn from_beats(beats: u32) -> Self {
         Self::new(beats, 0)
     }
@@ -354,10 +354,10 @@ mod tests {
     }
     #[test]
     fn duration_to_subsample_time() {
-        for seconds in [73.73, 10.832, 10000.25, 84923.399] {
-            let superseconds = Seconds::from_seconds_f64(seconds);
-            let duration = Duration::from_secs_f64(seconds);
-            assert_eq!(superseconds, duration.into())
+        for s in [73.73, 10.832, 10000.25, 84923.399] {
+            let seconds = Seconds::from_seconds_f64(s);
+            let duration = Duration::from_secs_f64(s);
+            assert_eq!(seconds, duration.into())
         }
     }
     #[test]

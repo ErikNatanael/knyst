@@ -502,21 +502,21 @@ fn scheduling() {
     graph.connect(constant(2.).to(node1)).unwrap();
     graph.update();
     graph
-        .schedule_change(ParameterChange::superseconds(
+        .schedule_change(ParameterChange::seconds(
             node0.input(0),
             1.0,
             Seconds::from_samples(3, SR),
         ))
         .unwrap();
     graph
-        .schedule_change(ParameterChange::superseconds(
+        .schedule_change(ParameterChange::seconds(
             node0.input("passthrough"),
             2.0,
             Seconds::from_samples(2, SR),
         ))
         .unwrap();
     graph
-        .schedule_change(ParameterChange::superseconds(
+        .schedule_change(ParameterChange::seconds(
             node1.input(0),
             10.0,
             Seconds::from_samples(7, SR),
@@ -538,21 +538,21 @@ fn scheduling() {
     assert_eq!(run_graph.graph_output_buffers().read(0, 2), 6.0);
     assert_eq!(run_graph.graph_output_buffers().read(0, 3), 5.0);
     graph
-        .schedule_change(ParameterChange::superseconds(
+        .schedule_change(ParameterChange::seconds(
             node0.input(0),
             0.0,
             Seconds::from_samples(5, SR),
         ))
         .unwrap();
     graph
-        .schedule_change(ParameterChange::superseconds(
+        .schedule_change(ParameterChange::seconds(
             node1.input(0),
             0.0,
             Seconds::from_samples(6, SR),
         ))
         .unwrap();
     assert_eq!(
-        graph.schedule_change(ParameterChange::superseconds(
+        graph.schedule_change(ParameterChange::seconds(
             node1.input("pasta"),
             100.0,
             Seconds::from_samples(6, SR)
@@ -817,7 +817,7 @@ fn start_nodes_with_sample_precision() {
             GenState::Continue
         })
         .output("out"),
-        Time::Superseconds(Seconds::from_samples(1, SR)),
+        Time::Seconds(Seconds::from_samples(1, SR)),
     );
     graph.connect(n0.to_graph_out()).unwrap();
     let mut counter1 = 0.;
@@ -830,7 +830,7 @@ fn start_nodes_with_sample_precision() {
             GenState::Continue
         })
         .output("out"),
-        Time::Superseconds(Seconds::from_samples(2, SR)),
+        Time::Seconds(Seconds::from_samples(2, SR)),
     );
     graph.connect(n1.to_graph_out()).unwrap();
     let mut run_graph = test_run_graph(&mut graph, RunGraphSettings::default());
@@ -850,7 +850,7 @@ fn start_nodes_with_sample_precision() {
             GenState::Continue
         })
         .output("out"),
-        Time::Superseconds(Seconds::from_samples(3 + BLOCK_SIZE as u64, SR)),
+        Time::Seconds(Seconds::from_samples(3 + BLOCK_SIZE as u64, SR)),
     );
     let mut counter3 = 0.;
     let n3 = graph.push_at_time(
@@ -862,7 +862,7 @@ fn start_nodes_with_sample_precision() {
             GenState::Continue
         })
         .output("out"),
-        Time::Superseconds(Seconds::from_samples(4 + BLOCK_SIZE as u64, SR)),
+        Time::Seconds(Seconds::from_samples(4 + BLOCK_SIZE as u64, SR)),
     );
     graph.connect(n2.to_graph_out()).unwrap();
     graph.connect(n3.to_graph_out()).unwrap();
