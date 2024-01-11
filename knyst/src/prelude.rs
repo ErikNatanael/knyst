@@ -20,7 +20,7 @@ pub use crate::modal_interface::knyst_commands;
 pub use crate::resources::{IdOrKey, WavetableId, WavetableKey};
 pub use crate::resources::{Resources, ResourcesSettings};
 pub use crate::sphere::{KnystSphere, SphereSettings};
-pub use crate::time::{Superbeats, Superseconds};
+pub use crate::time::{Beats, Seconds};
 pub use crate::wavetable::{Wavetable, TABLE_POWER, TABLE_SIZE};
 pub use crate::{BlockSize, Sample, SampleRate, Trig};
 pub use knyst_macro::impl_gen;

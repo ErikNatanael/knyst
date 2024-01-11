@@ -5,7 +5,7 @@ use crate::buffer::Buffer;
 use crate::{
     buffer::BufferKey,
     gen::{Gen, GenContext, GenState, StopAction},
-    prelude::Superseconds,
+    prelude::Seconds,
     resources::{BufferId, IdOrKey, WavetableId, WavetableKey},
     wavetable::{Wavetable, WavetablePhase, FRACTIONAL_PART, TABLE_SIZE},
     Resources, Sample, SampleRate,
@@ -132,7 +132,7 @@ pub struct BufferReader {
     /// true if the [`BufferReader`] should loop the buffer
     pub looping: bool,
     stop_action: StopAction,
-    start_time: Superseconds,
+    start_time: Seconds,
 }
 
 #[impl_gen]
@@ -153,7 +153,7 @@ impl BufferReader {
             finished: false,
             looping,
             stop_action,
-            start_time: Superseconds::ZERO,
+            start_time: Seconds::ZERO,
         }
     }
     /// Jump back to the start of the buffer
@@ -166,7 +166,7 @@ impl BufferReader {
         self.finished = false;
     }
     /// Jump to a specific point in the buffer in samples. Has to be called before processing starts.
-    pub fn start_at(mut self, start_time: Superseconds) -> Self {
+    pub fn start_at(mut self, start_time: Seconds) -> Self {
         self.start_time = start_time;
         self
     }

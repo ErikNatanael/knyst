@@ -12,7 +12,7 @@ use crate::controller::KnystCommands;
 use crate::gen::{BufferReader, WavetableOscillatorOwned};
 use crate::graph::{FreeError, Oversampling, ScheduleError};
 use crate::prelude::*;
-use crate::time::{Superbeats, Superseconds};
+use crate::time::{Beats, Seconds};
 use crate::{controller::Controller, graph::connection::constant};
 
 // Outputs its input value + 1
@@ -505,21 +505,21 @@ fn scheduling() {
         .schedule_change(ParameterChange::superseconds(
             node0.input(0),
             1.0,
-            Superseconds::from_samples(3, SR),
+            Seconds::from_samples(3, SR),
         ))
         .unwrap();
     graph
         .schedule_change(ParameterChange::superseconds(
             node0.input("passthrough"),
             2.0,
-            Superseconds::from_samples(2, SR),
+            Seconds::from_samples(2, SR),
         ))
         .unwrap();
     graph
         .schedule_change(ParameterChange::superseconds(
             node1.input(0),
             10.0,
-            Superseconds::from_samples(7, SR),
+            Seconds::from_samples(7, SR),
         ))
         .unwrap();
     // Schedule far into the future, this should not show up in the test output
@@ -541,21 +541,21 @@ fn scheduling() {
         .schedule_change(ParameterChange::superseconds(
             node0.input(0),
             0.0,
-            Superseconds::from_samples(5, SR),
+            Seconds::from_samples(5, SR),
         ))
         .unwrap();
     graph
         .schedule_change(ParameterChange::superseconds(
             node1.input(0),
             0.0,
-            Superseconds::from_samples(6, SR),
+            Seconds::from_samples(6, SR),
         ))
         .unwrap();
     assert_eq!(
         graph.schedule_change(ParameterChange::superseconds(
             node1.input("pasta"),
             100.0,
-            Superseconds::from_samples(6, SR)
+            Seconds::from_samples(6, SR)
         )),
         Err(ScheduleError::InputLabelNotFound("pasta"))
     );
@@ -817,7 +817,7 @@ fn start_nodes_with_sample_precision() {
             GenState::Continue
         })
         .output("out"),
-        Time::Superseconds(Superseconds::from_samples(1, SR)),
+        Time::Superseconds(Seconds::from_samples(1, SR)),
     );
     graph.connect(n0.to_graph_out()).unwrap();
     let mut counter1 = 0.;
@@ -830,7 +830,7 @@ fn start_nodes_with_sample_precision() {
             GenState::Continue
         })
         .output("out"),
-        Time::Superseconds(Superseconds::from_samples(2, SR)),
+        Time::Superseconds(Seconds::from_samples(2, SR)),
     );
     graph.connect(n1.to_graph_out()).unwrap();
     let mut run_graph = test_run_graph(&mut graph, RunGraphSettings::default());
@@ -850,7 +850,7 @@ fn start_nodes_with_sample_precision() {
             GenState::Continue
         })
         .output("out"),
-        Time::Superseconds(Superseconds::from_samples(3 + BLOCK_SIZE as u64, SR)),
+        Time::Superseconds(Seconds::from_samples(3 + BLOCK_SIZE as u64, SR)),
     );
     let mut counter3 = 0.;
     let n3 = graph.push_at_time(
@@ -862,7 +862,7 @@ fn start_nodes_with_sample_precision() {
             GenState::Continue
         })
         .output("out"),
-        Time::Superseconds(Superseconds::from_samples(4 + BLOCK_SIZE as u64, SR)),
+        Time::Superseconds(Seconds::from_samples(4 + BLOCK_SIZE as u64, SR)),
     );
     graph.connect(n2.to_graph_out()).unwrap();
     graph.connect(n3.to_graph_out()).unwrap();
@@ -900,7 +900,7 @@ fn beat_scheduling() {
         .change_musical_time_map(|mtm| {
             mtm.insert(
                 crate::scheduling::TempoChange::NewTempo { bpm: 120.0 },
-                Superbeats::from_beats(1),
+                Beats::from_beats(1),
             );
         })
         .unwrap();
@@ -908,28 +908,28 @@ fn beat_scheduling() {
         .schedule_change(ParameterChange::beats(
             node.input(0),
             1.0,
-            Superbeats::from_fractional_beats::<4>(0, 1),
+            Beats::from_fractional_beats::<4>(0, 1),
         ))
         .unwrap();
     graph
         .schedule_change(ParameterChange::beats(
             node.input(0),
             2.0,
-            Superbeats::from_fractional_beats::<4>(0, 2),
+            Beats::from_fractional_beats::<4>(0, 2),
         ))
         .unwrap();
     graph
         .schedule_change(ParameterChange::beats(
             node.input(0),
             3.0,
-            Superbeats::from_fractional_beats::<4>(1, 0),
+            Beats::from_fractional_beats::<4>(1, 0),
         ))
         .unwrap();
     graph
         .schedule_change(ParameterChange::beats(
             node.input(0),
             4.0,
-            Superbeats::from_fractional_beats::<2>(1, 1),
+            Beats::from_fractional_beats::<2>(1, 1),
         ))
         .unwrap();
     graph.update();

@@ -9,7 +9,7 @@ use crate as knyst;
 use knyst::{gen::GenState, Sample, SampleRate};
 use knyst_macro::impl_gen;
 
-use crate::time::Superseconds;
+use crate::time::Seconds;
 
 /// Returns true is `sample` is a trigger, otherwise false.
 #[inline(always)]
@@ -65,7 +65,7 @@ impl OnceTrig {
 /// 0. "trig": A trigger sent at the interval.
 pub struct IntervalTrig {
     // counter: Vec<Sample>,
-    counter: Superseconds,
+    counter: Seconds,
 }
 
 #[impl_gen]
@@ -74,7 +74,7 @@ impl IntervalTrig {
     #[allow(missing_docs)]
     pub fn new() -> Self {
         Self {
-            counter: Superseconds::ZERO,
+            counter: Seconds::ZERO,
         }
     }
     #[process]
@@ -84,12 +84,12 @@ impl IntervalTrig {
         interval: &[Sample],
         trig: &mut [Sample],
     ) -> GenState {
-        let one_sample = Superseconds::from_samples(1, *sample_rate as u64);
+        let one_sample = Seconds::from_samples(1, *sample_rate as u64);
         for (interval, trig_out) in interval.iter().zip(trig.iter_mut()) {
             // Adding first makes the time until the first trigger the same as
             // the time between subsequent triggers so it is more consistent.
             self.counter += one_sample;
-            let interval_as_superseconds = Superseconds::from_seconds_f64(*interval as f64);
+            let interval_as_superseconds = Seconds::from_seconds_f64(*interval as f64);
             *trig_out = if self.counter >= interval_as_superseconds {
                 self.counter = self
                     .counter
@@ -104,7 +104,7 @@ impl IntervalTrig {
     }
     #[init]
     fn init(&mut self) {
-        self.counter = Superseconds::ZERO;
+        self.counter = Seconds::ZERO;
     }
 }
 
@@ -115,7 +115,7 @@ mod tests {
     use crate::resources::{Resources, ResourcesSettings};
 
     use crate::prelude::*;
-    use crate::time::Superseconds;
+    use crate::time::Seconds;
     use crate::trig::IntervalTrig;
     use crate::*;
     #[test]
@@ -131,7 +131,7 @@ mod tests {
         let mut graph = Graph::new(graph_settings);
         let node = graph.push(IntervalTrig::new());
         graph.connect(node.to_graph_out()).unwrap();
-        let every_8_samples = Superseconds::from_samples(8, SR).to_seconds_f64();
+        let every_8_samples = Seconds::from_samples(8, SR).to_seconds_f64();
         graph
             .connect(constant(every_8_samples as Sample).to(node))
             .unwrap();

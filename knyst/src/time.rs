@@ -18,11 +18,11 @@ pub static SUBBEAT_TESIMALS_PER_BEAT: u32 = 1_476_034_560;
 /// Inspired by BillyDM's blog post https://billydm.github.io/blog/time-keeping/
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde-derive", derive(serde::Serialize, serde::Deserialize))]
-pub struct Superseconds {
+pub struct Seconds {
     seconds: u32,
     subsample_tesimals: u32,
 }
-impl Superseconds {
+impl Seconds {
     /// 0 seconds 0 tesmials
     pub const ZERO: Self = Self {
         seconds: 0,
@@ -101,7 +101,7 @@ impl Superseconds {
         }
     }
 }
-impl From<Duration> for Superseconds {
+impl From<Duration> for Seconds {
     fn from(value: Duration) -> Self {
         let seconds = value.as_secs();
         let nanos = value.subsec_nanos();
@@ -111,12 +111,12 @@ impl From<Duration> for Superseconds {
     }
 }
 
-impl PartialOrd for Superseconds {
+impl PartialOrd for Seconds {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
-impl Ord for Superseconds {
+impl Ord for Seconds {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         if self.seconds == other.seconds {
             self.subsample_tesimals.cmp(&other.subsample_tesimals)
@@ -126,10 +126,10 @@ impl Ord for Superseconds {
     }
 }
 
-impl ops::Add<Superseconds> for Superseconds {
+impl ops::Add<Seconds> for Seconds {
     type Output = Self;
 
-    fn add(self, rhs: Superseconds) -> Self::Output {
+    fn add(self, rhs: Seconds) -> Self::Output {
         let mut seconds = self.seconds + rhs.seconds;
         let mut subsample_tesimals = self.subsample_tesimals + rhs.subsample_tesimals;
         while subsample_tesimals >= SUBSAMPLE_TESIMALS_PER_SECOND {
@@ -137,60 +137,60 @@ impl ops::Add<Superseconds> for Superseconds {
             subsample_tesimals -= SUBSAMPLE_TESIMALS_PER_SECOND;
         }
 
-        Superseconds::new(seconds, subsample_tesimals)
+        Seconds::new(seconds, subsample_tesimals)
     }
 }
-impl ops::AddAssign<Superseconds> for Superseconds {
-    fn add_assign(&mut self, rhs: Superseconds) {
+impl ops::AddAssign<Seconds> for Seconds {
+    fn add_assign(&mut self, rhs: Seconds) {
         let result = *self + rhs;
         *self = result;
     }
 }
-impl ops::Mul<Superseconds> for Superseconds {
+impl ops::Mul<Seconds> for Seconds {
     type Output = Self;
 
-    fn mul(self, rhs: Superseconds) -> Self::Output {
+    fn mul(self, rhs: Seconds) -> Self::Output {
         let mut seconds = self.seconds * rhs.seconds;
         let mut subsample_tesimals = self.subsample_tesimals as u64 * rhs.subsample_tesimals as u64;
         if subsample_tesimals > SUBSAMPLE_TESIMALS_PER_SECOND as u64 {
             seconds += (subsample_tesimals / SUBSAMPLE_TESIMALS_PER_SECOND as u64) as u32;
             subsample_tesimals %= SUBSAMPLE_TESIMALS_PER_SECOND as u64;
         }
-        Superseconds::new(seconds, subsample_tesimals as u32)
+        Seconds::new(seconds, subsample_tesimals as u32)
     }
 }
-impl ops::Mul<f64> for Superseconds {
+impl ops::Mul<f64> for Seconds {
     type Output = Self;
 
     fn mul(self, rhs: f64) -> Self::Output {
         let seconds = self.to_seconds_f64() * rhs;
-        Superseconds::from_seconds_f64(seconds)
+        Seconds::from_seconds_f64(seconds)
     }
 }
-impl ops::Mul<Superseconds> for f64 {
-    type Output = Superseconds;
+impl ops::Mul<Seconds> for f64 {
+    type Output = Seconds;
 
-    fn mul(self, rhs: Superseconds) -> Self::Output {
+    fn mul(self, rhs: Seconds) -> Self::Output {
         rhs * self
     }
 }
-impl ops::Mul<f32> for Superseconds {
+impl ops::Mul<f32> for Seconds {
     type Output = Self;
 
     fn mul(self, rhs: f32) -> Self::Output {
         let seconds = self.to_seconds_f64() as f32 * rhs;
-        Superseconds::from_seconds_f64(seconds as f64)
+        Seconds::from_seconds_f64(seconds as f64)
     }
 }
-impl ops::Mul<Superseconds> for f32 {
-    type Output = Superseconds;
+impl ops::Mul<Seconds> for f32 {
+    type Output = Seconds;
 
-    fn mul(self, rhs: Superseconds) -> Self::Output {
+    fn mul(self, rhs: Seconds) -> Self::Output {
         rhs * self
     }
 }
-impl ops::MulAssign<Superseconds> for Superseconds {
-    fn mul_assign(&mut self, rhs: Superseconds) {
+impl ops::MulAssign<Seconds> for Seconds {
+    fn mul_assign(&mut self, rhs: Seconds) {
         *self = *self * rhs;
     }
 }
@@ -203,11 +203,11 @@ impl ops::MulAssign<Superseconds> for Superseconds {
 /// Inspired by BillyDM's blog post https://billydm.github.io/blog/time-keeping/
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 #[cfg_attr(feature = "serde-derive", derive(serde::Serialize, serde::Deserialize))]
-pub struct Superbeats {
+pub struct Beats {
     beats: u32,
     beat_tesimals: u32,
 }
-impl Superbeats {
+impl Beats {
     /// Zero beats
     pub const ZERO: Self = Self {
         beats: 0,
@@ -279,17 +279,17 @@ impl Superbeats {
         }
     }
 }
-impl std::iter::Sum for Superbeats {
+impl std::iter::Sum for Beats {
     fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
-        iter.fold(Superbeats::ZERO, |acc, elem| acc + elem)
+        iter.fold(Beats::ZERO, |acc, elem| acc + elem)
     }
 }
-impl PartialOrd for Superbeats {
+impl PartialOrd for Beats {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
-impl Ord for Superbeats {
+impl Ord for Beats {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         if self.beats == other.beats {
             self.beat_tesimals.cmp(&other.beat_tesimals)
@@ -298,10 +298,10 @@ impl Ord for Superbeats {
         }
     }
 }
-impl ops::Add<Superbeats> for Superbeats {
+impl ops::Add<Beats> for Beats {
     type Output = Self;
 
-    fn add(self, rhs: Superbeats) -> Self::Output {
+    fn add(self, rhs: Beats) -> Self::Output {
         let mut beats = self.beats + rhs.beats;
         let mut beat_tesimals = self.beat_tesimals + rhs.beat_tesimals;
         while beat_tesimals >= SUBBEAT_TESIMALS_PER_BEAT {
@@ -309,19 +309,19 @@ impl ops::Add<Superbeats> for Superbeats {
             beat_tesimals -= SUBBEAT_TESIMALS_PER_BEAT;
         }
 
-        Superbeats::new(beats, beat_tesimals)
+        Beats::new(beats, beat_tesimals)
     }
 }
-impl ops::AddAssign<Superbeats> for Superbeats {
-    fn add_assign(&mut self, rhs: Superbeats) {
+impl ops::AddAssign<Beats> for Beats {
+    fn add_assign(&mut self, rhs: Beats) {
         let result = *self + rhs;
         *self = result;
     }
 }
-impl ops::Mul<Superbeats> for Superbeats {
+impl ops::Mul<Beats> for Beats {
     type Output = Self;
 
-    fn mul(self, rhs: Superbeats) -> Self::Output {
+    fn mul(self, rhs: Beats) -> Self::Output {
         let mut beats = self.beats * rhs.beats
             + ((self.beats as u64 * rhs.beat_tesimals as u64) / SUBBEAT_TESIMALS_PER_BEAT as u64)
                 as u32;
@@ -332,62 +332,56 @@ impl ops::Mul<Superbeats> for Superbeats {
             beats += (beat_tesimals / SUBBEAT_TESIMALS_PER_BEAT as u64) as u32;
             beat_tesimals %= SUBBEAT_TESIMALS_PER_BEAT as u64;
         }
-        Superbeats::new(beats, beat_tesimals as u32)
+        Beats::new(beats, beat_tesimals as u32)
     }
 }
-impl ops::MulAssign<Superbeats> for Superbeats {
-    fn mul_assign(&mut self, rhs: Superbeats) {
+impl ops::MulAssign<Beats> for Beats {
+    fn mul_assign(&mut self, rhs: Beats) {
         *self = *self * rhs;
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Superseconds, SUBSAMPLE_TESIMALS_PER_SECOND};
+    use super::{Seconds, SUBSAMPLE_TESIMALS_PER_SECOND};
     use std::time::Duration;
 
     #[test]
     fn convert_to_u64_and_back() {
-        let original_ts = Superseconds::new(8347, SUBSAMPLE_TESIMALS_PER_SECOND - 5);
+        let original_ts = Seconds::new(8347, SUBSAMPLE_TESIMALS_PER_SECOND - 5);
         let as_u64 = original_ts.to_subsample_tesimals_u64();
-        assert_eq!(
-            original_ts,
-            Superseconds::from_subsample_tesimals_u64(as_u64)
-        );
+        assert_eq!(original_ts, Seconds::from_subsample_tesimals_u64(as_u64));
     }
     #[test]
     fn duration_to_subsample_time() {
         for seconds in [73.73, 10.832, 10000.25, 84923.399] {
-            let superseconds = Superseconds::from_seconds_f64(seconds);
+            let superseconds = Seconds::from_seconds_f64(seconds);
             let duration = Duration::from_secs_f64(seconds);
             assert_eq!(superseconds, duration.into())
         }
     }
     #[test]
     fn sample_conversion() {
-        assert_eq!(Superseconds::from_samples(1, 44100).to_samples(88200), 2);
-        assert_eq!(Superseconds::from_samples(1, 44100).to_samples(44100), 1);
-        assert_eq!(Superseconds::from_samples(2, 44100).to_samples(44100), 2);
-        assert_eq!(Superseconds::from_samples(3, 44100).to_samples(44100), 3);
-        assert_eq!(Superseconds::from_samples(4, 44100).to_samples(44100), 4);
+        assert_eq!(Seconds::from_samples(1, 44100).to_samples(88200), 2);
+        assert_eq!(Seconds::from_samples(1, 44100).to_samples(44100), 1);
+        assert_eq!(Seconds::from_samples(2, 44100).to_samples(44100), 2);
+        assert_eq!(Seconds::from_samples(3, 44100).to_samples(44100), 3);
+        assert_eq!(Seconds::from_samples(4, 44100).to_samples(44100), 4);
+        assert_eq!(Seconds::from_samples(44100, 44100).to_samples(88200), 88200);
         assert_eq!(
-            Superseconds::from_samples(44100, 44100).to_samples(88200),
-            88200
-        );
-        assert_eq!(
-            Superseconds::from_samples(44100 * 3 + 1, 44100).to_samples(88200),
+            Seconds::from_samples(44100 * 3 + 1, 44100).to_samples(88200),
             3 * 88200 + 2
         );
         assert_eq!(
-            Superseconds::from_samples(96000 * 3 + 8, 96000).to_samples(88200),
+            Seconds::from_samples(96000 * 3 + 8, 96000).to_samples(88200),
             3 * 88200 + 7
         );
     }
     #[test]
     fn arithmetic() {
         assert_eq!(
-            Superseconds::new(0, SUBSAMPLE_TESIMALS_PER_SECOND - 1) + Superseconds::new(1, 1),
-            Superseconds::new(2, 0)
+            Seconds::new(0, SUBSAMPLE_TESIMALS_PER_SECOND - 1) + Seconds::new(1, 1),
+            Seconds::new(2, 0)
         );
     }
 }

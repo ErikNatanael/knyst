@@ -12,7 +12,7 @@ use std::{collections::HashMap, hash::Hash, sync::atomic::AtomicU64};
 
 use crate::{
     buffer::{Buffer, BufferKey},
-    prelude::Superseconds,
+    prelude::Seconds,
     wavetable::Wavetable,
 };
 
@@ -87,7 +87,7 @@ type IdType = u64;
 pub struct BufferId {
     id: IdType,
     channels: usize,
-    duration: Superseconds,
+    duration: Seconds,
 }
 
 impl BufferId {
@@ -96,7 +96,7 @@ impl BufferId {
         Self {
             id: NEXT_BUFFER_ID.fetch_add(1, std::sync::atomic::Ordering::Release),
             channels: buf.num_channels(),
-            duration: Superseconds::from_seconds_f64(buf.length_seconds()),
+            duration: Seconds::from_seconds_f64(buf.length_seconds()),
         }
     }
     /// Number of channels in the Buffer this id points to
@@ -104,7 +104,7 @@ impl BufferId {
         self.channels
     }
     /// The duration of this buffer at its native sample rate
-    pub fn duration(&self) -> Superseconds {
+    pub fn duration(&self) -> Seconds {
         self.duration
     }
 }

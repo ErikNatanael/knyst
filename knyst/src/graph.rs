@@ -51,7 +51,7 @@ pub use run_graph::{RunGraph, RunGraphSettings};
 
 use crate::inspection::{EdgeInspection, EdgeSource, GraphInspection, NodeInspection};
 use crate::scheduling::MusicalTimeMap;
-use crate::time::{Superbeats, Superseconds};
+use crate::time::{Beats, Seconds};
 use rtrb::RingBuffer;
 use slotmap::{new_key_type, SecondaryMap, SlotMap};
 
@@ -242,7 +242,7 @@ impl SimultaneousChanges {
         }
     }
     /// Empty `Self` set to be scheduled a specified beat time.
-    pub fn beats(beats: Superbeats) -> Self {
+    pub fn beats(beats: Beats) -> Self {
         Self {
             time: Time::Beats(beats),
             changes: vec![],
@@ -341,7 +341,7 @@ pub struct ParameterChange {
 
 impl ParameterChange {
     /// Schedule a change at a specific time in [`Superbeats`]
-    pub fn beats(channel: NodeInput, value: impl Into<Change>, beats: Superbeats) -> Self {
+    pub fn beats(channel: NodeInput, value: impl Into<Change>, beats: Beats) -> Self {
         Self {
             input: channel,
             value: value.into(),
@@ -352,7 +352,7 @@ impl ParameterChange {
     pub fn superseconds(
         channel: NodeInput,
         value: impl Into<Change>,
-        superseconds: Superseconds,
+        superseconds: Seconds,
     ) -> Self {
         Self {
             input: channel,
@@ -386,9 +386,9 @@ impl ParameterChange {
 #[allow(missing_docs)]
 #[derive(Clone, Copy, Debug)]
 pub enum Time {
-    Beats(Superbeats),
+    Beats(Beats),
     DurationFromNow(Duration),
-    Superseconds(Superseconds),
+    Superseconds(Seconds),
     Immediately,
 }
 
@@ -397,7 +397,7 @@ pub enum Time {
 #[derive(Clone, Copy, Debug)]
 pub enum TimeOffset {
     Frames(i64),
-    Superseconds(Relative<Superseconds>),
+    Superseconds(Relative<Seconds>),
 }
 
 impl TimeOffset {
@@ -1887,12 +1887,12 @@ impl Graph {
     /// Returns the current audio thread time in Superbeats based on the
     /// MusicalTimeMap, or None if it is not available (e.g. if the Graph has
     /// not been started yet).
-    pub fn get_current_time_musical(&self) -> Option<Superbeats> {
+    pub fn get_current_time_musical(&self) -> Option<Beats> {
         if let Some(ggc) = &self.graph_gen_communicator {
             let ts_samples = ggc.timestamp.load(Ordering::Relaxed);
             let seconds = (ts_samples as f64) / (self.sample_rate as f64);
             ggc.scheduler
-                .seconds_to_musical_time_superbeats(Superseconds::from_seconds_f64(seconds))
+                .seconds_to_musical_time_superbeats(Seconds::from_seconds_f64(seconds))
         } else {
             None
         }
@@ -3912,7 +3912,7 @@ impl Scheduler {
             }
         }
     }
-    fn seconds_to_musical_time_superbeats(&self, ts: Superseconds) -> Option<Superbeats> {
+    fn seconds_to_musical_time_superbeats(&self, ts: Seconds) -> Option<Beats> {
         match self {
             Scheduler::Stopped { .. } => None,
             Scheduler::Running {

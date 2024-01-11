@@ -1,6 +1,6 @@
 //! Includes basic `Gen`s such as `Mul` and `Range`
 
-use crate::{self as knyst, prelude::Superseconds, SampleRate};
+use crate::{self as knyst, prelude::Seconds, SampleRate};
 use knyst_macro::impl_gen;
 
 use crate::{
@@ -319,7 +319,7 @@ impl PanMonoToStereo {
 pub struct LineSegment {
     start: Sample,
     end: Sample,
-    dur: Superseconds,
+    dur: Seconds,
     num_samples_left: usize,
     current_value: f64,
     step: f64,
@@ -329,7 +329,7 @@ impl LineSegment {
     #[allow(missing_docs)]
     #[new]
     #[must_use]
-    pub fn new(start: Sample, end: Sample, dur: Superseconds) -> Self {
+    pub fn new(start: Sample, end: Sample, dur: Seconds) -> Self {
         Self {
             start,
             end,
@@ -375,7 +375,7 @@ impl LineSegment {
 pub struct ExpLineSegment {
     start: Sample,
     end: Sample,
-    dur: Superseconds,
+    dur: Seconds,
     num_samples_left: usize,
     current_value: f64,
     coeff: f64,
@@ -385,7 +385,7 @@ impl ExpLineSegment {
     #[allow(missing_docs)]
     #[new]
     #[must_use]
-    pub fn new(start: Sample, end: Sample, dur: Superseconds) -> Self {
+    pub fn new(start: Sample, end: Sample, dur: Seconds) -> Self {
         Self {
             start,
             end,
@@ -429,17 +429,14 @@ impl ExpLineSegment {
 
 #[cfg(test)]
 mod tests {
-    use crate::{handles::graph_output, offline::KnystOffline, prelude::Superseconds};
+    use crate::{handles::graph_output, offline::KnystOffline, prelude::Seconds};
 
     use super::{exp_line_segment, line_segment};
 
     #[test]
     fn line_segment_test() {
         let mut kt = KnystOffline::new(8, 8, 0, 1);
-        graph_output(
-            0,
-            line_segment(1.0, 2.0, Superseconds::from_seconds_f64(1.0)),
-        );
+        graph_output(0, line_segment(1.0, 2.0, Seconds::from_seconds_f64(1.0)));
         kt.process_block();
         let output = kt.output_channel(0).unwrap();
         for i in 0..8 {
@@ -457,7 +454,7 @@ mod tests {
         let mut kt = KnystOffline::new(sr, sr, 0, 1);
         graph_output(
             0,
-            exp_line_segment(1.0, 2.0, Superseconds::from_seconds_f64(1.0)),
+            exp_line_segment(1.0, 2.0, Seconds::from_seconds_f64(1.0)),
         );
         kt.process_block();
         let output = kt.output_channel(0).unwrap();

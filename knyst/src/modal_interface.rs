@@ -124,9 +124,9 @@ impl KnystCommands for UnifiedKnystCommands {
     fn schedule_beat_callback(
         &mut self,
         callback: impl FnMut(
-                crate::prelude::Superbeats,
+                crate::prelude::Beats,
                 &mut MultiThreadedKnystCommands,
-            ) -> Option<crate::prelude::Superbeats>
+            ) -> Option<crate::prelude::Beats>
             + Send
             + 'static,
         start_time: crate::controller::StartBeat,

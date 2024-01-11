@@ -1,8 +1,8 @@
 //! This module contains things related to scheduling that are more generic than
 //! graph internals.
 
-use crate::time::Superbeats;
-use crate::time::Superseconds;
+use crate::time::Beats;
+use crate::time::Seconds;
 use std::sync::Arc;
 use std::sync::RwLock;
 
@@ -15,17 +15,15 @@ pub enum TempoChange {
 
 impl TempoChange {
     /// Give the duration in seconds of the TempoChange
-    pub fn to_secs_f64(&self, duration: Superbeats) -> f64 {
+    pub fn to_secs_f64(&self, duration: Beats) -> f64 {
         match self {
             TempoChange::NewTempo { bpm } => (duration.as_beats_f64() * 60.) / bpm,
         }
     }
     /// Converts a duration in seconds within this TempoChange to Superbeats
-    pub fn secs_f64_to_beats(&self, section_duration: f64) -> Superbeats {
+    pub fn secs_f64_to_beats(&self, section_duration: f64) -> Beats {
         match self {
-            TempoChange::NewTempo { bpm } => {
-                Superbeats::from_beats_f64(*bpm * (section_duration / 60.))
-            }
+            TempoChange::NewTempo { bpm } => Beats::from_beats_f64(*bpm * (section_duration / 60.)),
         }
     }
 }
@@ -38,7 +36,7 @@ impl TempoChange {
 /// be possible to map [`Superbeats`] to seconds. The tempo_changes must be
 /// sorted in ascending order.
 pub struct MusicalTimeMap {
-    tempo_changes: Vec<(TempoChange, Superbeats)>,
+    tempo_changes: Vec<(TempoChange, Beats)>,
 }
 impl MusicalTimeMap {
     /// Make a new [`MusicalTimeMap`] with a single BPM tempo value of 60 bpm at time 0
@@ -64,7 +62,7 @@ impl MusicalTimeMap {
     /// assert!(map.is_sorted());
     /// assert_eq!(map.len(), 6);
     /// ```
-    pub fn insert(&mut self, tempo_change: TempoChange, time_stamp: Superbeats) {
+    pub fn insert(&mut self, tempo_change: TempoChange, time_stamp: Beats) {
         let mut same_timestamp_index = None;
         for (i, (_change, time)) in self.tempo_changes.iter().enumerate() {
             if *time == time_stamp {
@@ -87,10 +85,10 @@ impl MusicalTimeMap {
         // Uphold the promise that there is a first tempo change that starts at zero
         if self.tempo_changes.is_empty() {
             self.tempo_changes
-                .push((TempoChange::NewTempo { bpm: 60.0 }, Superbeats::new(0, 0)));
+                .push((TempoChange::NewTempo { bpm: 60.0 }, Beats::new(0, 0)));
         }
-        if self.tempo_changes[0].1 != Superbeats::new(0, 0) {
-            self.insert(TempoChange::NewTempo { bpm: 60.0 }, Superbeats::new(0, 0));
+        if self.tempo_changes[0].1 != Beats::new(0, 0) {
+            self.insert(TempoChange::NewTempo { bpm: 60.0 }, Beats::new(0, 0));
         }
     }
     /// Replace a [`TempoChange`]
@@ -102,12 +100,12 @@ impl MusicalTimeMap {
     /// Move a [`TempoChange`] to a new position in [`Superbeats`]. If the
     /// first tempo change is moved a 60 bpm tempo change will be inserted at
     /// the start.
-    pub fn move_tempo_change(&mut self, index: usize, time_stamp: Superbeats) {
+    pub fn move_tempo_change(&mut self, index: usize, time_stamp: Beats) {
         if index <= self.tempo_changes.len() {
             self.tempo_changes[index].1 = time_stamp;
         }
-        if index == 0 && time_stamp != Superbeats::new(0, 0) {
-            self.insert(TempoChange::NewTempo { bpm: 60.0 }, Superbeats::new(0, 0));
+        if index == 0 && time_stamp != Beats::new(0, 0) {
+            self.insert(TempoChange::NewTempo { bpm: 60.0 }, Beats::new(0, 0));
         }
     }
     /// Convert a [`Superbeats`] timestamp to seconds using this map.
@@ -137,10 +135,10 @@ impl MusicalTimeMap {
     ///     16.0 * 0.5 + 16.0 * 1.0 + (1000. * 0.01)
     /// );
     /// ```
-    pub fn musical_time_to_secs_f64(&self, ts: Superbeats) -> f64 {
+    pub fn musical_time_to_secs_f64(&self, ts: Beats) -> f64 {
         // If we have not upheld our promise about the state of the MusicalTimeMap there is a bug
         assert!(self.tempo_changes.len() > 0);
-        assert_eq!(self.tempo_changes[0].1, Superbeats::new(0, 0));
+        assert_eq!(self.tempo_changes[0].1, Beats::new(0, 0));
         let mut accumulated_seconds: f64 = 0.0;
         let mut duration_remaining = ts;
         // Accumulate the entire tempo changes ranges up to the one we are in
@@ -160,12 +158,12 @@ impl MusicalTimeMap {
                 duration_remaining = duration_remaining.checked_sub(section_duration).unwrap();
             } else {
                 accumulated_seconds += tempo_change_pair0.0.to_secs_f64(duration_remaining);
-                duration_remaining = Superbeats::new(0, 0);
+                duration_remaining = Beats::new(0, 0);
                 break;
             }
         }
 
-        if duration_remaining > Superbeats::new(0, 0) {
+        if duration_remaining > Beats::new(0, 0) {
             // The time stamp given is after the last tempo change, simply
             // calculate the remaining duration using the last tempo change.
             accumulated_seconds += self
@@ -179,11 +177,11 @@ impl MusicalTimeMap {
         accumulated_seconds
     }
     /// Convert a timestamp in seconds to beats using self
-    pub fn superseconds_to_superbeats(&self, ts: Superseconds) -> Superbeats {
+    pub fn superseconds_to_superbeats(&self, ts: Seconds) -> Beats {
         // If we have not upheld our promise about the state of the MusicalTimeMap there is a bug
         assert!(self.tempo_changes.len() > 0);
-        assert_eq!(self.tempo_changes[0].1, Superbeats::ZERO);
-        let mut accumulated_beats = Superbeats::ZERO;
+        assert_eq!(self.tempo_changes[0].1, Beats::ZERO);
+        let mut accumulated_beats = Beats::ZERO;
         let mut duration_remaining = ts.to_seconds_f64();
         // Accumulate the entire tempo changes ranges up to the one we are in
         for (tempo_change_pair0, tempo_change_pair1) in self
@@ -227,7 +225,7 @@ impl MusicalTimeMap {
     }
     /// Returns true if the tempo changes are in order, false if not. For testing purposes.
     pub fn is_sorted(&self) -> bool {
-        let mut last_musical_time = Superbeats::new(0, 0);
+        let mut last_musical_time = Beats::new(0, 0);
         for &(_, musical_time) in &self.tempo_changes {
             if musical_time < last_musical_time {
                 return false;
@@ -242,7 +240,7 @@ impl MusicalTimeMap {
 impl Default for MusicalTimeMap {
     fn default() -> Self {
         Self {
-            tempo_changes: vec![(TempoChange::NewTempo { bpm: 60.0 }, Superbeats::new(0, 0))],
+            tempo_changes: vec![(TempoChange::NewTempo { bpm: 60.0 }, Beats::new(0, 0))],
         }
     }
 }
@@ -252,56 +250,50 @@ pub struct MusicalTimeMapRef(Arc<RwLock<MusicalTimeMap>>);
 
 #[cfg(test)]
 mod tests {
-    use crate::time::Superseconds;
+    use crate::time::Seconds;
 
     #[test]
     fn musical_time_test() {
-        use crate::scheduling::{MusicalTimeMap, Superbeats, TempoChange};
+        use crate::scheduling::{Beats, MusicalTimeMap, TempoChange};
         let mut map = MusicalTimeMap::new();
-        assert_eq!(map.musical_time_to_secs_f64(Superbeats::new(0, 0)), 0.0);
+        assert_eq!(map.musical_time_to_secs_f64(Beats::new(0, 0)), 0.0);
         // Starts with a TempoChange for a constant 60 bpm per default
-        assert_eq!(map.musical_time_to_secs_f64(Superbeats::new(1, 0)), 1.0);
+        assert_eq!(map.musical_time_to_secs_f64(Beats::new(1, 0)), 1.0);
         assert_eq!(
-            map.musical_time_to_secs_f64(Superbeats::from_fractional_beats::<4>(5, 3)),
+            map.musical_time_to_secs_f64(Beats::from_fractional_beats::<4>(5, 3)),
             5.75
         );
         assert_eq!(
-            map.superseconds_to_superbeats(Superseconds::from_seconds_f64(2.)),
-            Superbeats::from_beats(2)
+            map.superseconds_to_superbeats(Seconds::from_seconds_f64(2.)),
+            Beats::from_beats(2)
         );
         map.replace(0, TempoChange::NewTempo { bpm: 120.0 });
-        assert_eq!(map.musical_time_to_secs_f64(Superbeats::new(1, 0)), 0.5);
+        assert_eq!(map.musical_time_to_secs_f64(Beats::new(1, 0)), 0.5);
         assert_eq!(
-            map.musical_time_to_secs_f64(Superbeats::from_fractional_beats::<4>(5, 3)),
+            map.musical_time_to_secs_f64(Beats::from_fractional_beats::<4>(5, 3)),
             5.75 * 0.5
         );
-        map.insert(
-            TempoChange::NewTempo { bpm: 60.0 },
-            Superbeats::from_beats(16),
-        );
-        map.insert(
-            TempoChange::NewTempo { bpm: 6000.0 },
-            Superbeats::from_beats(32),
-        );
+        map.insert(TempoChange::NewTempo { bpm: 60.0 }, Beats::from_beats(16));
+        map.insert(TempoChange::NewTempo { bpm: 6000.0 }, Beats::from_beats(32));
         assert_eq!(
-            map.musical_time_to_secs_f64(Superbeats::from_beats(17)),
+            map.musical_time_to_secs_f64(Beats::from_beats(17)),
             16.0 * 0.5 + 1.0
         );
         assert_eq!(
-            map.musical_time_to_secs_f64(Superbeats::from_beats(32)),
+            map.musical_time_to_secs_f64(Beats::from_beats(32)),
             16.0 * 0.5 + 16.0
         );
         assert_eq!(
-            map.musical_time_to_secs_f64(Superbeats::from_beats(33)),
+            map.musical_time_to_secs_f64(Beats::from_beats(33)),
             16.0 * 0.5 + 16.0 + 0.01
         );
         assert_eq!(
-            map.musical_time_to_secs_f64(Superbeats::from_beats(32 + 1000)),
+            map.musical_time_to_secs_f64(Beats::from_beats(32 + 1000)),
             16.0 * 0.5 + 16.0 + 10.
         );
         assert_eq!(
-            map.superseconds_to_superbeats(Superseconds::from_seconds_f64(2.)),
-            Superbeats::from_beats(4)
+            map.superseconds_to_superbeats(Seconds::from_seconds_f64(2.)),
+            Beats::from_beats(4)
         );
     }
 }

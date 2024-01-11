@@ -4,7 +4,7 @@ use knyst::{
     controller::{print_error_handler, StartBeat},
     graph::Mult,
     prelude::*,
-    time::Superbeats,
+    time::Beats,
 };
 use rand::{thread_rng, Rng};
 use std::time::Duration;
@@ -71,20 +71,20 @@ fn main() -> Result<()> {
             k.schedule_change(ParameterChange::beats(
                 node0.input("freq"),
                 freq as Sample,
-                time + Superbeats::from_beats_f32(0.5),
+                time + Beats::from_beats_f32(0.5),
             ));
             i += 1;
-            if time > Superbeats::from_beats(32) {
+            if time > Beats::from_beats(32) {
                 None
             } else {
                 if i % 2 == 0 {
-                    Some(Superbeats::from_beats(2))
+                    Some(Beats::from_beats(2))
                 } else {
-                    Some(Superbeats::from_beats_f32(1.25))
+                    Some(Beats::from_beats_f32(1.25))
                 }
             }
         },
-        StartBeat::Multiple(Superbeats::from_beats(4)), // Start after a multiple of 4 beats
+        StartBeat::Multiple(Beats::from_beats(4)), // Start after a multiple of 4 beats
     ));
     let mut input = String::new();
     loop {

@@ -7,7 +7,7 @@ use crate::BlockSize;
 use crate::SampleRate;
 use knyst_macro::impl_gen;
 
-use crate::time::Superseconds;
+use crate::time::Seconds;
 use crate::Sample;
 
 /// Delay by an integer number of samples, no interpolation. This is good for e.g. triggers.
@@ -20,7 +20,7 @@ use crate::Sample;
 pub struct SampleDelay {
     buffer: Vec<Sample>,
     write_position: usize,
-    max_delay_length: Superseconds,
+    max_delay_length: Seconds,
 }
 impl SampleDelay {}
 
@@ -28,7 +28,7 @@ impl SampleDelay {}
 impl SampleDelay {
     #[new]
     /// Create a new SampleDelay with a maximum delay time.
-    pub fn new(max_delay_length: Superseconds) -> Self {
+    pub fn new(max_delay_length: Seconds) -> Self {
         Self {
             buffer: vec![0.0; 0],
             max_delay_length,

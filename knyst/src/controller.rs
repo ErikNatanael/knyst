@@ -31,7 +31,7 @@ use crate::{
     handles::{GraphHandle, Handle},
     inputs,
     scheduling::MusicalTimeMap,
-    time::Superbeats,
+    time::Beats,
     KnystError,
 };
 use crossbeam_channel::{unbounded, Receiver, Sender};
@@ -137,9 +137,7 @@ pub trait KnystCommands {
     /// Add a new beat callback. See [`BeatCallback`] for documentation.
     fn schedule_beat_callback(
         &mut self,
-        callback: impl FnMut(Superbeats, &mut MultiThreadedKnystCommands) -> Option<Superbeats>
-            + Send
-            + 'static,
+        callback: impl FnMut(Beats, &mut MultiThreadedKnystCommands) -> Option<Beats> + Send + 'static,
         start_time: StartBeat,
     ) -> CallbackHandle;
     /// Disconnect (undo) a [`Connection`]
@@ -371,12 +369,10 @@ impl KnystCommands for MultiThreadedKnystCommands {
     /// Add a new beat callback. See [`BeatCallback`] for documentation.
     fn schedule_beat_callback(
         &mut self,
-        callback: impl FnMut(Superbeats, &mut MultiThreadedKnystCommands) -> Option<Superbeats>
-            + Send
-            + 'static,
+        callback: impl FnMut(Beats, &mut MultiThreadedKnystCommands) -> Option<Beats> + Send + 'static,
         start_time: StartBeat,
     ) -> CallbackHandle {
-        let c = BeatCallback::new(callback, Superbeats::ZERO);
+        let c = BeatCallback::new(callback, Beats::ZERO);
         let handle = c.handle();
         let command = Command::ScheduleBeatCallback(c, start_time);
         self.sender.send(command).unwrap();
@@ -713,9 +709,9 @@ impl CallbackHandle {
 /// The beat on which a callback should start, either an absolute beat value or the next multiple of some number of beats.
 pub enum StartBeat {
     /// An absolute time in beat
-    Absolute(Superbeats),
+    Absolute(Beats),
     /// The next multiple of this number of beats
-    Multiple(Superbeats),
+    Multiple(Beats),
 }
 
 /// Callback that is scheduled in [`Superbeats`]. The closure inside the
@@ -729,18 +725,15 @@ pub enum StartBeat {
 /// can return the time to wait until it gets called again or `None` to remove
 /// the callback.
 pub struct BeatCallback {
-    callback:
-        Box<dyn FnMut(Superbeats, &mut MultiThreadedKnystCommands) -> Option<Superbeats> + Send>,
-    next_timestamp: Superbeats,
+    callback: Box<dyn FnMut(Beats, &mut MultiThreadedKnystCommands) -> Option<Beats> + Send>,
+    next_timestamp: Beats,
     free_flag: Arc<AtomicBool>,
 }
 impl BeatCallback {
     /// Create a new [`BeatCallback`] with a given start time
     fn new(
-        callback: impl FnMut(Superbeats, &mut MultiThreadedKnystCommands) -> Option<Superbeats>
-            + Send
-            + 'static,
-        start_time: Superbeats,
+        callback: impl FnMut(Beats, &mut MultiThreadedKnystCommands) -> Option<Beats> + Send + 'static,
+        start_time: Beats,
     ) -> Self {
         let free_flag = Arc::new(AtomicBool::new(false));
         Self {
@@ -942,10 +935,10 @@ impl Controller {
                     StartBeat::Absolute(beats) => beats,
                     StartBeat::Multiple(beats) => {
                         let mut i = 1;
-                        while beats * Superbeats::from_beats(i) < current_beats {
+                        while beats * Beats::from_beats(i) < current_beats {
                             i += 1;
                         }
-                        beats * Superbeats::from_beats(i)
+                        beats * Beats::from_beats(i)
                     }
                 };
                 // println!(
@@ -1040,7 +1033,7 @@ impl Controller {
                 let c = &mut self.beat_callbacks[i - 1];
                 if c.next_timestamp < current_time_beats
                     || c.next_timestamp.checked_sub(current_time_beats).unwrap()
-                        < Superbeats::from_beats_f32(0.25)
+                        < Beats::from_beats_f32(0.25)
                 {
                     if let CallbackResult::Delete = c.run_callback(&mut k) {
                         self.beat_callbacks.remove(i - 1);
@@ -1141,20 +1134,20 @@ mod tests {
             graph_output(0, once_trig());
         });
         schedule_bundle(
-            crate::graph::Time::Superseconds(Superseconds::from_samples(5, sr as u64)),
+            crate::graph::Time::Superseconds(Seconds::from_samples(5, sr as u64)),
             || {
                 graph_output(0, once_trig());
             },
         );
         schedule_bundle(
-            crate::graph::Time::Superseconds(Superseconds::from_samples(10, sr as u64)),
+            crate::graph::Time::Superseconds(Seconds::from_samples(10, sr as u64)),
             || {
                 graph_output(0, once_trig());
             },
         );
         let mut og = None;
         schedule_bundle(
-            crate::graph::Time::Superseconds(Superseconds::from_samples(16, sr as u64)),
+            crate::graph::Time::Superseconds(Seconds::from_samples(16, sr as u64)),
             || {
                 og = Some(one_gen());
                 graph_output(0, og.unwrap());
@@ -1162,20 +1155,20 @@ mod tests {
         );
         let og = og.unwrap();
         schedule_bundle(
-            crate::graph::Time::Superseconds(Superseconds::from_samples(17, sr as u64)),
+            crate::graph::Time::Superseconds(Seconds::from_samples(17, sr as u64)),
             || {
                 og.passthrough(2.0);
             },
         );
         schedule_bundle(
-            crate::graph::Time::Superseconds(Superseconds::from_samples(19, sr as u64)),
+            crate::graph::Time::Superseconds(Seconds::from_samples(19, sr as u64)),
             || {
                 og.passthrough(3.0);
             },
         );
         // Try with the pure KnystCommands methods as well.
         knyst_commands().start_scheduling_bundle(knyst::graph::Time::Superseconds(
-            Superseconds::from_samples(20, sr as u64),
+            Seconds::from_samples(20, sr as u64),
         ));
         og.passthrough(4.0);
         knyst_commands().upload_scheduling_bundle();
@@ -1216,20 +1209,20 @@ mod tests {
             graph_output(0, once_trig());
         });
         schedule_bundle(
-            crate::graph::Time::Superseconds(Superseconds::from_samples(5, sr as u64)),
+            crate::graph::Time::Superseconds(Seconds::from_samples(5, sr as u64)),
             || {
                 graph_output(0, once_trig());
             },
         );
         schedule_bundle(
-            crate::graph::Time::Superseconds(Superseconds::from_samples(10, sr as u64)),
+            crate::graph::Time::Superseconds(Seconds::from_samples(10, sr as u64)),
             || {
                 graph_output(0, once_trig());
             },
         );
         let mut og = None;
         schedule_bundle(
-            crate::graph::Time::Superseconds(Superseconds::from_samples(16, sr as u64)),
+            crate::graph::Time::Superseconds(Seconds::from_samples(16, sr as u64)),
             || {
                 og = Some(one_gen());
                 graph_output(0, og.unwrap());
@@ -1237,7 +1230,7 @@ mod tests {
         );
         let og = og.unwrap();
         schedule_bundle(
-            crate::graph::Time::Superseconds(Superseconds::from_samples(17, sr as u64)),
+            crate::graph::Time::Superseconds(Seconds::from_samples(17, sr as u64)),
             || {
                 og.passthrough(2.0);
 
@@ -1246,14 +1239,14 @@ mod tests {
             },
         );
         schedule_bundle(
-            crate::graph::Time::Superseconds(Superseconds::from_samples(19, sr as u64)),
+            crate::graph::Time::Superseconds(Seconds::from_samples(19, sr as u64)),
             || {
                 og.passthrough(3.0);
             },
         );
         // Try with the pure KnystCommands methods as well.
         knyst_commands().start_scheduling_bundle(knyst::graph::Time::Superseconds(
-            Superseconds::from_samples(20, sr as u64),
+            Seconds::from_samples(20, sr as u64),
         ));
         og.passthrough(4.0);
         knyst_commands().upload_scheduling_bundle();
