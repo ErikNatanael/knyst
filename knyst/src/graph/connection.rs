@@ -617,12 +617,12 @@ impl Connection {
 /// Error making a connection inside a [`Graph`]
 #[derive(thiserror::Error, Debug, PartialEq)]
 pub enum ConnectionError {
-    #[error("The nodes that you are trying to connect are in different graphs. Nodes can only be connected within a graph.")]
-    DifferentGraphs,
+    #[error("The nodes that you are trying to connect are in different graphs. Nodes can only be connected within a graph. Connection: {0}")]
+    DifferentGraphs(Connection),
     #[error("The graph containing the NodeId provided was not found. The node itself may or may not exist. Connection: {0}")]
     GraphNotFound(Connection),
-    #[error("The NodeId does not exist. The Node may have been freed already.")]
-    NodeNotFound,
+    #[error("The NodeId does not exist. The Node may have been freed already. Connection: {0}")]
+    NodeNotFound(Connection),
     #[error("The given input label (`{0}`) is not available for the given node.")]
     InvalidInputLabel(&'static str),
     #[error("The given output label (`{0}`) is not available for the given node.")]

@@ -2174,10 +2174,10 @@ impl Graph {
                     Ok(_) => {
                         return Ok(());
                     }
-                    Err(e) => match &e {
-                        ConnectionError::NodeNotFound => {
+                    Err(e) => match e {
+                        ConnectionError::NodeNotFound(c) => {
                             // The correct graph was found, but the node wasn't in it.
-                            return Err(ConnectionError::NodeNotFound);
+                            return Err(ConnectionError::NodeNotFound(c));
                         }
                         // We continue trying other graphs
                         ConnectionError::GraphNotFound(_connection) => (),
@@ -2203,7 +2203,7 @@ impl Graph {
                 to_index_offset,
             } => {
                 if source.graph_id() != sink.graph_id() {
-                    return Err(ConnectionError::DifferentGraphs);
+                    return Err(ConnectionError::DifferentGraphs(connection.clone()));
                 }
                 if source.graph_id() != self.id {
                     return try_disconnect_in_child_graphs(connection.clone());
@@ -2218,16 +2218,16 @@ impl Graph {
                     return Err(ConnectionError::SameNode);
                 }
                 if !self.get_nodes().contains_key(source_key) {
-                    return Err(ConnectionError::NodeNotFound);
+                    return Err(ConnectionError::NodeNotFound(connection.clone()));
                 }
                 if !self.get_nodes().contains_key(sink_key) {
-                    return Err(ConnectionError::NodeNotFound);
+                    return Err(ConnectionError::NodeNotFound(connection.clone()));
                 }
                 if self.node_keys_pending_removal.contains(&source_key) {
-                    return Err(ConnectionError::NodeNotFound);
+                    return Err(ConnectionError::NodeNotFound(connection.clone()));
                 }
                 if self.node_keys_pending_removal.contains(&sink_key) {
-                    return Err(ConnectionError::NodeNotFound);
+                    return Err(ConnectionError::NodeNotFound(connection.clone()));
                 }
                 let to_index = if input_index.is_some() {
                     if let Some(i) = input_index {
@@ -2354,10 +2354,10 @@ impl Graph {
                         return try_disconnect_in_child_graphs(connection.clone());
                     };
                     if !self.get_nodes().contains_key(sink_key) {
-                        return Err(ConnectionError::NodeNotFound);
+                        return Err(ConnectionError::NodeNotFound(connection.clone()));
                     }
                     if self.node_keys_pending_removal.contains(&sink_key) {
-                        return Err(ConnectionError::NodeNotFound);
+                        return Err(ConnectionError::NodeNotFound(connection.clone()));
                     }
 
                     let input = if input_index.is_some() {
@@ -2414,10 +2414,10 @@ impl Graph {
                     return try_disconnect_in_child_graphs(connection.clone());
                 };
                 if !self.get_nodes().contains_key(source_key) {
-                    return Err(ConnectionError::NodeNotFound);
+                    return Err(ConnectionError::NodeNotFound(connection.clone()));
                 }
                 if self.node_keys_pending_removal.contains(&source_key) {
-                    return Err(ConnectionError::NodeNotFound);
+                    return Err(ConnectionError::NodeNotFound(connection.clone()));
                 }
                 if channels + to_index > self.num_outputs {
                     return Err(ConnectionError::DestinationChannelOutOfBounds);
@@ -2474,10 +2474,10 @@ impl Graph {
                     return try_disconnect_in_child_graphs(connection.clone());
                 };
                 if !self.get_nodes().contains_key(sink_key) {
-                    return Err(ConnectionError::NodeNotFound);
+                    return Err(ConnectionError::NodeNotFound(connection.clone()));
                 }
                 if self.node_keys_pending_removal.contains(&sink_key) {
-                    return Err(ConnectionError::NodeNotFound);
+                    return Err(ConnectionError::NodeNotFound(connection.clone()));
                 }
                 let to_index = if to_index.is_some() {
                     if let Some(i) = to_index {
@@ -2598,10 +2598,10 @@ impl Graph {
                     Ok(_) => {
                         return Ok(());
                     }
-                    Err(e) => match &e {
-                        ConnectionError::NodeNotFound => {
+                    Err(e) => match e {
+                        ConnectionError::NodeNotFound(c) => {
                             // The correct graph was found, but the node wasn't in it.
-                            return Err(ConnectionError::NodeNotFound);
+                            return Err(ConnectionError::NodeNotFound(c));
                         }
                         // We continue trying other graphs
                         ConnectionError::GraphNotFound(_connection) => (),
@@ -2626,7 +2626,7 @@ impl Graph {
                 to_index_offset,
             } => {
                 if source.graph_id() != sink.graph_id() {
-                    return Err(ConnectionError::DifferentGraphs);
+                    return Err(ConnectionError::DifferentGraphs(connection.clone()));
                 }
                 if source.graph_id != self.id {
                     return try_connect_to_graphs(connection.clone());
@@ -2643,16 +2643,16 @@ impl Graph {
                     return Err(ConnectionError::SameNode);
                 }
                 if !self.get_nodes().contains_key(source_key) {
-                    return Err(ConnectionError::NodeNotFound);
+                    return Err(ConnectionError::NodeNotFound(connection.clone()));
                 }
                 if !self.get_nodes().contains_key(sink_key) {
-                    return Err(ConnectionError::NodeNotFound);
+                    return Err(ConnectionError::NodeNotFound(connection.clone()));
                 }
                 if self.node_keys_pending_removal.contains(&source_key) {
-                    return Err(ConnectionError::NodeNotFound);
+                    return Err(ConnectionError::NodeNotFound(connection.clone()));
                 }
                 if self.node_keys_pending_removal.contains(&sink_key) {
-                    return Err(ConnectionError::NodeNotFound);
+                    return Err(ConnectionError::NodeNotFound(connection.clone()));
                 }
                 let to_index = if input_index.is_some() {
                     if let Some(i) = input_index {
@@ -2763,10 +2763,10 @@ impl Graph {
                         return try_connect_to_graphs(connection.clone());
                     };
                     if !self.get_nodes().contains_key(sink_key) {
-                        return Err(ConnectionError::NodeNotFound);
+                        return Err(ConnectionError::NodeNotFound(connection.clone()));
                     }
                     if self.node_keys_pending_removal.contains(&sink_key) {
-                        return Err(ConnectionError::NodeNotFound);
+                        return Err(ConnectionError::NodeNotFound(connection.clone()));
                     }
 
                     let input = if input_index.is_some() {
@@ -2823,10 +2823,10 @@ impl Graph {
                     return try_connect_to_graphs(connection.clone());
                 };
                 if !self.get_nodes().contains_key(source_key) {
-                    return Err(ConnectionError::NodeNotFound);
+                    return Err(ConnectionError::NodeNotFound(connection.clone()));
                 }
                 if self.node_keys_pending_removal.contains(&source_key) {
-                    return Err(ConnectionError::NodeNotFound);
+                    return Err(ConnectionError::NodeNotFound(connection.clone()));
                 }
 
                 let num_source_outputs = self
@@ -2882,10 +2882,10 @@ impl Graph {
                     return try_connect_to_graphs(connection.clone());
                 };
                 if !self.get_nodes().contains_key(sink_key) {
-                    return Err(ConnectionError::NodeNotFound);
+                    return Err(ConnectionError::NodeNotFound(connection.clone()));
                 }
                 if self.node_keys_pending_removal.contains(&sink_key) {
-                    return Err(ConnectionError::NodeNotFound);
+                    return Err(ConnectionError::NodeNotFound(connection.clone()));
                 }
 
                 // Find the index number, potentially from the label
@@ -2941,10 +2941,10 @@ impl Graph {
                     return try_connect_to_graphs(connection.clone());
                 };
                 if !self.get_nodes().contains_key(node_key) {
-                    return Err(ConnectionError::NodeNotFound);
+                    return Err(ConnectionError::NodeNotFound(connection.clone()));
                 }
                 if self.node_keys_pending_removal.contains(&node_key) {
-                    return Err(ConnectionError::NodeNotFound);
+                    return Err(ConnectionError::NodeNotFound(connection.clone()));
                 }
 
                 self.recalculation_required = true;
