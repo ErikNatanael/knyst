@@ -2,15 +2,18 @@
 
 ## Current changes
 
+## v0.5.0
+
 Large breaking changes in this version
 
-- New Handle system for ergonomically building and interacting with the graph!
+- New Handle API for ergonomically building and interacting with the graph!
+- A modal thread local interface to interact with knyst, making the Handle system possible, accessed through `knyst_commands()`.
 - NodeAddress was replaced by NodeId which is Copy.
 - Enabled routing a graph's inputs to its outputs directly, mostly for completeness of the API.
 - Fixed bug where input from graph inputs would overwrite other inputs to a node.
 - Updated all dependencies to the latest version.
 - New `impl_gen` macro for implementing the Gen trait and adding a Handle with input dependent methods and with much less error prone boilerplate.
-- Fixed bug in the `Wavetable` which produced artefacts.
+- Fixed bug in `Wavetable` which produced artefacts.
 - Refactored the codebase to something more logical. Many paths have changed, but importing the prelude should give you most of what you need.
 
 ## v0.4.3
