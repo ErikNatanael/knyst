@@ -21,7 +21,7 @@ default = ["cpal", "jack"]
 unstable = []
 
 [dependencies]
-knyst_macro = { path = "../knyst_macro" }
+knyst_macro = "0.5.0"
 slotmap = "1.0"
 # For ergonomic error handling
 thiserror = "1.0"
