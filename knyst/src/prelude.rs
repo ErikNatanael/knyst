@@ -21,6 +21,7 @@ pub use crate::resources::{IdOrKey, WavetableId, WavetableKey};
 pub use crate::resources::{Resources, ResourcesSettings};
 pub use crate::sphere::{KnystSphere, SphereSettings};
 pub use crate::time::{Beats, Seconds};
-pub use crate::wavetable::{Wavetable, TABLE_POWER, TABLE_SIZE};
+pub use crate::wavetable::{TABLE_POWER, TABLE_SIZE};
+pub use crate::wavetable_aa::Wavetable;
 pub use crate::{BlockSize, Sample, SampleRate, Trig};
 pub use knyst_macro::impl_gen;

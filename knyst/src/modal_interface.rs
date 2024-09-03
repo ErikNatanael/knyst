@@ -24,6 +24,7 @@ use crate::graph::{GraphSettings, NodeId, Time};
 use crate::handles::{GraphHandle, Handle};
 use crate::prelude::{CallbackHandle, MultiThreadedKnystCommands};
 use crate::sphere::KnystSphere;
+use crate::wavetable_aa::{self, Wavetable};
 
 /// A unique id for a KnystSphere.
 #[derive(Copy, Clone, PartialOrd, Ord, PartialEq, Eq, Debug, Hash)]
@@ -212,10 +213,7 @@ impl KnystCommands for UnifiedKnystCommands {
         }
     }
 
-    fn insert_wavetable(
-        &mut self,
-        wavetable: crate::wavetable::Wavetable,
-    ) -> crate::resources::WavetableId {
+    fn insert_wavetable(&mut self, wavetable: Wavetable) -> crate::resources::WavetableId {
         match self {
             UnifiedKnystCommands::Real(kc) => kc.borrow_mut().insert_wavetable(wavetable),
             UnifiedKnystCommands::Dummy(kc) => {
@@ -232,11 +230,7 @@ impl KnystCommands for UnifiedKnystCommands {
         }
     }
 
-    fn replace_wavetable(
-        &mut self,
-        id: crate::resources::WavetableId,
-        wavetable: crate::wavetable::Wavetable,
-    ) {
+    fn replace_wavetable(&mut self, id: crate::resources::WavetableId, wavetable: Wavetable) {
         match self {
             UnifiedKnystCommands::Real(kc) => kc.borrow_mut().replace_wavetable(id, wavetable),
             UnifiedKnystCommands::Dummy(kc) => kc.report_dummy(),

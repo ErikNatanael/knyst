@@ -18,7 +18,6 @@ pub struct Lag {
     sample_rate: Sample,
 }
 
-impl Lag {}
 #[impl_gen]
 impl Lag {
     #[new]
@@ -27,7 +26,8 @@ impl Lag {
         Self::default()
     }
     #[process]
-    fn process(
+    #[allow(missing_docs)]
+    pub fn process(
         &mut self,
         value: &[Sample],
         time: &[Sample],
@@ -48,7 +48,8 @@ impl Lag {
         GenState::Continue
     }
     #[init]
-    fn init(&mut self, sample_rate: SampleRate) {
+    #[allow(missing_docs)]
+    pub fn init(&mut self, sample_rate: SampleRate) {
         self.sample_rate = *sample_rate;
     }
 }
@@ -80,7 +81,8 @@ impl Ramp {
         }
     }
     #[process]
-    fn process(
+    #[allow(missing_docs)]
+    pub fn process(
         &mut self,
         value: &[Sample],
         time: &[Sample],
@@ -118,7 +120,8 @@ impl Ramp {
     }
 
     #[init]
-    fn init(&mut self) {
+    #[allow(missing_docs)]
+    pub fn init(&mut self) {
         self.num_steps_to_go = 0;
     }
 }

@@ -7,7 +7,8 @@ use crate::{
     gen::{Gen, GenContext, GenState, StopAction},
     prelude::Seconds,
     resources::{BufferId, IdOrKey, WavetableId, WavetableKey},
-    wavetable::{Wavetable, WavetablePhase, FRACTIONAL_PART, TABLE_SIZE},
+    wavetable::{WavetablePhase, FRACTIONAL_PART, TABLE_SIZE},
+    wavetable_aa::Wavetable,
     Resources, Sample, SampleRate,
 };
 use knyst_macro::impl_gen;
@@ -70,7 +71,7 @@ impl Oscillator {
         };
         if let Some(wt) = resources.wavetable(wt_key) {
             for (&f, o) in freq.iter().zip(sig.iter_mut()) {
-                *o = wt.get_linear_interp(self.phase);
+                *o = wt.get_linear_interp(self.phase, f);
                 self.set_freq(f);
                 self.phase.increase(self.step);
                 // TODO: Set a buffer of phase values and request them all from the wavetable all at the same time. Should enable SIMD in the wavetable lookup.
@@ -440,12 +441,14 @@ pub struct WavetableOscillatorOwned {
     wavetable: Wavetable,
     amp: Sample,
     freq_to_phase_inc: f64,
+    freq: Sample,
 }
 
 impl WavetableOscillatorOwned {
     /// Set the frequency of the oscillation. This will be overwritten by the
     /// input frequency if used as a Gen.
     pub fn set_freq(&mut self, freq: Sample) {
+        self.freq = freq;
         self.step = (freq as f64 * self.freq_to_phase_inc) as u32;
     }
     /// Set the amplitude of the signal.
@@ -463,7 +466,7 @@ impl WavetableOscillatorOwned {
     pub fn next_sample(&mut self) -> Sample {
         // Use the phase to index into the wavetable
         // self.wavetable.get_linear_interp(temp_phase) * self.amp
-        let sample = self.wavetable.get(self.phase) * self.amp;
+        let sample = self.wavetable.get(self.phase, self.freq) * self.amp;
         self.phase.increase(self.step);
         sample
     }
@@ -480,6 +483,7 @@ impl WavetableOscillatorOwned {
             wavetable,
             amp: 1.0,
             freq_to_phase_inc: 0.0, // set to a real value in init
+            freq: 0.,
         }
     }
     fn process(&mut self, freq: &[Sample], sig: &mut [Sample]) -> GenState {

@@ -96,14 +96,14 @@ pub fn wavetable_vs_sin(c: &mut Criterion) {
     let mut phase = WavetablePhase(0);
     c.bench_function("wavetable sin linear", |b| {
         b.iter(|| {
-            black_box(w.get_linear_interp(phase));
+            black_box(w.get_linear_interp(phase, frequency));
             phase.increase(integer_phase_increase);
         });
     });
     let mut phase = WavetablePhase(0);
     c.bench_function("wavetable sin no interpolation", |b| {
         b.iter(|| {
-            black_box(w.get(phase));
+            black_box(w.get(phase, frequency));
             phase.increase(integer_phase_increase);
         });
     });

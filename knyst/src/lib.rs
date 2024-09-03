@@ -95,6 +95,7 @@ pub mod sphere;
 pub mod time;
 pub mod trig;
 pub mod wavetable;
+pub mod wavetable_aa;
 pub mod xorrng;
 
 /// Combined error type for Knyst, containing any other error in the library.
@@ -147,7 +148,7 @@ pub type Trig = Sample;
 
 /// Newtype for a sample rate to identify it in function signatures. Derefs to a `Sample` for easy use on the audio thread.
 #[derive(Copy, Clone, Debug)]
-pub struct SampleRate(Sample);
+pub struct SampleRate(pub Sample);
 
 impl SampleRate {
     #[inline(always)]
@@ -197,7 +198,7 @@ impl From<f64> for SampleRate {
 /// BlockSize.
 ///
 /// Can be an unorthodox block size value in the event of a partial block at the beginning of a node's existence in the graph.
-pub struct BlockSize(usize);
+pub struct BlockSize(pub usize);
 
 impl From<BlockSize> for usize {
     #[inline(always)]

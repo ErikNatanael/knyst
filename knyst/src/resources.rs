@@ -13,7 +13,7 @@ use std::{collections::HashMap, hash::Hash, sync::atomic::AtomicU64};
 use crate::{
     buffer::{Buffer, BufferKey},
     prelude::Seconds,
-    wavetable::Wavetable,
+    wavetable_aa::Wavetable,
 };
 
 #[derive(Copy, Clone, Debug)]

@@ -20,7 +20,7 @@ use crate::{
     inspection::GraphInspection,
     knyst_commands,
     resources::{BufferId, ResourcesCommand, ResourcesResponse, WavetableId},
-    wavetable::Wavetable,
+    wavetable_aa::Wavetable,
 };
 use crate::{
     graph::{
