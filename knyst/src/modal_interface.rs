@@ -2,7 +2,7 @@
 //! are completely separated from each other. The current sphere and active graph within a sphere is set on a thread by thread basis
 //! using thread locals. Most Knyst programs only need one sphere.
 //!
-//! Interaction with Knyst is done through the [`knyst`] function which will return an object that implements [`KnystCommands`].
+//! Interaction with Knyst is done through the [`knyst`](crate) function which will return an object that implements [`KnystCommands`].
 //! The implementation depends on the platform.
 //!
 //! The purpose of this architecture is to allow for a highly ergonomic and concise way of interacting with the graph(s),
