@@ -128,11 +128,7 @@ impl BrownNoise {
             // Adjust the coefficient to control the step size
             self.last_output += white * 0.1;
             // Clamp to [-1.0, 1.0] to prevent output from exceeding the range
-            if self.last_output > 1.0 {
-                self.last_output = 1.0;
-            } else if self.last_output < -1.0 {
-                self.last_output = -1.0;
-            }
+            self.last_output = self.last_output.clamp(-1.0, 1.0);
             *out = self.last_output;
         }
         GenState::Continue
