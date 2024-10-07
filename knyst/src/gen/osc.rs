@@ -373,7 +373,7 @@ impl Gen for BufferReaderMulti {
     }
 
     fn name(&self) -> &'static str {
-        "BufferReader"
+        "BufferReaderMulti"
     }
 }
 
@@ -384,7 +384,9 @@ pub fn buffer_reader_multi(
     looping: bool,
     stop_action: StopAction,
 ) -> knyst::handles::Handle<BufferReaderMultiHandle> {
-    let gen = BufferReaderMulti::new(buffer, rate, stop_action).looping(looping);
+    let gen = BufferReaderMulti::new(buffer, rate, stop_action)
+        .looping(looping)
+        .channels(buffer.num_channels());
     let num_channels = buffer.num_channels();
     let id = knyst::prelude::KnystCommands::push_without_inputs(&mut knyst_commands(), gen);
     knyst::handles::Handle::new(BufferReaderMultiHandle {
@@ -404,7 +406,7 @@ impl HandleData for BufferReaderMultiHandle {
     }
 
     fn in_channels(&self) -> knyst::handles::SinkChannelIter {
-        knyst::handles::SinkChannelIter::None
+        knyst::handles::SinkChannelIter::single_node_id(self.node_id, 0)
     }
 
     fn node_ids(&self) -> knyst::handles::NodeIdIter {
