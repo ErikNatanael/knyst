@@ -33,13 +33,16 @@ impl Gen for SubGen {
             {
                 use std::simd::f32x2;
                 let simd_width = 2;
+                let mut out_buf = product;
+                let mut value0 = value0;
+                let mut value1 = value1;
                 for _ in 0..block_size / simd_width {
                     let s_in0 = f32x2::from_slice(&value0[..simd_width]);
                     let s_in1 = f32x2::from_slice(&value1[..simd_width]);
                     let product = s_in0 - s_in1;
                     product.copy_to_slice(out_buf);
-                    in0 = &value0[simd_width..];
-                    in1 = &value1[simd_width..];
+                    value0 = &value0[simd_width..];
+                    value1 = &value1[simd_width..];
                     out_buf = &mut out_buf[simd_width..];
                 }
             }
@@ -137,13 +140,16 @@ impl Gen for MulGen {
             {
                 use std::simd::f32x2;
                 let simd_width = 2;
+                let mut out_buf = product;
+                let mut value0 = value0;
+                let mut value1 = value1;
                 for _ in 0..block_size / simd_width {
                     let s_in0 = f32x2::from_slice(&value0[..simd_width]);
                     let s_in1 = f32x2::from_slice(&value1[..simd_width]);
                     let product = s_in0 * s_in1;
                     product.copy_to_slice(out_buf);
-                    in0 = &value0[simd_width..];
-                    in1 = &value1[simd_width..];
+                    value0 = &value0[simd_width..];
+                    value1 = &value1[simd_width..];
                     out_buf = &mut out_buf[simd_width..];
                 }
             }

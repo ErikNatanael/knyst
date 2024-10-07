@@ -4216,14 +4216,14 @@ impl Mult {
         {
             use std::simd::f32x2;
             let simd_width = 2;
-            for _ in 0..block_size / simd_width {
+            for _ in 0..(*block_size / simd_width) {
                 let s_in0 = f32x2::from_slice(&value0[..simd_width]);
                 let s_in1 = f32x2::from_slice(&value1[..simd_width]);
-                let product = s_in0 * s_in1;
-                product.copy_to_slice(out_buf);
-                in0 = &value0[simd_width..];
-                in1 = &value1[simd_width..];
-                out_buf = &mut out_buf[simd_width..];
+                let prod = s_in0 * s_in1;
+                prod.copy_to_slice(product);
+                value0 = &value0[simd_width..];
+                value1 = &value1[simd_width..];
+                product = &mut product[simd_width..];
             }
         }
         GenState::Continue
