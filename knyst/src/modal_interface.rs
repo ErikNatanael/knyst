@@ -24,7 +24,7 @@ use crate::graph::{GraphSettings, NodeId, Time};
 use crate::handles::{GraphHandle, Handle};
 use crate::prelude::{CallbackHandle, MultiThreadedKnystCommands};
 use crate::sphere::KnystSphere;
-use crate::wavetable_aa::{self, Wavetable};
+use crate::wavetable_aa::Wavetable;
 
 /// A unique id for a KnystSphere.
 #[derive(Copy, Clone, PartialOrd, Ord, PartialEq, Eq, Debug, Hash)]

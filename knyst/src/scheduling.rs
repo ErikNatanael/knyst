@@ -246,7 +246,7 @@ impl Default for MusicalTimeMap {
 }
 
 /// Exposes the shared MusicalTimeMap in a read only Sync container.
-pub struct MusicalTimeMapRef(Arc<RwLock<MusicalTimeMap>>);
+pub struct MusicalTimeMapRef(#[allow(unused)] Arc<RwLock<MusicalTimeMap>>);
 
 #[cfg(test)]
 mod tests {

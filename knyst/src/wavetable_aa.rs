@@ -1,6 +1,6 @@
 //! Wavetable synthesis
 
-use crate::wavetable::{WavetablePhase, FRACTIONAL_PART, TABLE_HIGH_MASK, TABLE_POWER, TABLE_SIZE};
+use crate::wavetable::{WavetablePhase, TABLE_SIZE};
 use crate::Sample;
 
 // use std::f64::consts::PI;

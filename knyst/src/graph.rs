@@ -5,7 +5,6 @@
 //!
 //! ```
 //! # use knyst::prelude::*;
-//! # use knyst::wavetable::*;
 //! let graph_settings = GraphSettings {
 //!     block_size: 64,
 //!     sample_rate: 44100.,
@@ -29,14 +28,10 @@
 use crate::gen::{Gen, GenContext, GenState};
 #[allow(unused)]
 use crate::trig;
-use crate::{BlockSize, Sample, SampleRate};
+use crate::{BlockSize, Sample};
 use knyst_macro::impl_gen;
 // For using impl_gen inside the knyst crate
 use crate as knyst;
-// #[cfg(loom)]
-// use loom::cell::UnsafeCell;
-#[cfg(loom)]
-use loom::sync::atomic::Ordering;
 
 #[macro_use]
 pub mod connection;
@@ -58,7 +53,6 @@ use slotmap::{new_key_type, SecondaryMap, SlotMap};
 use std::cell::UnsafeCell;
 use std::collections::{HashMap, HashSet};
 use std::mem;
-#[cfg(not(loom))]
 use std::sync::atomic::Ordering;
 use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{Arc, RwLock};
@@ -1040,7 +1034,6 @@ impl Drop for OwnedRawBuffer {
 /// # Example
 /// ```
 /// use knyst::prelude::*;
-/// use knyst::wavetable::*;
 /// use knyst::graph::RunGraph;
 /// let graph_settings = GraphSettings {
 ///     block_size: 64,
@@ -4224,43 +4217,6 @@ impl Mult {
                 value0 = &value0[simd_width..];
                 value1 = &value1[simd_width..];
                 product = &mut product[simd_width..];
-            }
-        }
-        GenState::Continue
-    }
-}
-
-struct NaiveSine {
-    phase: Sample,
-    phase_step: Sample,
-    amp: Sample,
-}
-impl NaiveSine {
-    pub fn update_freq(&mut self, freq: Sample, sample_rate: Sample) {
-        self.phase_step = freq / sample_rate;
-    }
-}
-
-#[impl_gen]
-impl NaiveSine {
-    #[process]
-    fn process(
-        &mut self,
-        freq: &[Sample],
-        amp: &[Sample],
-        sig: &mut [Sample],
-        block_size: BlockSize,
-        sample_rate: SampleRate,
-    ) -> GenState {
-        for i in 0..*block_size {
-            let freq = freq[i];
-            let amp = amp[i];
-            self.update_freq(freq, *sample_rate);
-            self.amp = amp;
-            sig[i] = self.phase.cos() * self.amp;
-            self.phase += self.phase_step;
-            if self.phase > 1.0 {
-                self.phase -= 1.0;
             }
         }
         GenState::Continue
