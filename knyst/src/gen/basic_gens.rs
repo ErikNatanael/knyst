@@ -1,6 +1,12 @@
 //! Includes basic `Gen`s such as `Mul` and `Range`
 
-use crate::{self as knyst, prelude::Seconds, SampleRate};
+use crate::{
+    self as knyst,
+    graph::NodeId,
+    handles::{Handle, HandleData, Input, NodeIdIter, SinkChannelIter, SourceChannelIter},
+    prelude::{KnystCommands, Seconds},
+    SampleRate,
+};
 use knyst_macro::impl_gen;
 
 use crate::{
@@ -112,6 +118,79 @@ impl Gen for PowfGen {
 
     fn name(&self) -> &'static str {
         "PowfGen"
+    }
+}
+/// base to the power of exponent, where base and exponent can be constants or handles
+pub fn powf_gen(base: impl Into<Input>, exponent: impl Into<Input>) -> Handle<PowfHandle> {
+    let base = base.into();
+    let (node_id, num_channels) = match base {
+        Input::Constant(c) => {
+            let node_id = knyst::knyst_commands().push_without_inputs(PowfGen(1));
+            knyst::knyst_commands().connect(
+                knyst::graph::connection::constant(c)
+                    .to(node_id)
+                    .to_channel(1),
+            );
+            (node_id, 1)
+        }
+        Input::Handle { output_channels } => {
+            let connecting_channels: Vec<_> = output_channels.collect();
+            let num_channels = connecting_channels.len();
+            let node_id =
+                knyst::knyst_commands().push_without_inputs(PowfGen(connecting_channels.len()));
+            for (i, (source, chan)) in connecting_channels.into_iter().enumerate() {
+                knyst::knyst_commands()
+                    .connect(source.to(node_id).from_channel(chan).to_channel(i + 1));
+            }
+
+            (node_id, num_channels)
+        }
+    };
+    Handle::new(PowfHandle {
+        node_id,
+        num_channels,
+    })
+    .exponent(exponent)
+}
+/// Handle to a PowfGen
+#[derive(Copy, Clone, Debug)]
+pub struct PowfHandle {
+    pub(crate) node_id: NodeId,
+    pub(crate) num_channels: usize,
+}
+impl PowfHandle {
+    /// Set the exponent
+    pub fn exponent(self, exponent: impl Into<Input>) -> Handle<Self> {
+        let inp = exponent.into();
+        match inp {
+            Input::Constant(v) => {
+                knyst::knyst_commands().connect(
+                    crate::graph::connection::constant(v)
+                        .to(self.node_id)
+                        .to_channel(0),
+                );
+            }
+            Input::Handle { output_channels } => {
+                for (node_id, chan) in output_channels {
+                    crate::modal_interface::knyst_commands()
+                        .connect(node_id.to(self.node_id).from_channel(chan).to_channel(0));
+                }
+            }
+        }
+        Handle::new(self)
+    }
+}
+impl HandleData for PowfHandle {
+    fn out_channels(&self) -> SourceChannelIter {
+        SourceChannelIter::single_node_id(self.node_id, self.num_channels)
+    }
+
+    fn in_channels(&self) -> SinkChannelIter {
+        SinkChannelIter::single_node_id(self.node_id, self.num_channels + 1)
+    }
+
+    fn node_ids(&self) -> NodeIdIter {
+        NodeIdIter::Single(self.node_id)
     }
 }
 

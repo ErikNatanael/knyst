@@ -43,7 +43,7 @@ use std::{
 
 use crate::{
     graph::{Change, Connection, GraphId, ParameterChange, SimultaneousChanges},
-    prelude::{PowfGen, SubGen},
+    prelude::{PowfGen, PowfHandle, SubGen},
     Sample,
 };
 
@@ -213,48 +213,6 @@ impl<H: HandleData + Copy> HandleData for Handle<H> {
 
     fn node_ids(&self) -> NodeIdIter {
         self.handle.node_ids()
-    }
-}
-
-/// Handle to a PowfGen
-#[derive(Copy, Clone, Debug)]
-pub struct PowfHandle {
-    node_id: NodeId,
-    num_channels: usize,
-}
-impl PowfHandle {
-    /// Set the exponent
-    pub fn exponent(self, exponent: impl Into<Input>) -> Handle<Self> {
-        let inp = exponent.into();
-        match inp {
-            Input::Constant(v) => {
-                knyst_commands().connect(
-                    crate::graph::connection::constant(v)
-                        .to(self.node_id)
-                        .to_channel(0),
-                );
-            }
-            Input::Handle { output_channels } => {
-                for (node_id, chan) in output_channels {
-                    crate::modal_interface::knyst_commands()
-                        .connect(node_id.to(self.node_id).from_channel(chan).to_channel(0));
-                }
-            }
-        }
-        Handle::new(self)
-    }
-}
-impl HandleData for PowfHandle {
-    fn out_channels(&self) -> SourceChannelIter {
-        SourceChannelIter::single_node_id(self.node_id, self.num_channels)
-    }
-
-    fn in_channels(&self) -> SinkChannelIter {
-        SinkChannelIter::single_node_id(self.node_id, self.num_channels + 1)
-    }
-
-    fn node_ids(&self) -> NodeIdIter {
-        NodeIdIter::Single(self.node_id)
     }
 }
 

@@ -33,7 +33,7 @@ pub enum SvfFilterType {
 /// A versatile EQ filter implementation
 ///
 /// Implemented based on [a technical paper by Andrew Simper, Cytomic, 2013](https://cytomic.com/files/dsp/SvfLinearTrapOptimised2.pdf) also available at <https://cytomic.com/technical-papers/>
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct SvfFilter {
     ty: SvfFilterType,
     cutoff_freq: Sample,
@@ -277,15 +277,15 @@ impl SvfDynamic {
     ) -> GenState {
         if cutoff_freq[0] != self.last_cutoff || gain[0] != self.last_gain || q[0] != self.last_q {
             // A q value of 0.0 will result in NaN
-            let mut q = q[0];
-            if q <= 0.0 {
-                q = f32::MIN;
+            let mut safe_q = q[0];
+            if safe_q <= 0.0 {
+                safe_q = f32::MIN;
             }
             self.svf
-                .set_coeffs(cutoff_freq[0], q, gain[0], *sample_rate);
+                .set_coeffs(cutoff_freq[0], safe_q, gain[0], *sample_rate);
             self.last_cutoff = cutoff_freq[0];
             self.last_gain = gain[0];
-            self.last_q = q;
+            self.last_q = q[0];
         }
         self.svf.process(input, output);
         GenState::Continue
