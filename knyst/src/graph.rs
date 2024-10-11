@@ -3154,25 +3154,39 @@ impl Graph {
             Err(ScheduleError::SchedulerNotCreated)
         }
     }
+    /// Goes through all of the nodes that are connected to nodes in `nodes_to_process` and adds them to the list in
+    /// reverse depth first order.
+    ///
     fn depth_first_search(
         &self,
         visited: &mut HashSet<NodeKey>,
         nodes_to_process: &mut Vec<NodeKey>,
     ) -> Vec<NodeKey> {
-        let mut stack = Vec::with_capacity(self.get_nodes().capacity());
-        while let Some(node_index) = nodes_to_process.pop() {
-            stack.push(node_index);
-            // cloning the input edges here to avoid unsafe
+        let mut node_order = Vec::with_capacity(self.get_nodes().capacity());
+        while !nodes_to_process.is_empty() {
+            let node_index = *nodes_to_process.last().unwrap();
+
             let input_edges = &self.node_input_edges[node_index];
+            let mut found_unvisited = false;
+            // There is probably room for optimisation here by managing to
+            // not iterate the edges multiple times.
             for edge in input_edges {
                 if !visited.contains(&edge.source) {
                     nodes_to_process.push(edge.source);
                     visited.insert(edge.source);
+                    found_unvisited = true;
+                    break;
                 }
             }
+            if !found_unvisited {
+                node_order.push(nodes_to_process.pop().unwrap());
+            }
         }
-        stack
+        node_order
     }
+    /// Looks for the deepest (furthest away from the graph output) node that is also an output node, i.e.
+    /// a node that is both an output node and an input to another node which is eventually connected to
+    /// an output is deeper than a node which is only connected to an output.
     fn get_deepest_output_node(&self, start_node: NodeKey, visited: &HashSet<NodeKey>) -> NodeKey {
         let mut last_connected_node_index = start_node;
         let mut last_connected_output_node_index = start_node;
@@ -3232,7 +3246,7 @@ impl Graph {
         }
 
         let stack = self.depth_first_search(&mut visited, &mut nodes_to_process);
-        self.node_order.extend(stack.into_iter().rev());
+        self.node_order.extend(stack.into_iter());
 
         // Check if feedback nodes need to be added to the node order
         let mut feedback_node_order_addition = vec![];
@@ -3277,7 +3291,7 @@ impl Graph {
             }
         }
         self.node_order
-            .extend(feedback_node_order_addition.into_iter().rev());
+            .extend(feedback_node_order_addition.into_iter());
 
         // Add all remaining nodes. These are not currently connected to anything.
         let mut remaining_nodes = vec![];
@@ -3288,6 +3302,14 @@ impl Graph {
         }
         self.node_order.extend(remaining_nodes.iter());
         self.disconnected_nodes = remaining_nodes;
+        // debug
+        // let nodes = self.get_nodes();
+        // for (i, n) in self.node_order.iter().enumerate() {
+        //     let name = nodes.get(*n).unwrap().name;
+        //     println!("{i}: {name}, {n:?}");
+        // }
+        // dbg!(&self.node_order);
+        // dbg!(&self.disconnected_nodes);
     }
     /// Returns the block size of the [`Graph`], not corrected for oversampling.
     pub fn block_size(&self) -> usize {

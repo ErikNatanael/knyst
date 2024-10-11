@@ -32,6 +32,11 @@ struct DummyGen {
 }
 #[impl_gen]
 impl DummyGen {
+    fn new(counter_start: Sample) -> Self {
+        DummyGen {
+            counter: counter_start,
+        }
+    }
     #[process]
     fn process(&mut self, counter: &[Sample], output: &mut [Sample]) -> GenState {
         for (count, out) in counter.iter().zip(output.iter_mut()) {
@@ -1088,5 +1093,107 @@ fn inner_graph_different_oversampling() {
                 assert!((org[frame - 2] - over[frame]).abs() < 0.02);
             }
         }
+    }
+}
+use crate::offline::KnystOffline;
+
+struct DummyGenStereo {
+    counter: Sample,
+}
+#[impl_gen]
+impl DummyGenStereo {
+    fn new() -> Self {
+        DummyGenStereo { counter: 0.0 }
+    }
+    #[process]
+    fn process(
+        &mut self,
+        counter: &[Sample],
+        output_l: &mut [Sample],
+        output_r: &mut [Sample],
+    ) -> GenState {
+        for ((count, out_l), out_r) in counter
+            .iter()
+            .zip(output_l.iter_mut())
+            .zip(output_r.iter_mut())
+        {
+            self.counter += 1.;
+            *out_l = count + self.counter;
+            *out_r = count + self.counter + 10.;
+        }
+        GenState::Continue
+    }
+}
+
+#[test]
+fn stereo_timing() {
+    let mut kt = KnystOffline::new(128, 64, 0, 2);
+    let dummy = dummy_gen_stereo();
+    graph_output(0, dummy.out(0));
+    graph_output(1, dummy.out(1));
+    kt.process_block();
+
+    let out_left = kt.output_channel(0).unwrap();
+    let out_right = kt.output_channel(1).unwrap();
+    for (&l, &r) in out_left.into_iter().zip(out_right) {
+        assert!(l == r - 10.);
+    }
+}
+
+#[test]
+fn stereo_timing_mult() {
+    let mut kt = KnystOffline::new(128, 64, 0, 2);
+    let dummy = dummy_gen_stereo();
+    let left = dummy.out(0);
+    let left_mult = Mult.upload().set(0, left).set(1, 0.5);
+    let right = dummy.out(1);
+    let right_mult = Mult.upload().set(0, right).set(1, 0.5);
+
+    graph_output(0, left_mult);
+    graph_output(1, right_mult);
+    kt.process_block();
+
+    let out_left = kt.output_channel(0).unwrap();
+    let out_right = kt.output_channel(1).unwrap();
+    for (&l, &r) in out_left.into_iter().zip(out_right) {
+        assert!(l == r - 5.);
+    }
+}
+#[test]
+fn stereo_timing_mult_inner_graph() {
+    let sample_rate = 44100;
+    let block_size = 64;
+    let mut ko = KnystOffline::new(sample_rate, block_size, 0, 2);
+    let mut k = knyst_commands();
+    let mut settings = k.default_graph_settings();
+    settings.sample_rate = sample_rate as Sample;
+    settings.block_size = block_size * 4;
+    settings.num_outputs = 2;
+    settings.num_inputs = 0;
+    let mut graph = Graph::new(settings);
+
+    let dummy_l = graph.push(DummyGen::new(0.));
+    let amp_l = graph.push(Mult);
+    graph
+        .connect(amp_l.to_graph_out().from_index(0).to_index(0))
+        .unwrap();
+    graph.connect(constant(2.0).to(amp_l).to_index(0)).unwrap();
+    graph.connect(dummy_l.to(amp_l).to_index(1)).unwrap();
+    let dummy_r = graph.push(DummyGen::new(100.));
+    let amp_r = graph.push(Mult);
+    graph
+        .connect(amp_r.to_graph_out().from_index(0).to_index(1))
+        .unwrap();
+    graph.connect(constant(2.0).to(amp_r).to_index(0)).unwrap();
+    graph.connect(dummy_r.to(amp_r).to_index(1)).unwrap();
+
+    let graph_id = k.push(graph, inputs!());
+    k.connect(graph_id.to_graph_out().channels(2));
+    ko.process_block();
+
+    let out_left = ko.output_channel(0).unwrap();
+    let out_right = ko.output_channel(1).unwrap();
+    for (&l, &r) in out_left.into_iter().zip(out_right) {
+        assert!(l == r - 200.);
     }
 }
