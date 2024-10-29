@@ -5,9 +5,9 @@
 use std::{ops, time::Duration};
 
 /// How many subsample tesimals fit in one second
-pub static SUBSAMPLE_TESIMALS_PER_SECOND: u32 = 282_240_000;
+pub const SUBSAMPLE_TESIMALS_PER_SECOND: u32 = 282_240_000;
 /// How many beat tesimals fit in one beat
-pub static SUBBEAT_TESIMALS_PER_BEAT: u32 = 1_476_034_560;
+pub const SUBBEAT_TESIMALS_PER_BEAT: u32 = 1_476_034_560;
 
 /// A description of time well suited for sample based wall clock time with
 /// lossless converstion between all common sample rates. Can only represent a

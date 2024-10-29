@@ -30,7 +30,7 @@ use std::{sync::Arc, time::Duration};
 use termion::input::TermRead;
 use termion::raw::IntoRawMode;
 
-static ROOT_FREQ: Sample = 200.;
+const ROOT_FREQ: Sample = 200.;
 
 struct State {
     potential_delay_inputs: Vec<AnyNodeHandle>,
