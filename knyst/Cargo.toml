@@ -17,7 +17,7 @@ features = ["jack", "cpal", "serde-derive"]
 [features]
 serde-derive = ["dep:serde"]
 debug-warn-on-alloc = ["assert_no_alloc/warn_debug"]
-default = ["cpal", "jack"]
+default = ["cpal", "jack", "assert_no_alloc"]
 unstable = []
 
 [dependencies]
@@ -43,7 +43,7 @@ symphonia = { version = "0.5.1", features = ["mp3"] }
 # Saving to wav
 hound = "3.5.1"
 serde = { version = "1.0", features = ["derive"], optional = true }
-assert_no_alloc = { version = "1.1.2" }
+assert_no_alloc = { version = "1.1.2", optional = true }
 num-traits = "0.2.17"
 itertools = "0.12.0"
 

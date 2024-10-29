@@ -106,6 +106,7 @@ mod jack_backend {
     use crate::graph::{RunGraph, RunGraphSettings};
     use crate::{graph::Graph, Resources};
     use crate::{KnystError, Sample};
+    #[cfg(all(debug_assertions, feature = "assert_no_alloc"))]
     use assert_no_alloc::*;
     enum JackClient {
         Passive(jack::Client),
@@ -215,7 +216,44 @@ mod jack_backend {
 
     impl jack::ProcessHandler for JackProcess {
         fn process(&mut self, _: &jack::Client, ps: &jack::ProcessScope) -> jack::Control {
-            assert_no_alloc(|| {
+            // Duplication due to conditional compilation
+            #[cfg(all(debug_assertions, feature = "assert_no_alloc"))]
+            {
+                assert_no_alloc(|| {
+                    let graph_input_buffers = self.run_graph.graph_input_buffers();
+                    for (i, in_port) in self.in_ports.iter().enumerate() {
+                        let in_port_slice = in_port.as_slice(ps);
+                        let in_buffer = unsafe { graph_input_buffers.get_channel_mut(i) };
+                        // in_buffer.clone_from_slice(in_port_slice);
+                        for (from_jack, graph_in) in in_port_slice.iter().zip(in_buffer.iter_mut())
+                        {
+                            *graph_in = *from_jack as Sample;
+                        }
+                    }
+                    self.run_graph.run_resources_communication(50);
+                    self.run_graph.process_block();
+
+                    let graph_output_buffers = self.run_graph.graph_output_buffers_mut();
+                    for (i, out_port) in self.out_ports.iter_mut().enumerate() {
+                        let out_buffer = unsafe { graph_output_buffers.get_channel_mut(i) };
+                        for sample in out_buffer.iter_mut() {
+                            *sample = sample.clamp(-1.0, 1.0);
+                            if sample.is_nan() {
+                                *sample = 0.0;
+                            }
+                        }
+                        let out_port_slice = out_port.as_mut_slice(ps);
+                        // out_port_slice.clone_from_slice(out_buffer);
+                        for (to_jack, graph_out) in out_port_slice.iter_mut().zip(out_buffer.iter())
+                        {
+                            *to_jack = *graph_out as f32;
+                        }
+                    }
+                    jack::Control::Continue
+                })
+            }
+            #[cfg(not(all(debug_assertions, feature = "assert_no_alloc")))]
+            {
                 let graph_input_buffers = self.run_graph.graph_input_buffers();
                 for (i, in_port) in self.in_ports.iter().enumerate() {
                     let in_port_slice = in_port.as_slice(ps);
@@ -244,7 +282,7 @@ mod jack_backend {
                     }
                 }
                 jack::Control::Continue
-            })
+            }
         }
     }
 
@@ -337,6 +375,7 @@ pub mod cpal_backend {
     use crate::KnystError;
     use crate::Sample;
     use crate::{graph::Graph, Resources};
+    #[cfg(all(debug_assertions, feature = "assert_no_alloc"))]
     use assert_no_alloc::*;
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
@@ -480,7 +519,28 @@ pub mod cpal_backend {
             config,
             move |output: &mut [T], _: &cpal::OutputCallbackInfo| {
                 // TODO: When CPAL support duplex streams, copy inputs to graph inputs here.
-                assert_no_alloc(|| {
+                #[cfg(all(debug_assertions, feature = "assert_no_alloc"))]
+                {
+                    assert_no_alloc(|| {
+                        for frame in output.chunks_mut(channels) {
+                            if sample_counter >= graph_block_size {
+                                run_graph.run_resources_communication(50);
+                                run_graph.process_block();
+                                sample_counter = 0;
+                            }
+                            let buffer = run_graph.graph_output_buffers();
+                            // println!("{}", T::from_sample(buffer.read(0, sample_counter)));
+                            for (channel_i, out) in frame.iter_mut().enumerate() {
+                                let value: T =
+                                    T::from_sample(buffer.read(channel_i, sample_counter));
+                                *out = value;
+                            }
+                            sample_counter += 1;
+                        }
+                    })
+                }
+                #[cfg(not(all(debug_assertions, feature = "assert_no_alloc")))]
+                {
                     for frame in output.chunks_mut(channels) {
                         if sample_counter >= graph_block_size {
                             run_graph.run_resources_communication(50);
@@ -495,7 +555,7 @@ pub mod cpal_backend {
                         }
                         sample_counter += 1;
                     }
-                })
+                }
             },
             err_fn,
             None,
