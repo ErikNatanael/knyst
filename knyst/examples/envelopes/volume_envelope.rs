@@ -33,7 +33,7 @@ fn main() -> Result<()> {
             (0.25, 4.0),
             (0.5, 2.0),
             (0.1, 2.0),
-            (1.0, 6.0)
+            (1.0, 6.0),
         ],
         knyst::envelope::SustainMode::NoSustain,
         StopAction::Continue,
@@ -61,7 +61,8 @@ fn main() -> Result<()> {
 /// - `impl AudioBackend`: The initialized audio backend, either CPAL or JACK.
 /// - `Option<SphereId>`: The optional unique identifier for the created `KnystSphere`.
 fn setup() -> impl AudioBackend {
-    let mut backend = CpalBackend::new(CpalBackendOptions::default()).expect("Unable to connect to CPAL backend");
+    let mut backend =
+        CpalBackend::new(CpalBackendOptions::default()).expect("Unable to connect to CPAL backend");
     // Uncomment the line below and comment the line above to use the JACK backend instead
     // let mut backend = JackBackend::new("Knyst<3JACK").expect("Unable to start JACK backend");
 
@@ -72,6 +73,6 @@ fn setup() -> impl AudioBackend {
         },
         print_error_handler,
     )
-        .ok();
+    .ok();
     backend
 }
