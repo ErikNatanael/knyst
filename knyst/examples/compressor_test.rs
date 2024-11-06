@@ -3,9 +3,12 @@ use knyst::{
     audio_backend::JackBackend, controller::print_error_handler,
     gen::dynamics::randja_compressor::RandjaCompressor, prelude::*,
 };
+use knyst::audio_backend::{CpalBackend, CpalBackendOptions};
 
 fn main() -> Result<()> {
-    let mut backend = JackBackend::new("Knyst<3JACK")?;
+    let mut backend = CpalBackend::new(CpalBackendOptions::default()).expect("Unable to connect to CPAL backend");
+    // Uncomment the line below and comment the line above to use the JACK backend instead
+    // let mut backend = JackBackend::new("Knyst<3JACK").expect("Unable to start JACK backend");
 
     let sample_rate = backend.sample_rate() as Sample;
     let block_size = backend.block_size().unwrap_or(64);
