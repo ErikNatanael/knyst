@@ -18,12 +18,15 @@ use knyst::{
 /// 5. Outputs the oscillator to the left and right channels at 30% volume each.
 /// 6. Waits for user to press ENTER.
 ///
+/// Scheduling is currently limited to changes of constant values and spawning new nodes, not new
+/// connections. This means you need to place all node and envelope creation inside the
+/// schedule_bundle cAll. 
+///
 fn main() -> Result<()> {
     let _backend = setup();
 
-    let node0 = wavetable_oscillator_owned(Wavetable::sine()).freq(110.);
-
     schedule_bundle(graph::Time::Seconds(Seconds::new(3, 0)), || {
+        let node0 = wavetable_oscillator_owned(Wavetable::sine()).freq(110.);
         graph_output(0, node0 * 0.3);
         graph_output(1, node0 * 0.3);
     });
