@@ -1,12 +1,12 @@
 use anyhow::Result;
+use knyst::controller::schedule_bundle;
+use knyst::graph;
 #[allow(unused)]
 use knyst::{
     audio_backend::{CpalBackend, CpalBackendOptions, JackBackend},
     controller::print_error_handler,
     prelude::*,
 };
-use knyst::controller::schedule_bundle;
-use knyst::graph;
 
 /// Initializes the audio backend, sets up the `KnystSphere`, and configures a wavetable oscillator to output audio.
 ///
@@ -23,13 +23,10 @@ fn main() -> Result<()> {
 
     let node0 = wavetable_oscillator_owned(Wavetable::sine()).freq(110.);
 
-    schedule_bundle(
-        graph::Time::Seconds(Seconds::new(3,0)),
-        || {
-            graph_output(0, node0 * 0.3);
-            graph_output(1, node0 * 0.3);
-        },
-    );
+    schedule_bundle(graph::Time::Seconds(Seconds::new(3, 0)), || {
+        graph_output(0, node0 * 0.3);
+        graph_output(1, node0 * 0.3);
+    });
 
     println!("Playing a sine wave at 110 Hz at an amplitude of 0.3, after 3 seconds");
     println!("Press [ENTER] to exit");
