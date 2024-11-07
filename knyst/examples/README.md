@@ -26,7 +26,7 @@ cargo run --example tones
 
 ### Modulation
 
-This example plays a tone modulated by a oscilator.
+This example plays a tone modulated by a oscillator.
 
 ```shell
 cargo run --example modulation
@@ -46,6 +46,14 @@ Plays back 10 seconds of an audio file chosen by the user.
 
 ```shell
 cargo run --example sound_file_playback
+```
+
+### Schedule a tone
+
+Plays back a tone after 3 seconds of silence.
+
+```shell
+cargo run --example scheduling
 ```
 
 ## Envelopes

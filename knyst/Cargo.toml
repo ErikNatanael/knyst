@@ -107,6 +107,11 @@ name = "sound_file_playback"
 path = "examples/basic/sound_file_playback.rs"
 required-features = ["cpal"]
 
+[[example]]
+name = "scheduling"
+path = "examples/basic/scheduling.rs"
+required-features = ["cpal"]
+
 # Envelope examples
 [[example]]
 name = "volume_envelope"
