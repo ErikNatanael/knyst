@@ -20,7 +20,7 @@ use knyst::{
 ///
 /// Scheduling is currently limited to changes of constant values and spawning new nodes, not new
 /// connections. This means you need to place all node and envelope creation inside the
-/// schedule_bundle cAll. 
+/// schedule_bundle cAll.
 ///
 fn main() -> Result<()> {
     let _backend = setup();
