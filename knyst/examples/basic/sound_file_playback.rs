@@ -45,12 +45,6 @@ fn main() -> anyhow::Result<()> {
 /// If you want to manage the `Controller` yourself, use `start_return_controller`.
 ///
 /// The backend is returned here because it would otherwise be dropped at the end of setup()
-///
-/// # Returns
-///
-/// A tuple containing:
-/// - `impl AudioBackend`: The initialized audio backend, either CPAL or JACK.
-/// - `Option<SphereId>`: The optional unique identifier for the created `KnystSphere`.
 fn setup() -> impl AudioBackend {
     let mut backend =
         CpalBackend::new(CpalBackendOptions::default()).expect("Unable to connect to CPAL backend");

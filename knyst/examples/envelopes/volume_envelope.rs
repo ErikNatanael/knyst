@@ -7,14 +7,12 @@ use knyst::{
     prelude::*,
 };
 
-/// Initializes the audio backend, sets up the `KnystSphere`, and configures a wavetable oscillator to output audio.
+/// Configures a wavetable oscillator to output audio. The volume is provided in an envelope
 ///
 /// The function performs the following steps:
-/// 1. Initializes the audio backend and starts a `KnystSphere`.
-/// 2. Sets the active sphere for audio processing.
-/// 3. Creates an owned wavetable oscillator set at 110 Hz.
-/// 4. Outputs the oscillator to the left and right channels at 30% volume each + volume envelope.
-/// 5. Waits for user to press ENTER.
+/// 1. Creates an owned wavetable oscillator set at 110 Hz.
+/// 2. Outputs the oscillator to the left and right channels at 30% volume each + volume envelope.
+/// 3. Waits for user to press ENTER.
 ///
 /// The envelope has a starting value of 0.0. The envelope consists of points that are in the
 /// format (level, duration). The duration is given in seconds, and indicates the: time to reach the
@@ -54,12 +52,6 @@ fn main() -> Result<()> {
 /// If you want to manage the `Controller` yourself, use `start_return_controller`.
 ///
 /// The backend is returned here because it would otherwise be dropped at the end of setup()
-///
-/// # Returns
-///
-/// A tuple containing:
-/// - `impl AudioBackend`: The initialized audio backend, either CPAL or JACK.
-/// - `Option<SphereId>`: The optional unique identifier for the created `KnystSphere`.
 fn setup() -> impl AudioBackend {
     let mut backend =
         CpalBackend::new(CpalBackendOptions::default()).expect("Unable to connect to CPAL backend");
