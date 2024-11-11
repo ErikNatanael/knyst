@@ -12,8 +12,10 @@ use knyst::{
 };
 use rand::{thread_rng, Rng};
 fn main() -> Result<()> {
-    // let mut backend = CpalBackend::new(CpalBackendOptions::default())?;
-    let mut backend = JackBackend::new("Knyst<3JACK")?;
+    let mut backend =
+        CpalBackend::new(CpalBackendOptions::default()).expect("Unable to connect to CPAL backend");
+    // Uncomment the line below and comment the line above to use the JACK backend instead
+    // let mut backend = JackBackend::new("Knyst<3JACK").expect("Unable to start JACK backend");
     let _sphere = KnystSphere::start(
         &mut backend,
         SphereSettings {

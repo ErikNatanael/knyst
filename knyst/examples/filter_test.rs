@@ -10,18 +10,9 @@ use knyst::{
     prelude::{delay::static_sample_delay, *},
     sphere::{KnystSphere, SphereSettings},
 };
+
 fn main() -> Result<()> {
-    let mut backend = CpalBackend::new(CpalBackendOptions::default())?;
-    // let mut backend = JackBackend::new("Knyst<3JACK")?;
-    let _sphere = KnystSphere::start(
-        &mut backend,
-        SphereSettings {
-            num_inputs: 1,
-            num_outputs: 1,
-            ..Default::default()
-        },
-        print_error_handler,
-    );
+    let _backend = setup();
 
     let filter = svf_filter(SvfFilterType::Band, 1000., 10000.0, -20.)
         .input(graph_input(0, 1) + pink_noise());
@@ -63,4 +54,28 @@ fn main() -> Result<()> {
     let mut input = String::new();
     std::io::stdin().read_line(&mut input)?;
     Ok(())
+}
+
+/// Initializes the audio backend and starts a `KnystSphere` for audio processing.
+/// Start with an automatic helper thread for scheduling changes and managing resources.
+/// If you want to manage the `Controller` yourself, use `start_return_controller`.
+///
+/// The backend is returned here because it would otherwise be dropped at the end of setup()
+fn setup() -> impl AudioBackend {
+    let mut backend =
+        CpalBackend::new(CpalBackendOptions::default()).expect("Unable to connect to CPAL backend");
+    // Uncomment the line below and comment the line above to use the JACK backend instead
+    // let mut backend = JackBackend::new("Knyst<3JACK").expect("Unable to start JACK backend");
+
+    let _sphere_id = KnystSphere::start(
+        &mut backend,
+        SphereSettings {
+            num_inputs: 1,
+            num_outputs: 1,
+            ..Default::default()
+        },
+        print_error_handler,
+    )
+    .ok();
+    backend
 }

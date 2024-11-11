@@ -81,14 +81,52 @@ path = "macro_tests/macro_tests_main.rs"
 name = "large_sine_graph"
 harness = false
 
+# Basic examples
 [[example]]
-name = "beat_callbacks"
-path = "examples/beat_callbacks.rs"
+name = "tone"
+path = "examples/basic/tone.rs"
 required-features = ["cpal"]
 
 [[example]]
-name = "simple_example"
-path = "examples/simple_example.rs"
+name = "tones"
+path = "examples/basic/tones.rs"
+required-features = ["cpal"]
+
+[[example]]
+name = "modulation"
+path = "examples/basic/modulation.rs"
+required-features = ["cpal"]
+
+[[example]]
+name = "adjust_frequency"
+path = "examples/basic/adjust_frequency.rs"
+required-features = ["cpal"]
+
+[[example]]
+name = "sound_file_playback"
+path = "examples/basic/sound_file_playback.rs"
+required-features = ["cpal"]
+
+[[example]]
+name = "scheduling"
+path = "examples/basic/scheduling.rs"
+required-features = ["cpal"]
+
+# Envelope examples
+[[example]]
+name = "volume_envelope"
+path = "examples/envelopes/volume_envelope.rs"
+required-features = ["cpal"]
+
+[[example]]
+name = "frequency_envelope"
+path = "examples/envelopes/frequency_envelope.rs"
+required-features = ["cpal"]
+
+# Advanced examples
+[[example]]
+name = "beat_callbacks"
+path = "examples/beat_callbacks.rs"
 required-features = ["cpal"]
 
 [[example]]
@@ -99,11 +137,6 @@ required-features = ["cpal"]
 [[example]]
 name = "interactive"
 path = "examples/interactive.rs"
-required-features = ["cpal"]
-
-[[example]]
-name = "sound_file_playback"
-path = "examples/sound_file_playback.rs"
 required-features = ["cpal"]
 
 [[example]]

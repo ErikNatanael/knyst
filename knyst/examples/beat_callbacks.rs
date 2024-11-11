@@ -9,6 +9,11 @@ use knyst::{
 use rand::{thread_rng, Rng};
 use std::time::Duration;
 
+/// The main function initializes and starts the audio processing system with the default
+/// settings. It sets up a graph with wavetables, modulators, and amplitude modulators,
+/// and schedules beat-accurate parameter changes. The function reads user input to allow
+/// interaction with the callback and offers options to stop the callback or quit the program.
+///
 fn main() -> Result<()> {
     let mut backend = CpalBackend::new(CpalBackendOptions::default())?;
 
@@ -86,6 +91,7 @@ fn main() -> Result<()> {
         },
         StartBeat::Multiple(Beats::from_beats(4)), // Start after a multiple of 4 beats
     ));
+    println!("Press [q] to quit");
     let mut input = String::new();
     loop {
         match std::io::stdin().read_line(&mut input) {
