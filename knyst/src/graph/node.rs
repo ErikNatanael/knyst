@@ -4,13 +4,16 @@ use super::{CopyOrAdd, Gen, GenContext, GenState, NodeId, NodeKey, Task};
 
 /// Node is a very unsafe struct. Be very careful when changing it.
 ///
-/// - The Gen is not allowed to be replaced.
+/// - The Gen is not allowed to be replaced. It is functionally Pinned until dropped.
+///   It must be kept as a raw pointer to the allocation not to break rust aliasing
+///   rules. `UnsafeCell` is not enough since an owned UnsafeCell implies unique access
+///   and can give a &mut reference in safe code.
 /// - The input_constants buffer mustn't be deallocated until the Node is dropped.
 /// - init must not be called after the Node has started being used on the audio thread.
 /// - the number of inputs/outputs of the Gen must not change.
 ///
 /// It also must not be dropped while a Task exists with pointers to the buffers
-/// of the Node. Graph has a mechanism to ensure this.
+/// of the Node. Graph has a mechanism to ensure this using an atomic generation counter.
 pub(super) struct Node {
     pub(super) name: &'static str,
     /// index by input_channel

@@ -420,13 +420,14 @@ enum CopyOrAdd {
     Add,
 }
 
-/// One task to complete, for the node graph Safety: Uses raw pointers to nodes
-/// and buffers. A node and its buffers may not be touched from the Graph while
-/// a Task containing pointers to it is running. This is guaranteed by an atomic
-/// generation counter in GraphGen/GraphGenCommunicator to allow the Graph to
-/// free nodes once they are no longer used, and by the Arc pointer to the nodes
-/// owned by both Graph and GraphGen so that if Graph is dropped, the pointers
-/// are still valid.
+/// One task to complete, for the node graph
+///
+/// Safety: Uses raw pointers to nodes and buffers. A node and its buffers may
+/// not be touched from the Graph while a Task containing pointers to it is
+/// running. This is guaranteed by an atomic generation counter in
+/// GraphGen/GraphGenCommunicator to allow the Graph to free nodes once they are
+/// no longer used, and by the Arc pointer to the nodes owned by both Graph and
+/// GraphGen so that if Graph is dropped, the pointers are still valid.
 struct Task {
     /// The node key may be used to send a message to the Graph to free the node in this Task
     node_key: NodeKey,
@@ -1063,6 +1064,8 @@ impl Drop for OwnedRawBuffer {
 pub struct Graph {
     id: GraphId,
     name: String,
+    /// The nodes are stored here on the heap, functionally Pinned until dropped.
+    /// The `Arc` guarantees that the `GraphGen` will keep the allocations alive even if the `Graph` is dropped.
     nodes: Arc<UnsafeCell<SlotMap<NodeKey, Node>>>,
     node_keys_to_free_when_safe: Vec<(NodeKey, Arc<AtomicBool>)>,
     buffers_to_free_when_safe: Vec<Arc<OwnedRawBuffer>>,

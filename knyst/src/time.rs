@@ -80,7 +80,7 @@ impl Seconds {
                 / SUBSAMPLE_TESIMALS_PER_SECOND as u64) as u64
     }
 
-    /// Returns self - other if self is bigger than or equal to other, otherwise a SubsampleTime at 0
+    /// Returns self - other if self is bigger than or equal to other, otherwise None
     #[must_use]
     pub fn checked_sub(self, rhs: Self) -> Option<Self> {
         if self < rhs {
@@ -110,7 +110,6 @@ impl From<Duration> for Seconds {
         Self::new(seconds as u32, subsample_tesimals as u32)
     }
 }
-
 impl PartialOrd for Seconds {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
@@ -125,7 +124,6 @@ impl Ord for Seconds {
         }
     }
 }
-
 impl ops::Add<Seconds> for Seconds {
     type Output = Self;
 
@@ -174,12 +172,27 @@ impl ops::Mul<Seconds> for f64 {
         rhs * self
     }
 }
+impl ops::MulAssign<f64> for Seconds {
+    fn mul_assign(&mut self, rhs: f64) {
+        *self = *self * rhs;
+    }
+}
+impl ops::MulAssign<Seconds> for Seconds {
+    fn mul_assign(&mut self, rhs: Seconds) {
+        *self = *self * rhs;
+    }
+}
 impl ops::Mul<f32> for Seconds {
     type Output = Self;
 
     fn mul(self, rhs: f32) -> Self::Output {
-        let seconds = self.to_seconds_f64() as f32 * rhs;
-        Seconds::from_seconds_f64(seconds as f64)
+        let seconds = self.to_seconds_f64() * rhs as f64;
+        Seconds::from_seconds_f64(seconds)
+    }
+}
+impl ops::MulAssign<f32> for Seconds {
+    fn mul_assign(&mut self, rhs: f32) {
+        *self = *self * rhs;
     }
 }
 impl ops::Mul<Seconds> for f32 {
@@ -187,11 +200,6 @@ impl ops::Mul<Seconds> for f32 {
 
     fn mul(self, rhs: Seconds) -> Self::Output {
         rhs * self
-    }
-}
-impl ops::MulAssign<Seconds> for Seconds {
-    fn mul_assign(&mut self, rhs: Seconds) {
-        *self = *self * rhs;
     }
 }
 
