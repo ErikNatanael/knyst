@@ -296,7 +296,7 @@ mod jack_backend {
     impl jack::NotificationHandler for JackNotifications {
         fn thread_init(&self, _: &jack::Client) {}
 
-        fn shutdown(&mut self, _status: jack::ClientStatus, _reason: &str) {}
+        unsafe fn shutdown(&mut self, _status: jack::ClientStatus, _reason: &str) {}
 
         fn freewheel(&mut self, _: &jack::Client, _is_enabled: bool) {}
 

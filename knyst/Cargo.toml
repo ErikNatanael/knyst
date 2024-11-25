@@ -33,7 +33,7 @@ fastapprox = "0.3"
 # Downcast used to have any user data in the Resources struct
 downcast-rs = "1.2.0"
 # JACK audio backend
-jack = { version = "0.11", optional = true }
+jack = { version = "0.13", optional = true }
 # CPAL audio backend
 cpal = { version = "0.15", optional = true }
 # Only for non real time use channels
@@ -45,7 +45,7 @@ hound = "3.5.1"
 serde = { version = "1.0", features = ["derive"], optional = true }
 assert_no_alloc = { version = "1.1.2", optional = true }
 num-traits = "0.2.17"
-itertools = "0.12.0"
+itertools = "0.13.0"
 
 # For concurrency testing
 [target.'cfg(loom)'.dependencies]
@@ -56,7 +56,7 @@ rand = "0.8"
 criterion = "0.5"
 anyhow = "1.0"
 dialog = "0.3"
-rfd = "0.12"
+rfd = "0.15.1"
 tokio = { version = "1.26.0", features = [
   "rt",
   "time",

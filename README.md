@@ -5,9 +5,6 @@ Knyst is a real time audio synthesis framework focusing on flexibility and perfo
 > [!IMPORTANT]  
 > Knyst is not stable. Knyst's API is still developing and can vary wildly between releases.
 
-## The name
-
-"Knyst" is a Swedish word meaning _very faint sound_. It is normally almost exclusively used in the negative e.g. "Det hörs inte ett knyst" (eng. "You cannot hear a sound"), but I think it's well worth some affirmative use.
 
 # Examples
 
@@ -90,6 +87,10 @@ impl DummyGen {
 # Safety
 
 Knyst uses a little bit of unsafe under the hood to improve performance in the most sensitive parts of the library, as do some of its dependencies. The user, however, never _needs_ to write any unsafe code.
+
+## The name
+
+"Knyst" is a Swedish word meaning _very faint sound_. It is normally almost exclusively used in the negative e.g. "Det hörs inte ett knyst" (eng. "You cannot hear a sound"), but I think it's well worth some affirmative use.
 
 # Roadmap
 
