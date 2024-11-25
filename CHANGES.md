@@ -2,6 +2,9 @@
 
 ## Current changes
 
+## v0.5.1
+
+- New examples (thank you Tuurlijk)
 - Fixed a bug in calculating the node order when connecting a multiple output node to different nodes per output.
 
 ## v0.5.0
